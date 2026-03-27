@@ -1,0 +1,39 @@
+# Compiled binaries — any file matching the module name or example directory name
+# produced by `go build ./...` or `go build -o <name>`
+/go-kitsune
+/metrics
+/inspector
+
+# Example binaries built in-place (e.g. `go build ./examples/scan`)
+examples/*/main
+examples/*/*.exe
+
+# Test cache and coverage output
+*.test
+*.out
+coverage.html
+
+# Benchmark profiles
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+
+# Go workspace file (optional local multi-module development)
+go.work
+go.work.sum
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Editor artefacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary / scratch files
+*.tmp
+*.bak
