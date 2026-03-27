@@ -1,0 +1,40 @@
+// Example: filter — selecting, observing, and limiting items.
+//
+// Demonstrates: Filter, Tap, Take
+package main
+
+import (
+	"context"
+	"fmt"
+
+	kitsune "github.com/jonathan/go-kitsune"
+)
+
+type LogEntry struct {
+	Level   string
+	Message string
+}
+
+func main() {
+	logs := []LogEntry{
+		{"INFO", "server started"},
+		{"ERROR", "connection refused"},
+		{"DEBUG", "cache miss"},
+		{"ERROR", "timeout"},
+		{"INFO", "request handled"},
+		{"ERROR", "disk full"},
+	}
+
+	input := kitsune.FromSlice(logs)
+
+	results, err := input.
+		Filter(func(e LogEntry) bool { return e.Level == "ERROR" }).
+		Tap(func(e LogEntry) { fmt.Printf("  [seen] %s\n", e.Message) }).
+		Take(2).
+		Collect(context.Background())
+
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("\nFirst 2 errors: %v\n", results)
+}

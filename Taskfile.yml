@@ -1,0 +1,74 @@
+version: "3"
+
+vars:
+  PACKAGE: ./...
+
+tasks:
+  default:
+    desc: Build, lint, and test
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+
+  build:
+    desc: Compile the package
+    cmds:
+      - go build {{.PACKAGE}}
+
+  fmt:
+    desc: Format source files
+    cmds:
+      - go fmt {{.PACKAGE}}
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet {{.PACKAGE}}
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -count=1 -timeout 30s {{.PACKAGE}}
+
+  test:verbose:
+    desc: Run tests with verbose output
+    cmds:
+      - go test -v -count=1 -timeout 30s {{.PACKAGE}}
+
+  test:race:
+    desc: Run tests with race detector
+    cmds:
+      - go test -race -count=1 -timeout 60s {{.PACKAGE}}
+
+  test:cover:
+    desc: Run tests and show coverage
+    cmds:
+      - go test -coverprofile=coverage.out -count=1 -timeout 30s {{.PACKAGE}}
+      - go tool cover -func=coverage.out
+      - rm -f coverage.out
+
+  test:ext:
+    desc: Run extension tests (Redis, SQLite)
+    cmds:
+      - for: [kredis, ksqlite]
+        cmd: echo "=== ext/{{.ITEM}} ===" && cd ext/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
+
+  test:all:
+    desc: Run core + extension tests
+    cmds:
+      - task: test:race
+      - task: test:ext
+
+  examples:
+    desc: Run all examples
+    cmds:
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent]
+        cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
+
+  ci:
+    desc: Full CI check (fmt, vet, race tests, extensions)
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test:all
