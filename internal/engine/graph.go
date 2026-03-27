@@ -79,6 +79,9 @@ type Node struct {
 
 	// Take-specific.
 	TakeN int
+
+	// Broadcast-specific.
+	BroadcastN int
 }
 
 // InputRef identifies the output port of an upstream node.
@@ -97,16 +100,17 @@ type ChannelKey struct {
 type NodeKind int
 
 const (
-	Source    NodeKind = iota
-	Map                // 1:1
-	FlatMap            // 1:N
-	Filter             // predicate gate
-	Tap                // side-effect passthrough
-	Take               // limit N items
-	Batch              // collect into slices
-	Partition          // split by predicate → two outputs
-	Merge              // fan-in from multiple inputs
-	Sink               // terminal consumer
+	Source        NodeKind = iota
+	Map                    // 1:1
+	FlatMap                // 1:N
+	Filter                 // predicate gate
+	Tap                    // side-effect passthrough
+	Take                   // limit N items
+	Batch                  // collect into slices
+	Partition              // split by predicate → two outputs
+	BroadcastNode          // copy to all N outputs
+	Merge                  // fan-in from multiple inputs
+	Sink                   // terminal consumer
 )
 
 // DefaultBuffer is the default channel buffer size between stages.

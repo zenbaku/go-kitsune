@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/ext/ksqlite"
+	"github.com/jonathan/go-kitsune/tails/ksqlite"
 	_ "modernc.org/sqlite"
 )
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -547,5 +548,110 @@ func TestMemoryCacheEviction(t *testing.T) {
 	data, ok, _ := cache.Get(ctx, "b")
 	if !ok || string(data) != "2" {
 		t.Fatalf("expected 'b'='2', got ok=%v data=%q", ok, data)
+	}
+}
+
+func TestFromIter(t *testing.T) {
+	items := []int{10, 20, 30}
+	p := kitsune.FromIter(slices.Values(items))
+
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results[0] != 10 || results[1] != 20 || results[2] != 30 {
+		t.Fatalf("unexpected: %v", results)
+	}
+}
+
+func TestFromIterWithTake(t *testing.T) {
+	// Infinite iterator + Take.
+	counter := func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+
+	results, err := kitsune.FromIter(counter).Take(5).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5, got %d", len(results))
+	}
+}
+
+func TestWindow(t *testing.T) {
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := 0; i < 3; i++ {
+			if !yield(i) {
+				return nil
+			}
+		}
+		select {
+		case <-time.After(150 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		for i := 3; i < 5; i++ {
+			if !yield(i) {
+				return nil
+			}
+		}
+		return nil
+	})
+
+	batches, err := kitsune.Window(p, 50*time.Millisecond).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 windows, got %d", len(batches))
+	}
+}
+
+func TestBroadcast(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	copies := kitsune.Broadcast(input, 3)
+
+	var results [3][]int
+	runners := make([]*kitsune.Runner, 3)
+	for i, p := range copies {
+		i := i
+		runners[i] = p.ForEach(func(_ context.Context, n int) error {
+			results[i] = append(results[i], n)
+			return nil
+		})
+	}
+
+	err := kitsune.MergeRunners(runners...).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, r := range results {
+		if len(r) != 3 {
+			t.Errorf("copy %d: expected 3 items, got %d: %v", i, len(r), r)
+		}
+	}
+}
+
+func TestBroadcastWithTransform(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	copies := kitsune.Broadcast(input, 2)
+
+	doubled := kitsune.Map(copies[0], func(_ context.Context, n int) (int, error) { return n * 2, nil })
+	tripled := kitsune.Map(copies[1], func(_ context.Context, n int) (int, error) { return n * 3, nil })
+
+	merged := kitsune.Merge(doubled, tripled)
+	results, err := merged.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 6 {
+		t.Fatalf("expected 6 items, got %d: %v", len(results), results)
 	}
 }

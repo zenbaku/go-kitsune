@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.23", "1.24", "stable"]
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Core — fmt, vet, race tests
+        run: |
+          go fmt ./...
+          go vet ./...
+          go test -race -count=1 -timeout 60s ./...
+
+      - name: tails/kredis — Redis e2e tests
+        run: cd tails/kredis && go test -race -count=1 -timeout 30s ./...
+
+      - name: tails/ksqlite — SQLite tests
+        run: cd tails/ksqlite && go test -race -count=1 -timeout 30s ./...
+
+      - name: tails/kfile — file/CSV/JSON tests
+        run: cd tails/kfile && go test -race -count=1 -timeout 30s ./...
+
+      - name: tails/khttp — HTTP tests
+        run: cd tails/khttp && go test -race -count=1 -timeout 30s ./...

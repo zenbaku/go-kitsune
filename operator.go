@@ -3,6 +3,7 @@ package kitsune
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"time"
 
 	"github.com/jonathan/go-kitsune/internal/engine"
@@ -156,6 +157,26 @@ func Partition[T any](p *Pipeline[T], fn func(T) bool) (match, rest *Pipeline[T]
 		&Pipeline[T]{g: p.g, node: id, port: 1}
 }
 
+// Broadcast copies every item to all N output pipelines.
+// Unlike [Partition] (which routes each item to one output), Broadcast
+// sends every item to every consumer.
+func Broadcast[T any](p *Pipeline[T], n int) []*Pipeline[T] {
+	if n <= 0 {
+		panic("kitsune: Broadcast requires n > 0")
+	}
+	id := p.g.AddNode(&engine.Node{
+		Kind:       engine.BroadcastNode,
+		Inputs:     []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:     engine.DefaultBuffer,
+		BroadcastN: n,
+	})
+	out := make([]*Pipeline[T], n)
+	for i := range n {
+		out[i] = &Pipeline[T]{g: p.g, node: id, port: i}
+	}
+	return out
+}
+
 // Merge combines multiple pipelines of the same type into one.
 // All input pipelines must share the same pipeline graph
 // (e.g., branches from the same [Partition]).
@@ -180,6 +201,17 @@ func Merge[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 		Buffer: engine.DefaultBuffer,
 	})
 	return &Pipeline[T]{g: g, node: id}
+}
+
+// ---------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------
+
+// Window collects items into slices based on time. Every duration d, the
+// accumulated items are flushed as a batch. This is a convenience wrapper
+// around [Batch] with an effectively unlimited size and a mandatory timeout.
+func Window[T any](p *Pipeline[T], d time.Duration) *Pipeline[[]T] {
+	return Batch(p, math.MaxInt, BatchTimeout(d))
 }
 
 // ---------------------------------------------------------------------------

@@ -81,6 +81,12 @@ func nodeRunner(ctx context.Context, n *Node, chans map[ChannelKey]chan any, hoo
 		matchCh := chans[ChannelKey{n.ID, 0}]
 		restCh := chans[ChannelKey{n.ID, 1}]
 		return func() error { return runPartition(ctx, n, inCh, matchCh, restCh) }
+	case BroadcastNode:
+		outChs := make([]chan any, n.BroadcastN)
+		for i := range n.BroadcastN {
+			outChs[i] = chans[ChannelKey{n.ID, i}]
+		}
+		return func() error { return runBroadcast(ctx, inCh, outChs) }
 	case Merge:
 		return func() error { return runMerge(ctx, inChs, outCh) }
 	case Sink:
@@ -402,7 +408,13 @@ func runBatch(ctx context.Context, n *Node, inCh, outCh chan any) error {
 	size := n.BatchSize
 	timeout := time.Duration(n.BatchTimeout)
 	convert := n.BatchConvert
-	batch := make([]any, 0, size)
+
+	// Cap initial capacity to avoid huge allocations for Window (size=MaxInt).
+	initCap := size
+	if initCap > 4096 {
+		initCap = 4096
+	}
+	batch := make([]any, 0, initCap)
 
 	var timer *time.Timer
 	var timerCh <-chan time.Time
@@ -418,7 +430,7 @@ func runBatch(ctx context.Context, n *Node, inCh, outCh chan any) error {
 			return nil
 		}
 		converted := convert(batch)
-		batch = make([]any, 0, size)
+		batch = make([]any, 0, initCap)
 		if timer != nil {
 			timer.Stop()
 		}
@@ -477,6 +489,31 @@ func runPartition(ctx context.Context, n *Node, inCh, matchCh, restCh chan any) 
 			case target <- item:
 			case <-ctx.Done():
 				return ctx.Err()
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func runBroadcast(ctx context.Context, inCh chan any, outChs []chan any) error {
+	defer func() {
+		for _, ch := range outChs {
+			close(ch)
+		}
+	}()
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			for _, ch := range outChs {
+				select {
+				case ch <- item:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		case <-ctx.Done():
 			return ctx.Err()

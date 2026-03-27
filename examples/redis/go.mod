@@ -1,9 +1,10 @@
-module github.com/jonathan/go-kitsune/ext/kredis
+module github.com/jonathan/go-kitsune/examples/redis
 
 go 1.26.1
 
 require (
 	github.com/jonathan/go-kitsune v0.0.0
+	github.com/jonathan/go-kitsune/tails/kredis v0.0.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
@@ -14,4 +15,7 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace (
+	github.com/jonathan/go-kitsune => ../..
+	github.com/jonathan/go-kitsune/tails/kredis => ../../tails/kredis
+)

@@ -2,6 +2,7 @@ package kitsune
 
 import (
 	"context"
+	"iter"
 
 	"github.com/jonathan/go-kitsune/internal/engine"
 )
@@ -70,4 +71,21 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 	}
 	id := g.AddNode(&engine.Node{Kind: engine.Source, Fn: wrapped})
 	return &Pipeline[T]{g: g, node: id}
+}
+
+// FromIter creates a Pipeline from a Go iterator ([iter.Seq]).
+//
+//	p := kitsune.FromIter(slices.Values(items))
+func FromIter[T any](seq iter.Seq[T]) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		for item := range seq {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if !yield(item) {
+				return nil
+			}
+		}
+		return nil
+	})
 }

@@ -49,22 +49,42 @@ tasks:
       - rm -f coverage.out
 
   test:ext:
-    desc: Run extension tests (Redis, SQLite)
+    desc: Run extension tests (Redis, SQLite, file, HTTP)
     cmds:
-      - for: [kredis, ksqlite]
-        cmd: echo "=== ext/{{.ITEM}} ===" && cd ext/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
+      - for: [kredis, ksqlite, kfile, khttp]
+        cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem -count=1 -timeout 60s ./...
+
+  test:examples:
+    desc: Build and run all examples (skips redis if unavailable)
+    cmds:
+      # Root-module examples — build and run (all are fast and self-contained).
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter]
+        cmd: go run ./examples/{{.ITEM}} > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
+      # Separate-module examples — build and run.
+      - for: [files, sqlite, http]
+        cmd: cd examples/{{.ITEM}} && go run . > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
+      # Redis example — only if Redis is reachable.
+      - redis-cli ping > /dev/null 2>&1 && (cd examples/redis && go run . > /dev/null 2>&1 && echo "PASS examples/redis") || echo "SKIP examples/redis (Redis not available)"
 
   test:all:
-    desc: Run core + extension tests
+    desc: Run core + extension + example tests
     cmds:
       - task: test:race
       - task: test:ext
+      - task: test:examples
 
   examples:
     desc: Run all examples
     cmds:
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent]
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter]
         cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
+      - for: [files, redis, sqlite, http]
+        cmd: echo "=== {{.ITEM}} ===" && cd examples/{{.ITEM}} && go run .
 
   ci:
     desc: Full CI check (fmt, vet, race tests, extensions)

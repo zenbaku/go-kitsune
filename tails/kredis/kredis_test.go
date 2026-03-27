@@ -7,7 +7,7 @@ import (
 	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/ext/kredis"
+	"github.com/jonathan/go-kitsune/tails/kredis"
 	"github.com/redis/go-redis/v9"
 )
 

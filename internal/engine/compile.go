@@ -107,6 +107,10 @@ func CreateChannels(g *Graph) map[ChannelKey]chan any {
 		if n.Kind == Partition {
 			chans[ChannelKey{n.ID, 0}] = make(chan any, buf) // match
 			chans[ChannelKey{n.ID, 1}] = make(chan any, buf) // rest
+		} else if n.Kind == BroadcastNode {
+			for i := range n.BroadcastN {
+				chans[ChannelKey{n.ID, i}] = make(chan any, buf)
+			}
 		} else {
 			chans[ChannelKey{n.ID, 0}] = make(chan any, buf)
 		}

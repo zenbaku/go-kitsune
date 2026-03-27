@@ -1,9 +1,10 @@
-module github.com/jonathan/go-kitsune/ext/ksqlite
+module github.com/jonathan/go-kitsune/examples/sqlite
 
 go 1.26.1
 
 require (
 	github.com/jonathan/go-kitsune v0.0.0
+	github.com/jonathan/go-kitsune/tails/ksqlite v0.0.0
 	modernc.org/sqlite v1.47.0
 )
 
@@ -20,4 +21,7 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace (
+	github.com/jonathan/go-kitsune => ../..
+	github.com/jonathan/go-kitsune/tails/ksqlite => ../../tails/ksqlite
+)
