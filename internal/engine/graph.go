@@ -69,8 +69,11 @@ type Node struct {
 	Inputs []InputRef
 
 	Concurrency  int
+	Ordered      bool // preserve input order when Concurrency > 1
 	Buffer       int
+	Overflow     int // 0=Block (default), 1=DropNewest, 2=DropOldest
 	ErrorHandler ErrorHandler
+	Supervision  SupervisionPolicy
 
 	// Batch-specific.
 	BatchSize    int
@@ -82,6 +85,9 @@ type Node struct {
 
 	// Broadcast-specific.
 	BroadcastN int
+
+	// Zip-specific.
+	ZipConvert func(any, any) any // (a, b) → Pair[A,B]
 }
 
 // InputRef identifies the output port of an upstream node.
@@ -111,7 +117,16 @@ const (
 	BroadcastNode          // copy to all N outputs
 	Merge                  // fan-in from multiple inputs
 	Sink                   // terminal consumer
+	TakeWhile              // emit until predicate fails, then signal done
+	ZipNode                // pair items from two inputs by position
 )
 
 // DefaultBuffer is the default channel buffer size between stages.
 const DefaultBuffer = 16
+
+// Overflow strategy constants (stored as int on Node to keep engine package dependency-free).
+const (
+	OverflowBlock      = 0 // block until space is available (default)
+	OverflowDropNewest = 1 // discard the incoming item when the buffer is full
+	OverflowDropOldest = 2 // evict the oldest buffered item to make room
+)

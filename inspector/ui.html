@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitsune Inspector</title>
+<style>
+/* ── Themes ────────────────────────────────────────────────────────────────── */
+:root {
+  --bg:        #06090f;
+  --card:      #0d1117;
+  --surface:   #161b22;
+  --border:    #21262d;
+  --border2:   #30363d;
+  --text:      #e6edf3;
+  --muted:     #7d8590;
+  --blue:      #79c0ff;
+  --blue-lo:   #0c2d6b;
+  --blue-mid:  #1158c7;
+  --green:     #56d364;
+  --green-lo:  #033a16;
+  --green-mid: #1a7f37;
+  --yellow:    #e3b341;
+  --red:       #f85149;
+  --red-lo:    #3d0000;
+  --shadow:    rgba(0,0,0,0.5);
+  --hdr-h:     45px;
+}
+[data-theme="light"] {
+  --bg:        #f6f8fa;
+  --card:      #ffffff;
+  --surface:   #f0f3f6;
+  --border:    #d0d7de;
+  --border2:   #afb8c1;
+  --text:      #1f2328;
+  --muted:     #57606a;
+  --blue:      #0969da;
+  --blue-lo:   #dbeafe;
+  --blue-mid:  #2563eb;
+  --green:     #1a7f37;
+  --green-lo:  #dcfce7;
+  --green-mid: #16a34a;
+  --yellow:    #9a6700;
+  --red:       #cf222e;
+  --red-lo:    #fee2e2;
+  --shadow:    rgba(0,0,0,0.12);
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font: 13px/1.5 'SF Mono','Menlo','Consolas',monospace; min-height: 100vh; }
+button { cursor: pointer; font: inherit; border: none; background: none; }
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+#hdr {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border);
+  background: var(--card); position: sticky; top: 0; z-index: 20;
+}
+.brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.brand h1 { font-size: 14px; font-weight: 700; letter-spacing: -.02em; }
+.brand h1 em { color: var(--blue); font-style: normal; }
+#pipe-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 12px;
+  background: var(--surface); color: var(--muted); border: 1px solid var(--border2);
+  letter-spacing: .04em; text-transform: uppercase; transition: all .3s;
+}
+#pipe-badge.running { background: var(--blue-lo); color: var(--blue); border-color: var(--blue-mid); }
+#pipe-badge.done    { background: var(--green-lo); color: var(--green); border-color: var(--green-mid); }
+.hdr-controls { display: flex; align-items: center; gap: 6px; }
+.btn {
+  font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 6px;
+  border: 1px solid var(--border2); color: var(--muted); background: var(--surface);
+  transition: all .15s; letter-spacing: .02em;
+}
+.btn:hover { border-color: var(--text); color: var(--text); }
+.btn-stop    { border-color: var(--red);   color: var(--red); }
+.btn-stop:hover  { background: var(--red-lo); }
+.btn-restart { border-color: var(--blue-mid); color: var(--blue); }
+.btn-restart:hover { background: var(--blue-lo); }
+.conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+#dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); flex-shrink: 0; transition: all .3s; }
+#dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+/* ── KPI strip ─────────────────────────────────────────────────────────────── */
+#kpi { display: grid; grid-template-columns: repeat(4,1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+.kpi-card { background: var(--card); padding: 14px 20px; }
+.kpi-label { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.kpi-value { font-size: 22px; font-weight: 700; letter-spacing: -.03em; font-variant-numeric: tabular-nums; transition: color .3s; }
+.kpi-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+/* ── Sections ──────────────────────────────────────────────────────────────── */
+#main { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.sec-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.sec-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+
+/* ── DAG ───────────────────────────────────────────────────────────────────── */
+#dag-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; position: relative; height: 280px;
+}
+#dag-svg {
+  width: 100%; height: 100%; display: block; cursor: grab;
+  user-select: none; -webkit-user-select: none;
+}
+#dag-svg.dragging { cursor: grabbing; }
+#dag-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+.dag-zoom-bar { display: flex; align-items: center; gap: 4px; }
+.zoom-btn { font-size: 14px; padding: 2px 8px; }
+#zoom-pct { font-size: 10px; color: var(--muted); min-width: 36px; text-align: center; }
+
+/* DAG animations */
+@keyframes flowDash { to { stroke-dashoffset: -14; } }
+@keyframes nodePulse { 0%,100% { opacity:.85; } 50% { opacity:1; } }
+
+/* Node text via CSS (not SVG attributes so theme overrides work) */
+.node-name { font-size: 12px; font-weight: 600; font-family: system-ui,sans-serif; fill: var(--text); }
+.node-kind { font-size: 9px; font-family: system-ui,sans-serif; fill: var(--muted); letter-spacing: .06em; }
+
+/* ── Stats table ───────────────────────────────────────────────────────────── */
+#stats-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+table { width: 100%; border-collapse: collapse; }
+th { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 8px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; background: var(--surface); }
+td { padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(127,127,127,.04); }
+.s-pending { color: var(--muted); }
+.s-running { color: var(--blue); }
+.s-done    { color: var(--green); }
+.v-err  { color: var(--red); }
+.v-warn { color: var(--yellow); }
+.v-dim  { color: var(--muted); }
+.routing td { opacity: .6; }
+
+/* ── Buffer fill bar ───────────────────────────────────────────────────────── */
+.buf-wrap { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.buf-bar  { width: 40px; height: 6px; border-radius: 3px; background: var(--border2); overflow: hidden; flex-shrink: 0; }
+.buf-fill { height: 100%; border-radius: 3px; transition: width .3s, background .3s; }
+.buf-label { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── Log ───────────────────────────────────────────────────────────────────── */
+#log-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+#log-inner { max-height: 160px; overflow-y: auto; padding: 10px 14px; }
+.log-line { padding: 2px 0; font-size: 11px; white-space: pre; line-height: 1.6; }
+.lt-start   { color: var(--blue); }
+.lt-done    { color: var(--green); }
+.lt-restart { color: var(--yellow); }
+.lt-drop    { color: var(--red); }
+.log-empty  { color: var(--muted); font-size: 12px; }
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+#sidebar {
+  position: fixed; top: var(--hdr-h); right: 0; bottom: 0; width: 320px;
+  background: var(--card); border-left: 1px solid var(--border);
+  z-index: 15; display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .2s ease;
+  overflow: hidden;
+}
+#sidebar.open { transform: translateX(0); }
+#sb-hdr {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  padding: 16px 16px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+#sb-name { font-size: 15px; font-weight: 700; word-break: break-all; }
+#sb-kind { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 3px; }
+#sb-close { font-size: 18px; color: var(--muted); padding: 0 4px; line-height: 1; flex-shrink: 0; }
+#sb-close:hover { color: var(--text); }
+#sb-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+.sb-sec { display: flex; flex-direction: column; }
+.sb-sec-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 6px; }
+.sb-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sb-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.sb-metric-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.sb-metric-value { font-size: 15px; font-weight: 700; letter-spacing: -.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.sb-sparkline { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.sb-config { font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+.sb-config span { color: var(--text); }
+.sb-samples { display: flex; flex-direction: column; gap: 4px; }
+.sb-sample {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+  padding: 6px 10px; font-size: 11px; color: var(--blue);
+  word-break: break-all; user-select: text; -webkit-user-select: text; cursor: text;
+}
+.sb-sample-ts { font-size: 9px; color: var(--muted); margin-top: 2px; }
+.sb-empty { color: var(--muted); font-style: italic; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="hdr">
+  <div class="brand">
+    <h1><em>Kitsune</em> Inspector</h1>
+    <span id="pipe-badge">idle</span>
+  </div>
+  <div class="hdr-controls">
+    <button class="btn btn-restart" id="btn-restart" title="Restart pipeline">↺ Restart</button>
+    <button class="btn btn-stop"    id="btn-stop"    title="Stop pipeline">■ Stop</button>
+    <button class="btn" id="btn-theme" title="Toggle light/dark theme">☀</button>
+  </div>
+  <div class="conn">
+    <div id="dot"></div>
+    <span id="addr"></span>
+  </div>
+</div>
+
+<div id="kpi">
+  <div class="kpi-card">
+    <div class="kpi-label">Uptime</div>
+    <div class="kpi-value" id="k-uptime">—</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total Items (sink)</div>
+    <div class="kpi-value" id="k-items">—</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Throughput</div>
+    <div class="kpi-value" id="k-rate">—</div>
+    <div class="kpi-sub">items / sec</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Active Stages</div>
+    <div class="kpi-value" id="k-stages">—</div>
+  </div>
+</div>
+
+<div id="main">
+  <div>
+    <div class="sec-hdr">
+      <div class="sec-title">Pipeline Graph</div>
+      <div class="dag-zoom-bar">
+        <button class="btn zoom-btn" id="btn-zoom-out">−</button>
+        <span id="zoom-pct">100%</span>
+        <button class="btn zoom-btn" id="btn-zoom-in">+</button>
+        <button class="btn zoom-btn" id="btn-fit" title="Fit to view">⊡</button>
+      </div>
+    </div>
+    <div id="dag-card">
+      <div id="dag-placeholder">Waiting for pipeline…</div>
+      <svg id="dag-svg"><g id="dag-root"></g></svg>
+    </div>
+  </div>
+
+  <div>
+    <div class="sec-title">Stage Metrics</div>
+    <div id="stats-card">
+      <table>
+        <thead><tr>
+          <th>Stage</th><th>Kind</th><th>Status</th>
+          <th>Items</th><th>Errors</th><th>Drops</th><th>Restarts</th>
+          <th>Throughput</th><th>Avg Latency</th><th>Buffer</th>
+        </tr></thead>
+        <tbody id="tbody">
+          <tr><td colspan="10" class="v-dim" style="padding:20px 14px">Waiting for pipeline…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="sec-title">Event Log</div>
+    <div id="log-card"><div id="log-inner"><div id="log"><span class="log-empty">No events yet.</span></div></div></div>
+  </div>
+</div>
+
+<div id="sidebar">
+  <div id="sb-hdr">
+    <div>
+      <div id="sb-name">—</div>
+      <div id="sb-kind">—</div>
+    </div>
+    <button id="sb-close" title="Close">×</button>
+  </div>
+  <div id="sb-body">
+    <div class="sb-sec">
+      <div class="sb-sec-title">Metrics</div>
+      <div class="sb-metrics" id="sb-metrics"></div>
+    </div>
+    <div class="sb-sec">
+      <div class="sb-sec-title">Throughput</div>
+      <div class="sb-sparkline" id="sb-sparkline"></div>
+    </div>
+    <div class="sb-sec" id="sb-config-wrap">
+      <div class="sb-sec-title">Configuration</div>
+      <div class="sb-config" id="sb-config"></div>
+    </div>
+    <div class="sb-sec">
+      <div class="sb-sec-title">Recent Samples</div>
+      <div class="sb-samples" id="sb-samples"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const NW = 148, NH = 48, HGAP = 60, VGAP = 18;
+const ROUTING = new Set(['partition','broadcast','merge','filter','tap','take','batch']);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let graph = null, stats = {}, logEmpty = true, pipelineStartMs = null;
+const sparkData  = new Map();   // name → number[]
+const edgeEls    = new Map();   // `${from}→${to}` → SVGPathElement
+const nodeRects  = new Map();   // id → SVGRectElement
+const nodePosns  = new Map();   // id → {x,y}
+const nodeByName = new Map();   // name → graph node
+const samples    = new Map();   // name → [{value,ts}]
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+const html = document.documentElement;
+const stored = localStorage.getItem('kitsune-theme') || 'dark';
+html.setAttribute('data-theme', stored);
+updateThemeBtn();
+
+document.getElementById('btn-theme').addEventListener('click', () => {
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('kitsune-theme', next);
+  updateThemeBtn();
+  if (graph) { renderDAG(); } // re-render SVG with new theme colors
+});
+function updateThemeBtn() {
+  document.getElementById('btn-theme').textContent =
+    html.getAttribute('data-theme') === 'dark' ? '☀' : '☾';
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-stop').addEventListener('click', () =>
+  ctrl('cancel'));
+document.getElementById('btn-restart').addEventListener('click', () =>
+  ctrl('restart'));
+function ctrl(action) {
+  fetch('/control', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ action }) });
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+const es = new EventSource('/events');
+es.onopen  = () => document.getElementById('dot').classList.add('on');
+es.onerror = () => document.getElementById('dot').classList.remove('on');
+es.addEventListener('graph',  e => { graph = JSON.parse(e.data); buildNodeIndex(); renderDAG(); renderTable(); });
+es.addEventListener('stats',  e => { stats = JSON.parse(e.data); onStats(); });
+es.addEventListener('log',    e => addLog(JSON.parse(e.data)));
+es.addEventListener('sample', e => onSample(JSON.parse(e.data)));
+document.getElementById('addr').textContent = window.location.host;
+
+function buildNodeIndex() {
+  nodeByName.clear();
+  if (graph) for (const n of graph) nodeByName.set(n.name, n);
+}
+
+// ── Stats update ──────────────────────────────────────────────────────────────
+function onStats() {
+  for (const [name, s] of Object.entries(stats)) {
+    if (!sparkData.has(name)) sparkData.set(name, []);
+    const arr = sparkData.get(name);
+    arr.push(s.ratePerSec);
+    if (arr.length > 30) arr.shift();
+  }
+  renderTable();
+  refreshDAG();
+  updateKPIs();
+  updateBadge();
+  refreshSidebar();
+}
+
+// ── KPIs ──────────────────────────────────────────────────────────────────────
+function updateKPIs() {
+  if (!graph) return;
+  const usedAsInput = new Set(graph.flatMap(n => n.inputs));
+  const sinks = graph.filter(n => !usedAsInput.has(n.id));
+  const ss = sinks.map(n => stats[n.name]).filter(Boolean);
+  if (ss.length) {
+    const items = ss.reduce((a, s) => a + s.items, 0);
+    const rate  = ss.reduce((a, s) => a + s.ratePerSec, 0);
+    const el = document.getElementById('k-items');
+    el.textContent = fmtBig(items);
+    el.style.color = rate > 0 ? 'var(--green)' : '';
+    const re = document.getElementById('k-rate');
+    re.textContent = fmtRate(rate, false);
+    re.style.color = rate > 0 ? 'var(--blue)' : '';
+  }
+  const running = Object.values(stats).filter(s => s.status === 'running').length;
+  document.getElementById('k-stages').textContent = `${running} / ${graph.length}`;
+}
+
+function updateBadge() {
+  const vals = Object.values(stats);
+  const badge = document.getElementById('pipe-badge');
+  if (!vals.length) return;
+  const anyRun = vals.some(s => s.status === 'running');
+  const allDone = vals.every(s => s.status === 'done');
+  badge.className = anyRun ? 'running' : allDone ? 'done' : '';
+  badge.textContent = anyRun ? 'running' : allDone ? 'done' : 'idle';
+}
+
+setInterval(() => {
+  if (!pipelineStartMs) return;
+  document.getElementById('k-uptime').textContent = fmtUptime(Date.now() - pipelineStartMs);
+}, 500);
+
+// ── DAG – render ──────────────────────────────────────────────────────────────
+function renderDAG() {
+  if (!graph || !graph.length) return;
+  edgeEls.clear(); nodeRects.clear(); nodePosns.clear();
+  const root = document.getElementById('dag-root');
+  root.innerHTML = '';
+
+  // Layer assignment
+  const layer = new Map(graph.map(n => [n.id, 0]));
+  const children = new Map(graph.map(n => [n.id, []]));
+  const indeg    = new Map(graph.map(n => [n.id, n.inputs.length]));
+  for (const n of graph) for (const p of n.inputs) if (children.has(p)) children.get(p).push(n.id);
+  const queue = graph.filter(n => !n.inputs.length).map(n => n.id);
+  const seen  = new Set();
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id)) continue; seen.add(id);
+    for (const cid of children.get(id) || []) {
+      layer.set(cid, Math.max(layer.get(cid)||0, (layer.get(id)||0)+1));
+      if ((indeg.get(cid)||1)-1 === 0) queue.push(cid);
+      indeg.set(cid, (indeg.get(cid)||1)-1);
+    }
+  }
+
+  // Positions (center shorter layers)
+  const byLayer = new Map();
+  for (const n of graph) { const l=layer.get(n.id)||0; if(!byLayer.has(l)) byLayer.set(l,[]); byLayer.get(l).push(n); }
+  const maxPer = Math.max(...[...byLayer.values()].map(a => a.length));
+  let maxX=0, maxY=0;
+  for (const [l, nodes] of [...byLayer.entries()].sort((a,b)=>a[0]-b[0])) {
+    const x = l*(NW+HGAP);
+    const totalH = nodes.length*NH + (nodes.length-1)*VGAP;
+    const maxH   = maxPer*NH + (maxPer-1)*VGAP;
+    const yOff   = Math.round((maxH-totalH)/2);
+    nodes.forEach((n,i) => {
+      const y = yOff + i*(NH+VGAP);
+      nodePosns.set(n.id, {x,y});
+      maxX=Math.max(maxX,x+NW); maxY=Math.max(maxY,y+NH);
+    });
+  }
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const dark = html.getAttribute('data-theme') !== 'light';
+  const tc = themeColors(dark);
+
+  // Defs
+  const defs = document.createElementNS(NS, 'defs');
+  defs.innerHTML = mkMarkers(tc) + mkFilters(dark);
+  root.appendChild(defs);
+
+  // Edges
+  for (const n of graph) {
+    const to = nodePosns.get(n.id);
+    for (const pid of n.inputs) {
+      const fr = nodePosns.get(pid);
+      if (!fr) continue;
+      const x1=fr.x+NW, y1=fr.y+NH/2, x2=to.x, y2=to.y+NH/2, mx=x1+HGAP/2;
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', tc.edgeIdle);
+      p.setAttribute('stroke-width', '1.5');
+      p.setAttribute('marker-end', 'url(#arr)');
+      root.appendChild(p);
+      edgeEls.set(`${pid}→${n.id}`, p);
+    }
+  }
+
+  // Nodes
+  for (const n of graph) {
+    const {x,y} = nodePosns.get(n.id);
+    const g = document.createElementNS(NS, 'g');
+    g.style.cursor = 'pointer';
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('x',x); rect.setAttribute('y',y);
+    rect.setAttribute('width',NW); rect.setAttribute('height',NH); rect.setAttribute('rx','7');
+    rect.setAttribute('fill', tc.nodeFill); rect.setAttribute('stroke', tc.nodeStroke); rect.setAttribute('stroke-width','1.5');
+    const tN = document.createElementNS(NS, 'text');
+    tN.setAttribute('x',x+NW/2); tN.setAttribute('y',y+NH/2-5); tN.setAttribute('text-anchor','middle');
+    tN.setAttribute('class','node-name'); tN.textContent = n.name;
+    const tK = document.createElementNS(NS, 'text');
+    tK.setAttribute('x',x+NW/2); tK.setAttribute('y',y+NH/2+10); tK.setAttribute('text-anchor','middle');
+    tK.setAttribute('class','node-kind'); tK.textContent = n.kind.toUpperCase();
+    g.appendChild(rect); g.appendChild(tN); g.appendChild(tK);
+    root.appendChild(g);
+    nodeRects.set(n.id, rect);
+
+    // Sidebar click
+    g.addEventListener('click', e => { e.stopPropagation(); openSidebar(n); });
+  }
+
+  document.getElementById('dag-placeholder').style.display = 'none';
+  // Fit to view on first render
+  fitView(maxX+32, maxY+32);
+  refreshDAG();
+}
+
+function mkMarkers(tc) {
+  const m = (id, fill) => `<marker id="${id}" markerWidth="8" markerHeight="8" refX="7" refY="2.5" orient="auto">
+    <path d="M0,0 L7,2.5 L0,5 Z" fill="${fill}"/></marker>`;
+  return m('arr', tc.arrowIdle) + m('arr-run', tc.arrowRun) + m('arr-done', tc.arrowDone);
+}
+function mkFilters(dark) {
+  if (!dark) return '';
+  const f = (id, col) => `<filter id="${id}" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="b"/>
+    <feFlood flood-color="${col}" flood-opacity=".65" result="c"/>
+    <feComposite in="c" in2="b" operator="in" result="g"/>
+    <feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  return f('glow-run','#1158c7') + f('glow-done','#1a7f37');
+}
+function themeColors(dark) {
+  return dark ? {
+    nodeFill:'#0d1117', nodeStroke:'#21262d',
+    runFill:'#0c2d6b', runStroke:'#1158c7',
+    doneFill:'#033a16', doneStroke:'#1a7f37',
+    errStroke:'#b22a2a',
+    edgeIdle:'#21262d', edgeRun:'#1158c7', edgeDone:'#1a7f37',
+    arrowIdle:'#30363d', arrowRun:'#1158c7', arrowDone:'#1a7f37',
+  } : {
+    nodeFill:'#ffffff', nodeStroke:'#d0d7de',
+    runFill:'#dbeafe', runStroke:'#2563eb',
+    doneFill:'#dcfce7', doneStroke:'#16a34a',
+    errStroke:'#cf222e',
+    edgeIdle:'#d0d7de', edgeRun:'#2563eb', edgeDone:'#16a34a',
+    arrowIdle:'#afb8c1', arrowRun:'#2563eb', arrowDone:'#16a34a',
+  };
+}
+
+// ── DAG – refresh colors/animations ───────────────────────────────────────────
+function refreshDAG() {
+  if (!graph) return;
+  const dark = html.getAttribute('data-theme') !== 'light';
+  const tc = themeColors(dark);
+
+  for (const n of graph) {
+    const rect = nodeRects.get(n.id);
+    if (!rect) continue;
+    const status = inferStatus(n);
+    const hasIssue = stats[n.name] && (stats[n.name].errors > 0 || stats[n.name].drops > 0);
+    if (status === 'running') {
+      rect.setAttribute('fill', tc.runFill);
+      rect.setAttribute('stroke', hasIssue ? tc.errStroke : tc.runStroke);
+      rect.setAttribute('stroke-width', '2');
+      rect.setAttribute('filter', dark ? 'url(#glow-run)' : '');
+      rect.style.animation = 'nodePulse 2s ease-in-out infinite';
+    } else if (status === 'done') {
+      rect.setAttribute('fill', tc.doneFill);
+      rect.setAttribute('stroke', hasIssue ? tc.errStroke : tc.doneStroke);
+      rect.setAttribute('stroke-width', '1.5');
+      rect.setAttribute('filter', dark ? 'url(#glow-done)' : '');
+      rect.style.animation = '';
+    } else {
+      rect.setAttribute('fill', tc.nodeFill);
+      rect.setAttribute('stroke', tc.nodeStroke);
+      rect.setAttribute('stroke-width', '1.5');
+      rect.removeAttribute('filter');
+      rect.style.animation = '';
+    }
+    // Selected highlight overrides stroke
+    if (selectedNode && n.id === selectedNode.id) {
+      rect.setAttribute('stroke', dark ? '#79c0ff' : '#0969da');
+      rect.setAttribute('stroke-width', '2.5');
+    }
+  }
+
+  for (const [key, path] of edgeEls) {
+    const fromId = parseInt(key.split('→')[0]);
+    const fromNode = graph.find(n => n.id === fromId);
+    const status = fromNode ? inferStatus(fromNode) : 'pending';
+    if (status === 'running') {
+      path.setAttribute('stroke', tc.edgeRun); path.setAttribute('stroke-width','2');
+      path.setAttribute('stroke-dasharray','7 5');
+      path.setAttribute('marker-end','url(#arr-run)');
+      path.style.animation = 'flowDash .55s linear infinite';
+    } else if (status === 'done') {
+      path.setAttribute('stroke', tc.edgeDone); path.setAttribute('stroke-width','1.5');
+      path.removeAttribute('stroke-dasharray');
+      path.setAttribute('marker-end','url(#arr-done)');
+      path.style.animation = '';
+    } else {
+      path.setAttribute('stroke', tc.edgeIdle); path.setAttribute('stroke-width','1.5');
+      path.removeAttribute('stroke-dasharray');
+      path.setAttribute('marker-end','url(#arr)');
+      path.style.animation = '';
+    }
+  }
+}
+
+function inferStatus(node) {
+  if (stats[node.name]) return stats[node.name].status;
+  const kids = graph.filter(n => n.inputs.includes(node.id));
+  if (!kids.length) return 'pending';
+  const cs = kids.map(c => inferStatus(c));
+  if (cs.every(s => s === 'done')) return 'done';
+  if (cs.some(s => s === 'running' || s === 'done')) return 'running';
+  return 'pending';
+}
+
+// ── DAG – zoom / pan ──────────────────────────────────────────────────────────
+let vpScale=1, vpX=0, vpY=0, dragStart=null, didDrag=false;
+const svg = document.getElementById('dag-svg');
+const root = () => document.getElementById('dag-root');
+
+function applyVP() {
+  root().setAttribute('transform', `translate(${vpX},${vpY}) scale(${vpScale})`);
+  document.getElementById('zoom-pct').textContent = Math.round(vpScale*100)+'%';
+}
+function fitView(contentW, contentH) {
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width || !rect.height || !contentW) return;
+  vpScale = Math.min(rect.width/(contentW+40), rect.height/(contentH+40), 1);
+  vpX = (rect.width  - contentW*vpScale)/2;
+  vpY = (rect.height - contentH*vpScale)/2;
+  applyVP();
+}
+function zoomBy(delta, cx, cy) {
+  const rect = svg.getBoundingClientRect();
+  const mx = (cx ?? rect.left + rect.width/2)  - rect.left;
+  const my = (cy ?? rect.top  + rect.height/2) - rect.top;
+  const ns = Math.max(.15, Math.min(4, vpScale*delta));
+  vpX = mx - (mx-vpX)*(ns/vpScale);
+  vpY = my - (my-vpY)*(ns/vpScale);
+  vpScale = ns;
+  applyVP();
+}
+
+svg.addEventListener('wheel', e => { e.preventDefault(); zoomBy(e.deltaY>0?.82:1.22, e.clientX, e.clientY); }, {passive:false});
+svg.addEventListener('mousedown', e => { if(e.button!==0) return; dragStart={x:e.clientX-vpX, y:e.clientY-vpY, cx:e.clientX, cy:e.clientY}; svg.classList.add('dragging'); didDrag=false; });
+window.addEventListener('mousemove', e => { if(!dragStart) return; vpX=e.clientX-dragStart.x; vpY=e.clientY-dragStart.y; applyVP(); if(Math.abs(e.clientX-dragStart.cx)>4||Math.abs(e.clientY-dragStart.cy)>4) didDrag=true; });
+window.addEventListener('mouseup', () => { dragStart=null; svg.classList.remove('dragging'); });
+svg.addEventListener('click', () => { if (!didDrag) closeSidebar(); });
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => zoomBy(1.25));
+document.getElementById('btn-zoom-out').addEventListener('click', () => zoomBy(.8));
+document.getElementById('btn-fit').addEventListener('click', () => {
+  if (!nodePosns.size) return;
+  let maxX=0, maxY=0;
+  for (const {x,y} of nodePosns.values()) { maxX=Math.max(maxX,x+NW); maxY=Math.max(maxY,y+NH); }
+  fitView(maxX+32, maxY+32);
+});
+
+// ── Sample data ───────────────────────────────────────────────────────────────
+function onSample(d) {
+  if (!samples.has(d.stage)) samples.set(d.stage, []);
+  const arr = samples.get(d.stage);
+  arr.unshift(d);
+  if (arr.length > 6) arr.pop();
+  // Flash the node
+  const node = nodeByName.get(d.stage);
+  if (node) flashNode(node.id);
+  // Update sidebar if this stage is selected
+  if (selectedNode && d.stage === selectedNode.name) refreshSidebar();
+}
+
+function flashNode(nodeId) {
+  const rect = nodeRects.get(nodeId);
+  if (!rect) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const dark = html.getAttribute('data-theme') !== 'light';
+  const x=+rect.getAttribute('x'), y=+rect.getAttribute('y');
+  const w=+rect.getAttribute('width'), h=+rect.getAttribute('height');
+  const ring = document.createElementNS(NS, 'rect');
+  ring.setAttribute('x',x-3); ring.setAttribute('y',y-3);
+  ring.setAttribute('width',w+6); ring.setAttribute('height',h+6); ring.setAttribute('rx','10');
+  ring.setAttribute('fill','none');
+  ring.setAttribute('stroke', dark ? '#79c0ff' : '#2563eb');
+  ring.setAttribute('stroke-width','2');
+  ring.style.transition = 'opacity .5s ease-out';
+  document.getElementById('dag-root').appendChild(ring);
+  requestAnimationFrame(() => { ring.style.opacity='0'; setTimeout(()=>ring.remove(), 600); });
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+let selectedNode = null;
+
+document.getElementById('sb-close').addEventListener('click', closeSidebar);
+
+function openSidebar(node) {
+  selectedNode = node;
+  document.getElementById('sb-name').textContent = node.name;
+  document.getElementById('sb-kind').textContent = node.kind.toUpperCase();
+  document.getElementById('sidebar').classList.add('open');
+  refreshSidebar();
+  refreshDAG();
+}
+
+function closeSidebar() {
+  selectedNode = null;
+  document.getElementById('sidebar').classList.remove('open');
+  refreshDAG();
+}
+
+function refreshSidebar() {
+  if (!selectedNode) return;
+  const n = selectedNode;
+  const s = stats[n.name] || null;
+  const sData = sparkData.get(n.name) || [];
+  const samps = samples.get(n.name) || [];
+  const status = s ? s.status : inferStatus(n);
+  const statusColor = {pending:'var(--muted)',running:'var(--blue)',done:'var(--green)'}[status]||'var(--muted)';
+
+  // Metrics grid
+  document.getElementById('sb-metrics').innerHTML = [
+    ['Status',       `<span style="color:${statusColor}">${sdot(status)} ${status}</span>`],
+    ['Items',        s ? fmtBig(s.items) : '—'],
+    ['Throughput',   s && s.ratePerSec>0 ? `<span style="color:var(--blue)">${fmtRate(s.ratePerSec,false)}/s</span>` : '—'],
+    ['Avg Latency',  s ? fmtNs(s.avgLatNs) : '—'],
+    ['Errors',       s && s.errors>0   ? `<span style="color:var(--red)">${fmtBig(s.errors)}</span>`     : '<span class="v-dim">—</span>'],
+    ['Drops',        s && s.drops>0    ? `<span style="color:var(--yellow)">${fmtBig(s.drops)}</span>`   : '<span class="v-dim">—</span>'],
+    ['Restarts',     s && s.restarts>0 ? `<span style="color:var(--yellow)">${fmtBig(s.restarts)}</span>`: '<span class="v-dim">—</span>'],
+    ['Buffer',       s && s.bufferCap  ? mkBufBar(s.bufferLen, s.bufferCap) : '<span class="v-dim">—</span>'],
+  ].map(([label, val]) =>
+    `<div class="sb-metric"><div class="sb-metric-label">${label}</div><div class="sb-metric-value">${val}</div></div>`
+  ).join('');
+
+  // Sparkline
+  const sparkEl = document.getElementById('sb-sparkline');
+  if (sData.length >= 3) {
+    const W=272, H=40, max=Math.max(...sData,1);
+    const pts = sData.map((v,i)=>`${((i/(sData.length-1))*W).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');
+    const col = s && s.ratePerSec>0 ? 'var(--blue)' : 'var(--border2)';
+    sparkEl.innerHTML = `<svg width="${W}" height="${H}" style="width:100%;display:block"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  } else {
+    sparkEl.innerHTML = '<span class="sb-empty">Not enough data yet</span>';
+  }
+
+  // Config
+  const cfgWrap = document.getElementById('sb-config-wrap');
+  const cfgLines = [];
+  if (n.concurrency > 1) cfgLines.push(`Concurrency: <span>${n.concurrency}</span>`);
+  if (n.buffer > 0)      cfgLines.push(`Buffer: <span>${n.buffer}</span>`);
+  if (n.overflow > 0)    cfgLines.push(`Overflow: <span>${n.overflow === 1 ? 'DropOldest' : 'DropNewest'}</span>`);
+  if (cfgLines.length) {
+    cfgWrap.style.display = '';
+    document.getElementById('sb-config').innerHTML = cfgLines.map(l=>`<div>${l}</div>`).join('');
+  } else {
+    cfgWrap.style.display = 'none';
+  }
+
+  // Samples (selectable text)
+  const sampsEl = document.getElementById('sb-samples');
+  if (samps.length) {
+    sampsEl.innerHTML = samps.map(({value, ts}) => {
+      const t = new Date(ts).toLocaleTimeString('en', {hour12:false, fractionalSecondDigits:3});
+      return `<div class="sb-sample">${esc(value)}<div class="sb-sample-ts">${t}</div></div>`;
+    }).join('');
+  } else {
+    sampsEl.innerHTML = '<div class="sb-empty">No samples yet — items sampled every ~10th</div>';
+  }
+}
+
+// ── Stats table ───────────────────────────────────────────────────────────────
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const nodes = graph || Object.keys(stats).map(name=>({name,kind:'',inputs:[]}));
+  if (!nodes.length) return;
+  tbody.innerHTML = '';
+  for (const n of nodes) {
+    const s = stats[n.name] || null;
+    const tr = document.createElement('tr');
+    if (ROUTING.has(n.kind)) tr.className = 'routing';
+    if (!s) {
+      tr.innerHTML = `<td style="font-weight:600">${esc(n.name)}</td>
+        <td class="v-dim" style="font-size:9px;letter-spacing:.06em;text-transform:uppercase">${esc(n.kind)}</td>
+        <td class="s-pending">pending</td><td colspan="7" class="v-dim">—</td>`;
+    } else {
+      tr.innerHTML = `
+        <td style="font-weight:600">${esc(n.name)}</td>
+        <td class="v-dim" style="font-size:9px;letter-spacing:.06em;text-transform:uppercase">${esc(n.kind)}</td>
+        <td class="s-${s.status}">${sdot(s.status)} ${s.status}</td>
+        <td>${s.items>0 ? fmtBig(s.items) : '<span class="v-dim">—</span>'}</td>
+        <td class="${s.errors   >0?'v-err' :'v-dim'}">${s.errors   >0?fmtBig(s.errors)  :'—'}</td>
+        <td class="${s.drops    >0?'v-warn':'v-dim'}">${s.drops    >0?fmtBig(s.drops)   :'—'}</td>
+        <td class="${s.restarts >0?'v-warn':'v-dim'}">${s.restarts >0?fmtBig(s.restarts):'—'}</td>
+        <td>${mkSparkline(sparkData.get(n.name)||[], s.ratePerSec)}</td>
+        <td>${fmtNs(s.avgLatNs)}</td>
+        <td>${mkBufBar(s.bufferLen, s.bufferCap)}</td>`;
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function mkBufBar(len, cap) {
+  if (!cap) return '<span class="v-dim">—</span>';
+  const pct = Math.min(len / cap, 1);
+  const col = pct >= 0.8 ? 'var(--red)' : pct >= 0.5 ? 'var(--yellow)' : 'var(--green)';
+  return `<div class="buf-wrap">
+    <div class="buf-bar"><div class="buf-fill" style="width:${(pct*100).toFixed(0)}%;background:${col}"></div></div>
+    <span class="buf-label">${len}/${cap}</span>
+  </div>`;
+}
+
+function sdot(status) {
+  const c = {pending:'var(--muted)',running:'var(--blue)',done:'var(--green)'}[status]||'var(--muted)';
+  return `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${c};margin-right:4px;vertical-align:middle"></span>`;
+}
+
+// ── Event log ─────────────────────────────────────────────────────────────────
+function addLog(entry) {
+  if (!pipelineStartMs && entry.type==='start') pipelineStartMs = entry.ts;
+  const log = document.getElementById('log');
+  if (logEmpty) { log.innerHTML=''; logEmpty=false; }
+  const t = new Date(entry.ts).toLocaleTimeString('en',{hour12:false});
+  let line = `[${t}] ${entry.type.padEnd(7)}`;
+  if (entry.stage) line += `  ${entry.stage}`;
+  if (entry.msg)   line += `  · ${entry.msg}`;
+  const el = document.createElement('div');
+  el.className = `log-line lt-${entry.type}`;
+  el.textContent = line;
+  log.insertBefore(el, log.firstChild);
+  while (log.children.length > 120) log.removeChild(log.lastChild);
+}
+
+// ── Sparklines ────────────────────────────────────────────────────────────────
+function mkSparkline(data, current) {
+  const W=60, H=20;
+  const label = current>0 ? fmtRate(current,false) : '<span class="v-dim">—</span>';
+  if (data.length < 3) return label;
+  const max = Math.max(...data,1);
+  const pts = data.map((v,i) => `${((i/(data.length-1))*W).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');
+  const col = current>0 ? 'var(--blue)' : 'var(--border2)';
+  return `<div style="display:flex;align-items:center;gap:8px">` +
+    `<svg width="${W}" height="${H}" style="flex-shrink:0"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>` +
+    `<span>${label}</span></div>`;
+}
+
+// ── Formatting ────────────────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtBig(n) {
+  if (n>=1e9) return (n/1e9).toFixed(2)+'B';
+  if (n>=1e6) return (n/1e6).toFixed(2)+'M';
+  if (n>=1e3) return (n/1e3).toFixed(1)+'k';
+  return String(n);
+}
+function fmtRate(r, html=true) {
+  if (!r||r<=0) return html ? '<span class="v-dim">—</span>' : '—';
+  if (r>=1e6) return (r/1e6).toFixed(1)+'M';
+  if (r>=1e3) return (r/1e3).toFixed(1)+'k';
+  return r.toFixed(0);
+}
+function fmtNs(ns) {
+  if (!ns||ns<=0) return '<span class="v-dim">—</span>';
+  if (ns<1000)  return `${ns}ns`;
+  if (ns<1e6)   return `${(ns/1e3).toFixed(1)}µs`;
+  if (ns<1e9)   return `${(ns/1e6).toFixed(1)}ms`;
+  return `${(ns/1e9).toFixed(2)}s`;
+}
+function fmtUptime(ms) {
+  const s=Math.floor(ms/1000), m=Math.floor(s/60), h=Math.floor(m/60);
+  const p = n=>String(n).padStart(2,'0');
+  return h>0 ? `${p(h)}:${p(m%60)}:${p(s%60)}` : `${p(m)}:${p(s%60)}`;
+}
+</script>
+</body>
+</html>

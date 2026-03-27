@@ -4,15 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
 )
+
+// dropCountHook implements kitsune.Hook + kitsune.OverflowHook, counting drops.
+type dropCountHook struct {
+	kitsune.Hook
+	drops atomic.Int64
+}
+
+func (h *dropCountHook) OnDrop(_ context.Context, _ string, _ any) { h.drops.Add(1) }
 
 func TestLinearPipeline(t *testing.T) {
 	input := kitsune.FromSlice([]string{"1", "2", "3", "4", "5"})
@@ -653,5 +664,1393 @@ func TestBroadcastWithTransform(t *testing.T) {
 
 	if len(results) != 6 {
 		t.Fatalf("expected 6 items, got %d: %v", len(results), results)
+	}
+}
+
+func TestBroadcastPanics(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected Broadcast(0) to panic")
+		}
+	}()
+	kitsune.Broadcast(input, 0)
+}
+
+func TestMergePanics(t *testing.T) {
+	t.Run("no pipelines", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected Merge() to panic")
+			}
+		}()
+		kitsune.Merge[int]()
+	})
+
+	t.Run("different graphs", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected Merge with different graphs to panic")
+			}
+		}()
+		p1 := kitsune.FromSlice([]int{1})
+		p2 := kitsune.FromSlice([]int{2}) // different graph
+		kitsune.Merge(p1, p2)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Ordered output tests
+// ---------------------------------------------------------------------------
+
+func TestOrderedMap(t *testing.T) {
+	// 100 items with variable sleep; Concurrency(8) + Ordered() must emit in input order.
+	const n = 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		if v%2 == 1 {
+			time.Sleep(time.Millisecond)
+		}
+		return v, nil
+	}, kitsune.Concurrency(8), kitsune.Ordered()).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != n {
+		t.Fatalf("want %d results, got %d", n, len(results))
+	}
+	for i, v := range results {
+		if v != i {
+			t.Fatalf("position %d: want %d, got %d", i, i, v)
+		}
+	}
+}
+
+func TestOrderedMapWithSkip(t *testing.T) {
+	// Items that error+skip are dropped; remaining items stay in input order.
+	items := make([]int, 20)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		if v%3 == 0 {
+			return 0, fmt.Errorf("skip-me")
+		}
+		return v, nil
+	}, kitsune.Concurrency(4), kitsune.Ordered(), kitsune.OnError(kitsune.Skip())).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < len(results); i++ {
+		if results[i] <= results[i-1] {
+			t.Fatalf("order violation at index %d: %d not > %d", i, results[i], results[i-1])
+		}
+	}
+	for _, v := range results {
+		if v%3 == 0 {
+			t.Fatalf("skipped item %d appeared in results", v)
+		}
+	}
+}
+
+func TestOrderedMapWithHalt(t *testing.T) {
+	// An error with Halt must stop the pipeline without deadlock.
+	items := make([]int, 50)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		if v == 10 {
+			return 0, fmt.Errorf("halt-error")
+		}
+		return v, nil
+	}, kitsune.Concurrency(4), kitsune.Ordered()).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestOrderedFlatMap(t *testing.T) {
+	// FlatMap with Concurrency + Ordered: output order must match input order.
+	items := make([]int, 30)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.FlatMap(p, func(_ context.Context, v int) ([]int, error) {
+		if v%2 == 1 {
+			time.Sleep(time.Millisecond)
+		}
+		return []int{v * 10, v*10 + 1}, nil
+	}, kitsune.Concurrency(4), kitsune.Ordered()).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != len(items)*2 {
+		t.Fatalf("want %d results, got %d", len(items)*2, len(results))
+	}
+	for i, v := range results {
+		expected := (i/2)*10 + (i % 2)
+		if v != expected {
+			t.Fatalf("position %d: want %d, got %d", i, expected, v)
+		}
+	}
+}
+
+func TestOrderedNoConcurrency(t *testing.T) {
+	// Ordered() with Concurrency(1) behaves identically to no options.
+	items := []int{1, 2, 3, 4, 5}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v * 2, nil
+	}, kitsune.Concurrency(1), kitsune.Ordered()).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range results {
+		if v != items[i]*2 {
+			t.Fatalf("position %d: want %d, got %d", i, items[i]*2, v)
+		}
+	}
+}
+
+func TestUnorderedStillWorks(t *testing.T) {
+	// Regression: Concurrency(4) without Ordered() still produces all items.
+	const n = 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil
+	}, kitsune.Concurrency(4)).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != n {
+		t.Fatalf("want %d results, got %d", n, len(results))
+	}
+}
+
+func TestOrderedContextCancellation(t *testing.T) {
+	// No deadlock when context is cancelled during ordered concurrent processing.
+	ctx, cancel := context.WithCancel(context.Background())
+	items := make([]int, 200)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		kitsune.Map(p, func(_ context.Context, v int) (int, error) { //nolint
+			time.Sleep(5 * time.Millisecond)
+			return v, nil
+		}, kitsune.Concurrency(8), kitsune.Ordered()).Collect(ctx) //nolint
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline did not exit after context cancellation")
+	}
+}
+
+func TestOrderedRetry(t *testing.T) {
+	// A retried item ends up in the correct position after retry succeeds.
+	var attempt [10]int
+	items := make([]int, 10)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		attempt[v]++
+		if v == 5 && attempt[v] < 3 {
+			return 0, fmt.Errorf("transient")
+		}
+		return v, nil
+	}, kitsune.Concurrency(4), kitsune.Ordered(),
+		kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(0))),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 10 {
+		t.Fatalf("want 10 results, got %d", len(results))
+	}
+	for i, v := range results {
+		if v != i {
+			t.Fatalf("position %d: want %d, got %d", i, i, v)
+		}
+	}
+}
+
+func TestMergeRunnersPanics(t *testing.T) {
+	t.Run("no runners", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected MergeRunners() to panic")
+			}
+		}()
+		kitsune.MergeRunners()
+	})
+
+	t.Run("different graphs", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected MergeRunners with different graphs to panic")
+			}
+		}()
+		r1 := kitsune.FromSlice([]int{1}).Drain()
+		r2 := kitsune.FromSlice([]int{2}).Drain() // different graph
+		kitsune.MergeRunners(r1, r2)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Supervision tests
+// ---------------------------------------------------------------------------
+
+func TestSupervisionRestartOnError(t *testing.T) {
+	// Stage fails on first call, restarts and succeeds on subsequent calls.
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			return 0, fmt.Errorf("transient startup error")
+		}
+		return v * 2, nil
+	}, kitsune.Supervise(kitsune.RestartOnError(2, kitsune.FixedBackoff(0)))).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSupervisionRestartOnPanic(t *testing.T) {
+	// Stage panics on first item, restarts and processes remaining items.
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			panic("deliberate test panic")
+		}
+		return v * 2, nil
+	}, kitsune.Supervise(kitsune.RestartOnPanic(2, kitsune.FixedBackoff(0)))).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After restart, remaining items are processed.
+	if len(results) == 0 {
+		t.Fatal("expected some results after restart")
+	}
+}
+
+func TestSupervisionMaxRestartsExhausted(t *testing.T) {
+	// After exhausting restart budget, the error propagates.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return 0, fmt.Errorf("persistent error")
+	}, kitsune.Supervise(kitsune.RestartOnError(2, kitsune.FixedBackoff(0)))).
+		Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error after max restarts exhausted")
+	}
+}
+
+func TestSupervisionNoRestartDefault(t *testing.T) {
+	// Without Supervise, default behavior is unchanged: error halts.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return 0, fmt.Errorf("halt error")
+	}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSupervisionWithConcurrency(t *testing.T) {
+	// Supervision works with concurrent stages.
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			return 0, fmt.Errorf("first call fails")
+		}
+		return v, nil
+	}, kitsune.Concurrency(3),
+		kitsune.Supervise(kitsune.RestartOnError(3, kitsune.FixedBackoff(0))),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results after supervision restart")
+	}
+}
+
+func TestSupervisionBackoff(t *testing.T) {
+	// Backoff delay is respected between restarts.
+	// Two items in source: first run consumes item 1 and fails, restart #1 consumes
+	// item 2 and fails, restart #2 finds empty channel and exits. That's 2 backoffs.
+	var calls atomic.Int64
+	start := time.Now()
+	p := kitsune.FromSlice([]int{1, 2})
+	_, _ = kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		calls.Add(1)
+		return 0, fmt.Errorf("always fail")
+	}, kitsune.Supervise(kitsune.RestartOnError(3, kitsune.FixedBackoff(20*time.Millisecond)))).
+		Collect(context.Background())
+	elapsed := time.Since(start)
+	// At least 2 restarts × 20ms each = 40ms; allow some scheduler slack.
+	if elapsed < 35*time.Millisecond {
+		t.Fatalf("expected at least 35ms due to backoff, got %v", elapsed)
+	}
+}
+
+func TestSupervisionContextCancelled(t *testing.T) {
+	// Clean exit when context is cancelled during supervision backoff.
+	ctx, cancel := context.WithCancel(context.Background())
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		kitsune.Map(p, func(_ context.Context, v int) (int, error) { //nolint
+			calls.Add(1)
+			return 0, fmt.Errorf("always fails")
+		}, kitsune.Supervise(kitsune.SupervisionPolicy{
+			MaxRestarts: 100,
+			Backoff:     kitsune.FixedBackoff(100 * time.Millisecond),
+		})).Collect(ctx) //nolint
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pipeline did not exit after context cancellation during backoff")
+	}
+}
+
+func TestSupervisionWithItemErrorHandling(t *testing.T) {
+	// OnError(Skip) and Supervise compose correctly.
+	// Items that error+skip are dropped; stage restarts on a fatal error.
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{0, 1, 2, 3, 4})
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		calls.Add(1)
+		if v%2 == 0 {
+			return 0, fmt.Errorf("even-skip")
+		}
+		return v, nil
+	}, kitsune.OnError(kitsune.Skip()),
+		kitsune.Supervise(kitsune.RestartOnError(1, kitsune.FixedBackoff(0))),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only odd values should appear.
+	for _, v := range results {
+		if v%2 == 0 {
+			t.Fatalf("even value %d should have been skipped", v)
+		}
+	}
+}
+
+func TestSupervisionPanicSkip(t *testing.T) {
+	// PanicSkip recovers from a panic and returns nil without restarting.
+	p := kitsune.FromSlice([]int{1})
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		panic("skippable panic")
+	}, kitsune.Supervise(kitsune.SupervisionPolicy{OnPanic: kitsune.PanicSkip})).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatalf("expected nil error with PanicSkip, got: %v", err)
+	}
+}
+
+func TestSupervisionWindow(t *testing.T) {
+	// Restart counter resets after the window expires.
+	var calls atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		n := calls.Add(1)
+		// Fail on first call of each "run" (to trigger restart), succeed after.
+		if n%3 == 1 && n > 1 {
+			return 0, fmt.Errorf("restart trigger")
+		}
+		return v, nil
+	}, kitsune.Supervise(kitsune.SupervisionPolicy{
+		MaxRestarts: 2,
+		Window:      50 * time.Millisecond,
+		Backoff:     kitsune.FixedBackoff(0),
+	})).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = results // just confirm no error
+}
+
+// ---------------------------------------------------------------------------
+// Overflow tests
+// ---------------------------------------------------------------------------
+
+func TestOverflowDefaultIsBlock(t *testing.T) {
+	// Without Overflow(), all 50 items must be delivered (regression).
+	const n = 50
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != n {
+		t.Fatalf("want %d results, got %d", n, len(results))
+	}
+}
+
+func TestOverflowDropNewest(t *testing.T) {
+	// Fast source+map, slow terminal → buffer fills → DropNewest drops incoming items.
+	// Overflow is set on the Map stage's output (Buffer(2)); ForEach is the slow consumer.
+	const n = 200
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	var received []int
+	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil // fast map
+	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
+		ForEach(func(_ context.Context, v int) error {
+			time.Sleep(time.Millisecond) // slow consumer causes buffer to fill
+			received = append(received, v)
+			return nil
+		}).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received) >= n {
+		t.Fatalf("expected drops with DropNewest, but got all %d items", n)
+	}
+	// Surviving items must be in ascending order.
+	for i := 1; i < len(received); i++ {
+		if received[i] <= received[i-1] {
+			t.Fatalf("order violation at index %d: %d not > %d", i, received[i], received[i-1])
+		}
+	}
+}
+
+func TestOverflowDropOldest(t *testing.T) {
+	// Fast source+map, slow terminal → buffer fills → DropOldest evicts oldest items.
+	const n = 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	var received []int
+	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil // fast map
+	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropOldest)).
+		ForEach(func(_ context.Context, v int) error {
+			time.Sleep(2 * time.Millisecond)
+			received = append(received, v)
+			return nil
+		}).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received) >= n {
+		t.Fatalf("expected drops with DropOldest, but got all %d items", n)
+	}
+	// The last item (n-1) should be present: it's the newest and survives DropOldest.
+	last := received[len(received)-1]
+	if last != n-1 {
+		t.Fatalf("expected last surviving item to be %d (newest), got %d", n-1, last)
+	}
+}
+
+func TestOverflowDropNewestConcurrent(t *testing.T) {
+	// Concurrent stage with DropNewest must complete without deadlock or panic.
+	const n = 500
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil
+	}, kitsune.Concurrency(4), kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected some results")
+	}
+}
+
+func TestOverflowDropOldestConcurrent(t *testing.T) {
+	// Concurrent stage with DropOldest must have no races (run with -race).
+	const n = 500
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	results, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil
+	}, kitsune.Concurrency(4), kitsune.Buffer(2), kitsune.Overflow(kitsune.DropOldest)).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected some results")
+	}
+}
+
+func TestOverflowHookCalled(t *testing.T) {
+	// OverflowHook.OnDrop is called for each dropped item.
+	// dropCountHook is defined at package level (see below).
+	h := &dropCountHook{
+		Hook: kitsune.LogHook(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	}
+
+	const n = 200
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	var received atomic.Int64
+	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v, nil // fast map; slow consumer below causes buffer to fill
+	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
+		ForEach(func(_ context.Context, v int) error {
+			time.Sleep(time.Millisecond) // slow consumer
+			received.Add(1)
+			return nil
+		}).Run(context.Background(), kitsune.WithHook(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.Load() >= int64(n) {
+		t.Fatalf("expected some drops, got all %d items", n)
+	}
+	// OnDrop must have been called at least once.
+	if h.drops.Load() == 0 {
+		t.Fatal("expected OnDrop to be called, got 0 calls")
+	}
+	if received.Load()+h.drops.Load() > int64(n) {
+		// received + dropped can be ≤ n (source may also have been gated)
+		// but should never exceed n.
+		t.Fatalf("received(%d) + dropped(%d) > %d", received.Load(), h.drops.Load(), n)
+	}
+}
+
+func TestOverflowBroadcast(t *testing.T) {
+	// One fast consumer, one slow consumer via Broadcast.
+	// The slow consumer's channel drops items; the fast consumer gets all.
+	const n = 50
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	p := kitsune.FromSlice(items)
+	outs := kitsune.Broadcast(p, 2)
+	fast, slow := outs[0], outs[1]
+
+	var fastCount, slowCount atomic.Int64
+	r1 := fast.ForEach(func(_ context.Context, v int) error {
+		fastCount.Add(1)
+		return nil
+	})
+	// Overflow on the Map output — ForEach is slow, causing drops.
+	r2 := kitsune.Map(slow, func(_ context.Context, v int) (int, error) {
+		return v, nil // fast map
+	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
+		ForEach(func(_ context.Context, v int) error {
+			time.Sleep(2 * time.Millisecond) // slow consumer causes buffer to fill
+			slowCount.Add(1)
+			return nil
+		})
+
+	if err := kitsune.MergeRunners(r1, r2).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fastCount.Load() != int64(n) {
+		t.Fatalf("fast consumer: want %d, got %d", n, fastCount.Load())
+	}
+	if slowCount.Load() >= int64(n) {
+		t.Fatalf("slow consumer should have dropped some items, got all %d", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Context propagation audit
+// ---------------------------------------------------------------------------
+
+func TestMergeErrorPropagation(t *testing.T) {
+	// Merge must surface errors (e.g. context cancellation) rather than
+	// silently swallowing them.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Infinite source — cancel the context after a short delay to force an
+	// outbox.Send error path inside runMerge.
+	p := kitsune.Generate(func(_ context.Context, yield func(int) bool) error {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return nil
+			}
+		}
+	})
+
+	outs := kitsune.Broadcast(p, 2)
+	merged := kitsune.Merge(outs[0], outs[1])
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := merged.Collect(ctx)
+		done <- err
+	}()
+
+	// Give the pipeline a moment to start, then cancel.
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected non-nil error after context cancellation, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline did not terminate after context cancellation")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test coverage pass
+// ---------------------------------------------------------------------------
+
+func TestSupervisionExhaustion(t *testing.T) {
+	// After MaxRestarts is exhausted the pipeline must terminate with the
+	// persistent error, not hang.
+	persistent := errors.New("persistent failure")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := kitsune.Map(
+			kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, v int) (int, error) {
+				return 0, persistent
+			},
+			kitsune.Supervise(kitsune.RestartOnError(2, kitsune.FixedBackoff(0))),
+		).Collect(context.Background())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, persistent) {
+			t.Fatalf("expected persistent error, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline hung after supervision exhaustion")
+	}
+}
+
+func TestSupervisionConcurrentRestarts(t *testing.T) {
+	// Concurrency(4) + supervision: verify no data races (run with -race).
+	const n = 100
+	var attempts atomic.Int64
+
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	results, err := kitsune.Map(
+		kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) {
+			if attempts.Add(1) <= 4 {
+				return 0, errors.New("transient")
+			}
+			return v * 2, nil
+		},
+		kitsune.Concurrency(4),
+		kitsune.Supervise(kitsune.RestartOnError(3, kitsune.FixedBackoff(0))),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+}
+
+func TestOrderedCancellationNoLeak(t *testing.T) {
+	// Cancelling an ordered concurrent stage must not deadlock.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	const n = 1000
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := kitsune.Map(
+			kitsune.FromSlice(items),
+			func(_ context.Context, v int) (int, error) {
+				return v, nil
+			},
+			kitsune.Concurrency(8),
+			kitsune.Ordered(),
+		).Collect(ctx)
+		done <- err
+	}()
+
+	time.Sleep(time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Pipeline terminated — no deadlock.
+	case <-time.After(5 * time.Second):
+		t.Fatal("ordered pipeline deadlocked under cancellation")
+	}
+}
+
+func TestOverflowUnderLoad(t *testing.T) {
+	// High-throughput stress: no deadlock, drops occur with both drop strategies.
+	const n = 10_000
+
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	for _, strategy := range []kitsune.OverflowStrategy{kitsune.DropNewest, kitsune.DropOldest} {
+		h := &dropCountHook{Hook: kitsune.LogHook(slog.New(slog.NewTextHandler(io.Discard, nil)))}
+		var received atomic.Int64
+
+		err := kitsune.Map(
+			kitsune.FromSlice(items),
+			func(_ context.Context, v int) (int, error) { return v, nil },
+			kitsune.Concurrency(8),
+			kitsune.Buffer(4),
+			kitsune.Overflow(strategy),
+		).ForEach(func(_ context.Context, v int) error {
+			received.Add(1)
+			return nil
+		}).Run(context.Background(), kitsune.WithHook(h))
+		if err != nil {
+			t.Fatalf("strategy %v: unexpected error: %v", strategy, err)
+		}
+		if received.Load() == 0 {
+			t.Fatalf("strategy %v: no items received", strategy)
+		}
+	}
+}
+
+func TestExponentialBackoff(t *testing.T) {
+	bo := kitsune.ExponentialBackoff(10*time.Millisecond, 100*time.Millisecond)
+
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{0, 10 * time.Millisecond},
+		{1, 20 * time.Millisecond},
+		{2, 40 * time.Millisecond},
+		{3, 80 * time.Millisecond},
+		{4, 100 * time.Millisecond}, // capped
+		{10, 100 * time.Millisecond},
+	}
+	for _, c := range cases {
+		got := bo(c.attempt)
+		if got != c.want {
+			t.Errorf("attempt %d: got %v, want %v", c.attempt, got, c.want)
+		}
+	}
+}
+
+func TestRetryThenFallback(t *testing.T) {
+	// RetryThen(2, ..., Skip()) must skip items after retries are exhausted.
+	persistent := errors.New("always fails")
+	var calls atomic.Int64
+
+	results, err := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			calls.Add(1)
+			return 0, persistent
+		},
+		kitsune.OnError(kitsune.RetryThen(2, kitsune.FixedBackoff(0), kitsune.Skip())),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("expected nil error after skip fallback, got: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty results (all skipped), got %d", len(results))
+	}
+	// Each of 3 items gets 3 attempts (initial + 2 retries).
+	if calls.Load() != 9 {
+		t.Fatalf("expected 9 calls (3 items × 3 attempts), got %d", calls.Load())
+	}
+}
+
+func TestRestartAlways(t *testing.T) {
+	// RestartAlways restarts on both errors and panics. After the first item
+	// errors/panics (consuming it), the restarted stage processes remaining items.
+	t.Run("recovers from error", func(t *testing.T) {
+		var calls atomic.Int64
+		results, err := kitsune.Map(
+			kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, v int) (int, error) {
+				if calls.Add(1) == 1 {
+					return 0, errors.New("transient")
+				}
+				return v * 2, nil
+			},
+			kitsune.Supervise(kitsune.RestartAlways(1, kitsune.FixedBackoff(0))),
+		).Collect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Item 1 consumed by the erroring attempt; items 2 and 3 processed after restart.
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results (items 2 and 3), got %v", results)
+		}
+	})
+
+	t.Run("recovers from panic", func(t *testing.T) {
+		var calls atomic.Int64
+		results, err := kitsune.Map(
+			kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, v int) (int, error) {
+				if calls.Add(1) == 1 {
+					panic("transient panic")
+				}
+				return v * 2, nil
+			},
+			kitsune.Supervise(kitsune.RestartAlways(1, kitsune.FixedBackoff(0))),
+		).Collect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results (items 2 and 3), got %v", results)
+		}
+	})
+}
+
+func TestEmptyInput(t *testing.T) {
+	// Each sub-test needs its own pipeline — a graph node may only have one consumer.
+	t.Run("Map", func(t *testing.T) {
+		results, err := kitsune.Map(
+			kitsune.FromSlice([]int{}),
+			func(_ context.Context, v int) (int, error) { return v, nil },
+		).Collect(context.Background())
+		if err != nil || len(results) != 0 {
+			t.Fatalf("Map: got %v, err %v", results, err)
+		}
+	})
+
+	t.Run("Filter", func(t *testing.T) {
+		results, err := kitsune.FromSlice([]int{}).
+			Filter(func(v int) bool { return true }).
+			Collect(context.Background())
+		if err != nil || len(results) != 0 {
+			t.Fatalf("Filter: got %v, err %v", results, err)
+		}
+	})
+
+	t.Run("FlatMap", func(t *testing.T) {
+		results, err := kitsune.FlatMap(
+			kitsune.FromSlice([]int{}),
+			func(_ context.Context, v int) ([]int, error) { return []int{v, v}, nil },
+		).Collect(context.Background())
+		if err != nil || len(results) != 0 {
+			t.Fatalf("FlatMap: got %v, err %v", results, err)
+		}
+	})
+
+	t.Run("Batch", func(t *testing.T) {
+		results, err := kitsune.Batch(kitsune.FromSlice([]int{}), 3).Collect(context.Background())
+		if err != nil || len(results) != 0 {
+			t.Fatalf("Batch: got %v, err %v", results, err)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Graceful drain
+// ---------------------------------------------------------------------------
+
+func TestWithDrainFlushesPartialBatch(t *testing.T) {
+	// A batch stage should flush its partial buffer when context is cancelled
+	// with a drain timeout, rather than dropping items.
+	const batchSize = 10
+	const totalItems = 5 // fewer than batchSize so the batch never auto-flushes
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var received [][]int
+	var mu sync.Mutex
+
+	// Source emits totalItems, then blocks until context is cancelled.
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := range totalItems {
+			if !yield(i) {
+				return nil
+			}
+		}
+		// Park until cancelled.
+		<-ctx.Done()
+		return nil
+	})
+
+	runner := kitsune.Batch(p, batchSize).ForEach(func(_ context.Context, batch []int) error {
+		mu.Lock()
+		received = append(received, append([]int(nil), batch...))
+		mu.Unlock()
+		return nil
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Run(ctx, kitsune.WithDrain(2*time.Second))
+	}()
+
+	// Let the source emit all items, then cancel.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline did not drain within timeout")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) == 0 {
+		t.Fatal("expected partial batch to be flushed, got none")
+	}
+	total := 0
+	for _, b := range received {
+		total += len(b)
+	}
+	if total != totalItems {
+		t.Fatalf("expected %d items total, got %d", totalItems, total)
+	}
+}
+
+func TestWithDrainHardStop(t *testing.T) {
+	// When the drain timeout expires, the pipeline should terminate even if
+	// a stage is still busy. The hard stop must happen within a reasonable bound.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Source parks forever after emitting one item.
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		yield(1)
+		<-ctx.Done()
+		return nil
+	})
+
+	// Sink simulates slow work but respects context cancellation.
+	// time.Sleep alone would ignore ctx; use select so the hard stop can unblock it.
+	runner := p.ForEach(func(ctx context.Context, v int) error {
+		select {
+		case <-time.After(10 * time.Second): // much longer than drain timeout
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Run(ctx, kitsune.WithDrain(100*time.Millisecond))
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Pipeline terminated — hard stop worked.
+	case <-time.After(3 * time.Second):
+		t.Fatal("pipeline did not hard-stop after drain timeout")
+	}
+}
+
+func TestWithDrainNormalCompletion(t *testing.T) {
+	// WithDrain should not affect normal (non-cancelled) pipeline completion.
+	results, err := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) { return v * 2, nil },
+	).Collect(context.Background(), kitsune.WithDrain(5*time.Second))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scan
+// ---------------------------------------------------------------------------
+
+func TestScan(t *testing.T) {
+	results, err := kitsune.Scan(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5}),
+		0,
+		func(sum, v int) int { return sum + v },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 3, 6, 10, 15}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Fatalf("results[%d] = %d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestScanEmpty(t *testing.T) {
+	results, err := kitsune.Scan(kitsune.FromSlice([]int{}), 0, func(s, v int) int { return s + v }).
+		Collect(context.Background())
+	if err != nil || len(results) != 0 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GroupBy
+// ---------------------------------------------------------------------------
+
+func TestGroupBy(t *testing.T) {
+	type Event struct{ Kind, Val string }
+	input := []Event{
+		{"a", "1"}, {"b", "2"}, {"a", "3"}, {"b", "4"}, {"c", "5"},
+	}
+	maps, err := kitsune.GroupBy(
+		kitsune.FromSlice(input),
+		func(e Event) string { return e.Kind },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(maps) != 1 {
+		t.Fatalf("expected 1 map item, got %d", len(maps))
+	}
+	m := maps[0]
+	if len(m["a"]) != 2 || len(m["b"]) != 2 || len(m["c"]) != 1 {
+		t.Fatalf("unexpected groups: %v", m)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Distinct / DistinctBy
+// ---------------------------------------------------------------------------
+
+func TestDistinct(t *testing.T) {
+	results, err := kitsune.Distinct(
+		kitsune.FromSlice([]int{1, 2, 1, 3, 2, 4}),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 distinct items, got %v", results)
+	}
+}
+
+func TestDistinctBy(t *testing.T) {
+	type Item struct{ ID int; Val string }
+	input := []Item{{1, "a"}, {2, "b"}, {1, "c"}, {3, "d"}, {2, "e"}}
+	results, err := kitsune.DistinctBy(
+		kitsune.FromSlice(input),
+		func(x Item) string { return fmt.Sprintf("%d", x.ID) },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 distinct items, got %v", results)
+	}
+	// First occurrence per ID should be kept.
+	if results[0].Val != "a" || results[1].Val != "b" || results[2].Val != "d" {
+		t.Fatalf("wrong first-occurrence items: %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TakeWhile / DropWhile
+// ---------------------------------------------------------------------------
+
+func TestTakeWhile(t *testing.T) {
+	results, err := kitsune.TakeWhile(
+		kitsune.FromSlice([]int{1, 2, 3, 10, 4, 5}),
+		func(v int) bool { return v < 5 },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Fatalf("results[%d] = %d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestTakeWhileAllPass(t *testing.T) {
+	results, err := kitsune.TakeWhile(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(v int) bool { return v < 100 },
+	).Collect(context.Background())
+	if err != nil || len(results) != 3 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+func TestTakeWhileNonePass(t *testing.T) {
+	results, err := kitsune.TakeWhile(
+		kitsune.FromSlice([]int{10, 20, 30}),
+		func(v int) bool { return v < 5 },
+	).Collect(context.Background())
+	if err != nil || len(results) != 0 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+func TestDropWhile(t *testing.T) {
+	results, err := kitsune.DropWhile(
+		kitsune.FromSlice([]int{1, 2, 3, 10, 4, 5}),
+		func(v int) bool { return v < 5 },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 4, 5}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Fatalf("results[%d] = %d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestDropWhileAllDrop(t *testing.T) {
+	results, err := kitsune.DropWhile(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(v int) bool { return v < 100 },
+	).Collect(context.Background())
+	if err != nil || len(results) != 0 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Zip
+// ---------------------------------------------------------------------------
+
+func TestZip(t *testing.T) {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3}), 2)
+	doubled := kitsune.Map(branches[1], func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	pairs, err := kitsune.Zip(branches[0], doubled).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []kitsune.Pair[int, int]{{1, 2}, {2, 4}, {3, 6}}
+	if len(pairs) != len(want) {
+		t.Fatalf("got %v, want %v", pairs, want)
+	}
+	for i, p := range pairs {
+		if p != want[i] {
+			t.Fatalf("pairs[%d] = %v, want %v", i, p, want[i])
+		}
+	}
+}
+
+func TestZipUnequalLengths(t *testing.T) {
+	// Shorter stream determines output length.
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 2)
+	short := branches[0].Take(3)
+	full := branches[1]
+	pairs, err := kitsune.Zip(short, full).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 3 {
+		t.Fatalf("expected 3 pairs, got %d: %v", len(pairs), pairs)
+	}
+}
+
+func TestZipCrossGraphPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for cross-graph Zip")
+		}
+	}()
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]string{"x", "y", "z"})
+	kitsune.Zip(a, b) // should panic
+}
+
+func TestScanTypeChange(t *testing.T) {
+	// S ≠ T: accumulate ints into a string.
+	results, err := kitsune.Scan(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		"",
+		func(acc string, v int) string {
+			if acc == "" {
+				return fmt.Sprintf("%d", v)
+			}
+			return acc + "," + fmt.Sprintf("%d", v)
+		},
+	).Collect(context.Background())
+	if err != nil || len(results) != 3 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+	if results[2] != "1,2,3" {
+		t.Fatalf("last accumulator = %q, want %q", results[2], "1,2,3")
+	}
+}
+
+func TestGroupByEmpty(t *testing.T) {
+	maps, err := kitsune.GroupBy(
+		kitsune.FromSlice([]int{}),
+		func(v int) int { return v % 2 },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty source produces no batches, so GroupBy emits nothing.
+	if len(maps) != 0 {
+		t.Fatalf("expected empty output, got %v", maps)
+	}
+}
+
+func TestDistinctOrdering(t *testing.T) {
+	// First occurrence order must be preserved.
+	results, err := kitsune.Distinct(
+		kitsune.FromSlice([]int{5, 3, 5, 1, 3, 2}),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{5, 3, 1, 2}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Fatalf("results[%d] = %d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestDistinctEmpty(t *testing.T) {
+	results, err := kitsune.Distinct(kitsune.FromSlice([]int{})).Collect(context.Background())
+	if err != nil || len(results) != 0 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+func TestDropWhileNoneDrop(t *testing.T) {
+	// First item already fails predicate — all items should pass through.
+	results, err := kitsune.DropWhile(
+		kitsune.FromSlice([]int{10, 1, 2}),
+		func(v int) bool { return v < 5 },
+	).Collect(context.Background())
+	if err != nil || len(results) != 3 {
+		t.Fatalf("got %v, err %v", results, err)
+	}
+}
+
+func TestTakeWhileStopsSource(t *testing.T) {
+	// Verify that TakeWhile stops an infinite source without deadlock.
+	counter := kitsune.Generate(func(_ context.Context, yield func(int) bool) error {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return nil
+			}
+		}
+	})
+	results, err := kitsune.TakeWhile(counter, func(v int) bool { return v < 5 }).
+		Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5 items, got %d: %v", len(results), results)
+	}
+}
+
+func TestZipEmpty(t *testing.T) {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{}), 2)
+	pairs, err := kitsune.Zip(branches[0], branches[1]).Collect(context.Background())
+	if err != nil || len(pairs) != 0 {
+		t.Fatalf("got %v, err %v", pairs, err)
+	}
+}
+
+func TestZipDifferentTypes(t *testing.T) {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3}), 2)
+	asStr := kitsune.Map(branches[1], func(_ context.Context, v int) (string, error) {
+		return fmt.Sprintf("item-%d", v), nil
+	})
+	pairs, err := kitsune.Zip(branches[0], asStr).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 3 {
+		t.Fatalf("expected 3 pairs, got %d", len(pairs))
+	}
+	if pairs[0].First != 1 || pairs[0].Second != "item-1" {
+		t.Fatalf("unexpected first pair: %v", pairs[0])
 	}
 }

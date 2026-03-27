@@ -22,14 +22,18 @@ type RunOption func(*runConfig)
 type stageConfig struct {
 	name         string
 	concurrency  int
+	ordered      bool
 	buffer       int
+	overflow     int // engine.OverflowBlock/DropNewest/DropOldest
 	errorHandler engine.ErrorHandler
 	batchTimeout time.Duration
+	supervision  engine.SupervisionPolicy
 }
 
 type runConfig struct {
-	store Store
-	hook  Hook
+	store        Store
+	hook         Hook
+	drainTimeout time.Duration
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -61,8 +65,11 @@ func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOp
 		Fn:           fn,
 		Inputs:       []engine.InputRef{{Node: p.node, Port: p.port}},
 		Concurrency:  cfg.concurrency,
+		Ordered:      cfg.ordered,
 		Buffer:       cfg.buffer,
+		Overflow:     cfg.overflow,
 		ErrorHandler: cfg.errorHandler,
+		Supervision:  cfg.supervision,
 	}
 }
 
@@ -71,13 +78,21 @@ func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOp
 // ---------------------------------------------------------------------------
 
 // Concurrency sets the number of parallel workers for a stage (default: 1).
-// With n > 1, output order is NOT preserved.
+// With n > 1, output order is NOT preserved unless [Ordered] is also set.
 func Concurrency(n int) StageOption {
 	return func(c *stageConfig) {
 		if n > 0 {
 			c.concurrency = n
 		}
 	}
+}
+
+// Ordered preserves input order for concurrent stages. Use with [Concurrency]
+// to process items in parallel while emitting results in the original input order.
+// Without Concurrency(n) where n > 1, Ordered has no effect.
+// Supported on [Map] and [FlatMap] stages; has no effect on [ForEach].
+func Ordered() StageOption {
+	return func(c *stageConfig) { c.ordered = true }
 }
 
 // Buffer sets the channel buffer size between this stage and the next (default: 16).
@@ -106,6 +121,99 @@ func BatchTimeout(d time.Duration) StageOption {
 }
 
 // ---------------------------------------------------------------------------
+// Overflow
+// ---------------------------------------------------------------------------
+
+// OverflowStrategy controls what happens when a stage's output buffer is full.
+type OverflowStrategy int
+
+const (
+	// Block waits until space is available (backpressure). This is the default.
+	Block OverflowStrategy = iota
+	// DropNewest discards the incoming item when the buffer is full.
+	// The pipeline continues without blocking.
+	DropNewest
+	// DropOldest evicts the oldest buffered item to make room for the new one.
+	DropOldest
+)
+
+// Overflow sets the overflow strategy for a stage's output buffer (default: [Block]).
+// Combine with [Buffer] to tune capacity:
+//
+//	kitsune.Buffer(64), kitsune.Overflow(kitsune.DropNewest)
+//
+// When [Ordered] is also set, dropped items create gaps but remaining items stay
+// in their original relative order.
+func Overflow(s OverflowStrategy) StageOption {
+	return func(c *stageConfig) { c.overflow = int(s) }
+}
+
+// ---------------------------------------------------------------------------
+// Supervision
+// ---------------------------------------------------------------------------
+
+// SupervisionPolicy configures per-stage restart and panic-recovery behavior.
+// The zero value means no restarts; panics propagate (default v1 behavior).
+type SupervisionPolicy struct {
+	// MaxRestarts is the maximum number of times the stage may be restarted.
+	// 0 means no restarts.
+	MaxRestarts int
+	// Window resets the restart counter after this much time without a crash.
+	// 0 means the counter is never reset.
+	Window time.Duration
+	// Backoff delays between restarts. nil means no delay.
+	Backoff Backoff
+	// OnPanic controls what happens when the stage goroutine panics.
+	// Default (zero value): [PanicPropagate].
+	OnPanic PanicAction
+}
+
+// PanicAction configures what happens when a stage goroutine panics.
+type PanicAction int
+
+const (
+	// PanicPropagate re-panics, crashing the pipeline (default).
+	PanicPropagate PanicAction = iota
+	// PanicRestart treats the panic as a restartable error.
+	// The stage is restarted up to [SupervisionPolicy.MaxRestarts] times.
+	PanicRestart
+	// PanicSkip recovers and continues; the item that caused the panic is lost.
+	PanicSkip
+)
+
+// RestartOnError returns a [SupervisionPolicy] that restarts the stage up to
+// maxRestarts times on error. Panics still propagate.
+func RestartOnError(maxRestarts int, b Backoff) SupervisionPolicy {
+	return SupervisionPolicy{MaxRestarts: maxRestarts, Backoff: b, OnPanic: PanicPropagate}
+}
+
+// RestartOnPanic returns a [SupervisionPolicy] that restarts the stage up to
+// maxRestarts times when it panics (panic is treated as a restartable error).
+// Normal errors still halt the pipeline.
+func RestartOnPanic(maxRestarts int, b Backoff) SupervisionPolicy {
+	return SupervisionPolicy{MaxRestarts: maxRestarts, Backoff: b, OnPanic: PanicRestart}
+}
+
+// RestartAlways returns a [SupervisionPolicy] that restarts the stage on both
+// errors and panics, up to maxRestarts times.
+func RestartAlways(maxRestarts int, b Backoff) SupervisionPolicy {
+	return SupervisionPolicy{MaxRestarts: maxRestarts, Backoff: b, OnPanic: PanicRestart}
+}
+
+// Supervise sets the supervision policy for a stage.
+// See [RestartOnError], [RestartOnPanic], [RestartAlways] for convenience constructors.
+func Supervise(policy SupervisionPolicy) StageOption {
+	return func(c *stageConfig) {
+		c.supervision = engine.SupervisionPolicy{
+			MaxRestarts: policy.MaxRestarts,
+			Window:      policy.Window,
+			Backoff:     policy.Backoff,
+			OnPanic:     engine.PanicAction(policy.OnPanic),
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Run options
 // ---------------------------------------------------------------------------
 
@@ -117,6 +225,18 @@ func WithStore(s Store) RunOption {
 // WithHook sets the observability hook for the pipeline run.
 func WithHook(h Hook) RunOption {
 	return func(c *runConfig) { c.hook = h }
+}
+
+// WithDrain enables graceful shutdown. When the pipeline's context is cancelled,
+// sources are told to stop producing and the pipeline is given up to timeout for
+// in-flight items to drain through the remaining stages naturally.
+//
+// Without this option, context cancellation immediately abandons all in-flight
+// work and any partial batches are dropped. With it, items already in the
+// pipeline continue processing until channels drain, then the pipeline exits
+// cleanly. If the drain takes longer than timeout, a hard stop is forced.
+func WithDrain(timeout time.Duration) RunOption {
+	return func(c *runConfig) { c.drainTimeout = timeout }
 }
 
 // ---------------------------------------------------------------------------
@@ -210,4 +330,8 @@ func (h *logHook) OnItem(ctx context.Context, stage string, dur time.Duration, e
 
 func (h *logHook) OnStageDone(ctx context.Context, stage string, processed int64, errors int64) {
 	h.logger.InfoContext(ctx, "stage done", "stage", stage, "processed", processed, "errors", errors)
+}
+
+func (h *logHook) OnDrop(ctx context.Context, stage string, _ any) {
+	h.logger.WarnContext(ctx, "item dropped (buffer full)", "stage", stage)
 }

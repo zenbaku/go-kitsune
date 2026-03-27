@@ -19,8 +19,11 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		Fn:           wrapped,
 		Inputs:       []engine.InputRef{{Node: p.node, Port: p.port}},
 		Concurrency:  scfg.concurrency,
+		Ordered:      scfg.ordered,
 		Buffer:       scfg.buffer,
+		Overflow:     scfg.overflow,
 		ErrorHandler: scfg.errorHandler,
+		Supervision:  scfg.supervision,
 	})
 	return &Runner{g: p.g}
 }

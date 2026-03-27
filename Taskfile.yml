@@ -49,7 +49,7 @@ tasks:
       - rm -f coverage.out
 
   test:ext:
-    desc: Run extension tests (Redis, SQLite, file, HTTP)
+    desc: Run tail tests (kredis, ksqlite, kfile, khttp)
     cmds:
       - for: [kredis, ksqlite, kfile, khttp]
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
@@ -60,19 +60,19 @@ tasks:
       - go test -bench=. -benchmem -count=1 -timeout 60s ./...
 
   test:examples:
-    desc: Build and run all examples (skips redis if unavailable)
+    desc: Build and run all examples (skips redis tail if unavailable)
     cmds:
-      # Root-module examples — build and run (all are fast and self-contained).
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter]
+      # Core examples — build and run (all are fast and self-contained).
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow]
         cmd: go run ./examples/{{.ITEM}} > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
-      # Separate-module examples — build and run.
+      # Tail examples — build and run.
       - for: [files, sqlite, http]
         cmd: cd examples/{{.ITEM}} && go run . > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
-      # Redis example — only if Redis is reachable.
+      # Redis tail example — only if Redis is reachable.
       - redis-cli ping > /dev/null 2>&1 && (cd examples/redis && go run . > /dev/null 2>&1 && echo "PASS examples/redis") || echo "SKIP examples/redis (Redis not available)"
 
   test:all:
-    desc: Run core + extension + example tests
+    desc: Run core + tail + example tests
     cmds:
       - task: test:race
       - task: test:ext
@@ -81,13 +81,18 @@ tasks:
   examples:
     desc: Run all examples
     cmds:
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter]
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow]
         cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
       - for: [files, redis, sqlite, http]
         cmd: echo "=== {{.ITEM}} ===" && cd examples/{{.ITEM}} && go run .
 
+  inspector:
+    desc: Launch the live inspector dashboard (opens a pipeline in your browser)
+    cmds:
+      - go run ./examples/inspector
+
   ci:
-    desc: Full CI check (fmt, vet, race tests, extensions)
+    desc: Full CI check (fmt, vet, race tests, tails)
     cmds:
       - task: fmt
       - task: vet

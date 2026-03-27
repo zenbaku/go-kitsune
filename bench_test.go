@@ -105,3 +105,28 @@ func BenchmarkCachedMap(b *testing.B) {
 		}, func(n int) string { return fmt.Sprintf("%d", n) }, cache, 0).Drain().Run(context.Background())
 	}
 }
+
+func BenchmarkMapOrdered(b *testing.B) {
+	// Measures throughput of Concurrency(8) + Ordered() vs plain Concurrency(8).
+	items := makeItems(10_000)
+	b.Run("ordered", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p := kitsune.FromSlice(items)
+			kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+				return n * 2, nil
+			}, kitsune.Concurrency(8), kitsune.Ordered()).Drain().Run(context.Background())
+		}
+	})
+	b.Run("unordered", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p := kitsune.FromSlice(items)
+			kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+				return n * 2, nil
+			}, kitsune.Concurrency(8)).Drain().Run(context.Background())
+		}
+	})
+}

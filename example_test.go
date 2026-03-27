@@ -103,3 +103,82 @@ func ExamplePipeline_Through() {
 	fmt.Println(results)
 	// Output: [1 2]
 }
+
+func ExampleScan() {
+	// Running sum — emits the accumulator after each item.
+	results, _ := kitsune.Scan(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5}),
+		0,
+		func(sum, v int) int { return sum + v },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 3 6 10 15]
+}
+
+func ExampleGroupBy() {
+	type Event struct{ Kind, Val string }
+	input := kitsune.FromSlice([]Event{
+		{"click", "btn1"}, {"scroll", "page"}, {"click", "btn2"},
+	})
+	maps, _ := kitsune.GroupBy(input, func(e Event) string { return e.Kind }).
+		Collect(context.Background())
+	m := maps[0]
+	fmt.Println(len(m["click"]), len(m["scroll"]))
+	// Output: 2 1
+}
+
+func ExampleDistinct() {
+	results, _ := kitsune.Distinct(
+		kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9, 2, 6, 5}),
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [3 1 4 5 9 2 6]
+}
+
+func ExampleDistinctBy() {
+	type Item struct{ ID, Name string }
+	input := kitsune.FromSlice([]Item{
+		{"a", "Alice"}, {"b", "Bob"}, {"a", "Alex"},
+	})
+	results, _ := kitsune.DistinctBy(input, func(x Item) string { return x.ID }).
+		Collect(context.Background())
+	for _, r := range results {
+		fmt.Println(r.ID, r.Name)
+	}
+	// Output:
+	// a Alice
+	// b Bob
+}
+
+func ExampleTakeWhile() {
+	results, _ := kitsune.TakeWhile(
+		kitsune.FromSlice([]int{2, 4, 6, 7, 8, 10}),
+		func(n int) bool { return n%2 == 0 },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [2 4 6]
+}
+
+func ExampleDropWhile() {
+	results, _ := kitsune.DropWhile(
+		kitsune.FromSlice([]int{1, 2, 3, 10, 4, 5}),
+		func(n int) bool { return n < 5 },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [10 4 5]
+}
+
+func ExampleZip() {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3}), 2)
+	doubled := kitsune.Map(branches[1], func(_ context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+	pairs, _ := kitsune.Zip(branches[0], doubled).Collect(context.Background())
+	for _, p := range pairs {
+		fmt.Printf("%d→%d\n", p.First, p.Second)
+	}
+	// Output:
+	// 1→2
+	// 2→4
+	// 3→6
+}
