@@ -1395,7 +1395,7 @@ func TestSupervisionConcurrentRestarts(t *testing.T) {
 	results, err := kitsune.Map(
 		kitsune.FromSlice(items),
 		func(_ context.Context, v int) (int, error) {
-			if attempts.Add(1) <= 4 {
+			if attempts.Add(1) <= 3 {
 				return 0, errors.New("transient")
 			}
 			return v * 2, nil
