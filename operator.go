@@ -700,6 +700,22 @@ func Zip[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
 	return &Pipeline[Pair[A, B]]{g: a.g, node: id}
 }
 
+// ZipWith pairs items from two same-graph pipelines by position and combines
+// each pair immediately using fn, avoiding the intermediate [Pair] value.
+// It is equivalent to [Map] applied to [Zip] but expressed in a single call.
+//
+// Both pipelines must share the same graph. Panics otherwise.
+//
+//	// Multiply paired values from two branches.
+//	kitsune.ZipWith(as, bs, func(_ context.Context, a, b int) (int, error) {
+//	    return a * b, nil
+//	})
+func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+	return Map(Zip(a, b), func(ctx context.Context, p Pair[A, B]) (O, error) {
+		return fn(ctx, p.First, p.Second)
+	}, opts...)
+}
+
 // Pairwise emits consecutive overlapping pairs from the stream.
 // A stream of N items produces N-1 pairs; a stream with fewer than 2 items
 // produces nothing.

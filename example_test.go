@@ -312,6 +312,80 @@ func ExampleMapResult() {
 	// failed items: 1
 }
 
+func ExampleZipWith() {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3}), 2)
+	doubled := kitsune.Map(branches[1], func(_ context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+	results, _ := kitsune.ZipWith(branches[0], doubled,
+		func(_ context.Context, a, b int) (int, error) { return a + b, nil },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [3 6 9]
+}
+
+func ExampleMapBatch() {
+	// Sum each batch of 3 — emits one value per batch.
+	results, _ := kitsune.MapBatch(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 3,
+		func(_ context.Context, batch []int) ([]int, error) {
+			sum := 0
+			for _, v := range batch {
+				sum += v
+			}
+			return []int{sum}, nil
+		},
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [6 9]
+}
+
+func ExampleLookupBy() {
+	squares := map[int]int{1: 1, 2: 4, 3: 9}
+	results, _ := kitsune.LookupBy(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		kitsune.LookupConfig[int, int, int]{
+			Key: func(n int) int { return n },
+			Fetch: func(_ context.Context, ids []int) (map[int]int, error) {
+				m := make(map[int]int, len(ids))
+				for _, id := range ids {
+					m[id] = squares[id]
+				}
+				return m, nil
+			},
+		},
+	).Collect(context.Background())
+	for _, p := range results {
+		fmt.Printf("%d→%d\n", p.First, p.Second)
+	}
+	// Output:
+	// 1→1
+	// 2→4
+	// 3→9
+}
+
+func ExampleEnrich() {
+	names := map[int]string{1: "one", 2: "two", 3: "three"}
+	results, _ := kitsune.Enrich(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		kitsune.EnrichConfig[int, int, string, string]{
+			Key: func(n int) int { return n },
+			Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+				m := make(map[int]string, len(ids))
+				for _, id := range ids {
+					m[id] = names[id]
+				}
+				return m, nil
+			},
+			Join: func(n int, name string) string {
+				return fmt.Sprintf("%d=%s", n, name)
+			},
+		},
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1=one 2=two 3=three]
+}
+
 func ExampleWithLatestFrom() {
 	// WithLatestFrom pairs each primary item with the most recent secondary value.
 	// Items arriving before any secondary value has been seen are dropped.

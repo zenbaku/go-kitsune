@@ -58,6 +58,8 @@ func TestExamples(t *testing.T) {
 		"window",
 		"withlatestfrom",
 		"zip",
+		"zipwith",
+		"enrich",
 	}
 
 	for _, name := range examples {

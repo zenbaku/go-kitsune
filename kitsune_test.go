@@ -3383,3 +3383,219 @@ func TestWithLatestFromPanicOnDifferentGraphs(t *testing.T) {
 	b := kitsune.FromSlice([]string{"x", "y", "z"})
 	kitsune.WithLatestFrom(a, b)
 }
+
+// ---------------------------------------------------------------------------
+// ZipWith
+// ---------------------------------------------------------------------------
+
+func TestZipWith(t *testing.T) {
+	branches := kitsune.Broadcast[int](kitsune.FromSlice([]int{1, 2, 3}), 2)
+	doubled := kitsune.Map(branches[1], func(_ context.Context, v int) (int, error) { return v * 2, nil })
+
+	results, err := kitsune.ZipWith(branches[0], doubled,
+		func(_ context.Context, a, b int) (int, error) { return a + b, nil },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{3, 6, 9} // 1+2, 2+4, 3+6
+	if len(results) != len(want) {
+		t.Fatalf("expected %d results, got %d", len(want), len(results))
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Errorf("results[%d] = %d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestZipWithPanicOnDifferentGraphs(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for pipelines from different graphs")
+		}
+	}()
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]int{4, 5, 6})
+	kitsune.ZipWith(a, b, func(_ context.Context, x, y int) (int, error) { return x + y, nil })
+}
+
+// ---------------------------------------------------------------------------
+// MapBatch
+// ---------------------------------------------------------------------------
+
+func TestMapBatch(t *testing.T) {
+	var batchSizes []int
+	var mu sync.Mutex
+
+	input := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	results, err := kitsune.MapBatch(input, 2,
+		func(_ context.Context, batch []int) ([]int, error) {
+			mu.Lock()
+			batchSizes = append(batchSizes, len(batch))
+			mu.Unlock()
+			out := make([]int, len(batch))
+			for i, v := range batch {
+				out[i] = v * 10
+			}
+			return out, nil
+		},
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []int{10, 20, 30, 40, 50}
+	if !slices.Equal(results, want) {
+		t.Errorf("results = %v, want %v", results, want)
+	}
+	// 5 items with batch size 2 → batches of [2, 2, 1]
+	totalBatched := 0
+	for _, s := range batchSizes {
+		totalBatched += s
+	}
+	if totalBatched != 5 {
+		t.Errorf("total batched items = %d, want 5", totalBatched)
+	}
+}
+
+func TestMapBatchError(t *testing.T) {
+	boom := errors.New("boom")
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.MapBatch(input, 10,
+		func(_ context.Context, _ []int) ([]int, error) { return nil, boom },
+	).Collect(context.Background())
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom error, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LookupBy
+// ---------------------------------------------------------------------------
+
+func TestLookupBy(t *testing.T) {
+	db := map[int]string{1: "one", 2: "two", 3: "three"}
+
+	type item struct{ ID int }
+	input := kitsune.FromSlice([]item{{1}, {2}, {3}})
+
+	results, err := kitsune.LookupBy(input, kitsune.LookupConfig[item, int, string]{
+		Key: func(it item) int { return it.ID },
+		Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+			m := make(map[int]string, len(ids))
+			for _, id := range ids {
+				m[id] = db[id]
+			}
+			return m, nil
+		},
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for _, p := range results {
+		if p.Second != db[p.First.ID] {
+			t.Errorf("item %d: got %q, want %q", p.First.ID, p.Second, db[p.First.ID])
+		}
+	}
+}
+
+func TestLookupByDeduplicatesKeys(t *testing.T) {
+	var fetchCalls [][]int
+
+	type item struct{ ID int }
+	// Two items with same ID — Fetch should only receive one key.
+	input := kitsune.FromSlice([]item{{1}, {1}, {2}})
+
+	_, err := kitsune.LookupBy(input, kitsune.LookupConfig[item, int, string]{
+		Key: func(it item) int { return it.ID },
+		Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+			fetchCalls = append(fetchCalls, ids)
+			return map[int]string{1: "one", 2: "two"}, nil
+		},
+		BatchSize: 10,
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fetchCalls) != 1 {
+		t.Fatalf("expected 1 fetch call, got %d", len(fetchCalls))
+	}
+	if len(fetchCalls[0]) != 2 {
+		t.Errorf("expected 2 unique keys, got %d: %v", len(fetchCalls[0]), fetchCalls[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Enrich
+// ---------------------------------------------------------------------------
+
+func TestEnrich(t *testing.T) {
+	db := map[int]string{1: "one", 2: "two", 3: "three"}
+
+	type item struct{ ID int }
+	type enriched struct {
+		ID   int
+		Name string
+	}
+
+	input := kitsune.FromSlice([]item{{1}, {2}, {3}})
+	results, err := kitsune.Enrich(input, kitsune.EnrichConfig[item, int, string, enriched]{
+		Key: func(it item) int { return it.ID },
+		Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+			m := make(map[int]string, len(ids))
+			for _, id := range ids {
+				m[id] = db[id]
+			}
+			return m, nil
+		},
+		Join: func(it item, name string) enriched {
+			return enriched{ID: it.ID, Name: name}
+		},
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Name != db[r.ID] {
+			t.Errorf("item %d: got %q, want %q", r.ID, r.Name, db[r.ID])
+		}
+	}
+}
+
+func TestEnrichMissingKey(t *testing.T) {
+	// Items whose key is absent from Fetch result should receive zero value in Join.
+	type item struct{ ID int }
+	type enriched struct {
+		ID   int
+		Name string
+	}
+
+	input := kitsune.FromSlice([]item{{1}, {99}}) // 99 not in db
+	results, err := kitsune.Enrich(input, kitsune.EnrichConfig[item, int, string, enriched]{
+		Key: func(it item) int { return it.ID },
+		Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+			return map[int]string{1: "one"}, nil // 99 intentionally absent
+		},
+		Join: func(it item, name string) enriched {
+			return enriched{ID: it.ID, Name: name}
+		},
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[1].Name != "" {
+		t.Errorf("missing key: expected empty Name, got %q", results[1].Name)
+	}
+}

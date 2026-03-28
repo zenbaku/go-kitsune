@@ -71,6 +71,36 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 | `Window[T](p, duration)` | Time-based batching: flush accumulated items every `duration` |
 | `SlidingWindow[T](p, size, step)` | Overlapping (size > step) or tumbling (size == step) count-based windows emitted as `[]T` |
 
+### Enrichment
+
+Enrichment operators bulk-fetch external data for a batch of items and join it back. Keys are automatically deduplicated before each fetch call — if multiple items share the same key, only one lookup is made.
+
+| Function | Description |
+|---|---|
+| `MapBatch[I,O](p, size, fn, opts…)` | Collect up to `size` items, pass the slice to `fn`, flatten results back to individual items; sugar for `Batch`+`FlatMap` |
+| `LookupBy[T,K,V](p, cfg)` | Bulk-fetch a value per item using `LookupConfig.Key`/`Fetch`; emits `Pair[T,V]` — use with `ZipWith` for parallel lookups |
+| `Enrich[T,K,V,O](p, cfg)` | Like `LookupBy` but calls `EnrichConfig.Join` to produce `O` directly — no intermediate `Pair` |
+
+Config types:
+
+```go
+kitsune.LookupConfig[T, K, V]{Key, Fetch, BatchSize}
+kitsune.EnrichConfig[T, K, V, O]{Key, Fetch, Join, BatchSize}
+```
+
+**Parallel lookups** — use `Broadcast` + two `LookupBy` calls + `ZipWith` to run independent fetches concurrently:
+
+```go
+branches   := kitsune.Broadcast(terms, 2)
+withEntity := kitsune.LookupBy(branches[0], kitsune.LookupConfig[Term, int, Entity]{...})
+withNames  := kitsune.LookupBy(branches[1], kitsune.LookupConfig[Term, int, []Name]{...})
+enriched   := kitsune.ZipWith(withEntity, withNames,
+    func(_ context.Context, e kitsune.Pair[Term, Entity], n kitsune.Pair[Term, []Name]) (EnrichedTerm, error) {
+        return EnrichedTerm{Entity: e.Second, Names: n.Second}, nil
+    },
+)
+```
+
 ### Filtering & Gating
 
 | Method / Function | Description |
@@ -119,6 +149,7 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 | `Broadcast[T](p, n)` | Copy every item to all `n` output pipelines |
 | `Merge[T](ps…)` | Fan-in: combine multiple same-graph pipelines into one |
 | `Zip[A,B](a, b)` | Pair items by position into `Pair[A,B]`; stops when the shorter input closes |
+| `ZipWith[A,B,O](a, b, fn, opts…)` | Like `Zip` but applies `fn(a, b)` immediately, producing `O` directly without an intermediate `Pair` |
 | `WithLatestFrom[A,B](primary, secondary)` | Combine each primary item with the most recent secondary value; drops primary items until secondary emits |
 
 ### Terminals
@@ -600,6 +631,8 @@ examples/concatmap      — ConcatMap: sequential ordered expansion, contrast wi
 examples/slidingwindow  — SlidingWindow: rolling average, tumbling batches, sub-sampling
 examples/mapresult      — MapResult: route successes and failures to separate pipelines, dead-letter queue
 examples/withlatestfrom — WithLatestFrom: tag events with the latest secondary value (config, cursor position)
+examples/zipwith        — ZipWith: combine two branches into a custom type without an intermediate Pair
+examples/enrich         — MapBatch, LookupBy, Enrich: bulk-lookup enrichment with key deduplication
 ```
 
 Run any example: `go run ./examples/basic`
