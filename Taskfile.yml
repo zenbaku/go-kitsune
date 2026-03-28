@@ -51,7 +51,7 @@ tasks:
   test:ext:
     desc: Run tail tests (kredis, ksqlite, kfile, khttp)
     cmds:
-      - for: [kredis, ksqlite, kfile, khttp, kotel]
+      - for: [kredis, ksqlite, kfile, khttp, kotel, kprometheus, knats, kpubsub, kgrpc, ksqs, kdatadog, kmongo, kclickhouse, kwebsocket, kmqtt, kkinesis, kpulsar, kes, kdynamo]
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
 
   bench:
