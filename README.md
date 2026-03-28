@@ -25,9 +25,11 @@ Kitsune is a good fit for **in-process data pipelines** where you want typed com
 
 Kitsune is **not** a distributed stream processor — there is no Kafka consumer group management, no checkpointing, and no cluster coordination. For distributed processing, look at dedicated frameworks. Kitsune complements them: use it for the in-process pipeline logic and connect to external systems through the `tails/` or your own `Generate`/`ForEach` stages.
 
+**New to Kitsune?** Start with the [Getting Started guide](doc/getting-started.md) — mental model, first pipeline, concurrency, error handling, and testing in ~10 minutes.
+
 ## Operator catalog
 
-**Free functions** (`Map`, `FlatMap`, `Batch`, …) change the element type as items flow through. **Methods** (`.Filter`, `.Take`, `.Skip`, …) preserve it. This split is a Go language constraint: methods cannot introduce new type parameters, so any operation that changes `Pipeline[A]` to `Pipeline[B]` must be a free function like `Map[A, B]`. The upside is that each intermediate variable documents what is flowing, and the compiler checks every type transition. See [design.md](doc/design.md) for the full rationale.
+**Free functions** (`Map`, `FlatMap`, `Batch`, …) change the element type as items flow through. **Methods** (`.Filter`, `.Take`, `.Skip`, …) preserve it. This split is a Go language constraint: methods cannot introduce new type parameters, so any operation that changes `Pipeline[A]` to `Pipeline[B]` must be a free function like `Map[A, B]`. The upside is that each intermediate variable documents what is flowing, and the compiler checks every type transition.
 
 ### Sources
 
@@ -531,7 +533,7 @@ for {
 }
 ```
 
-See [`examples/inspector`](examples/inspector) for a complete branching pipeline (Partition, Broadcast, Merge, supervision, overflow) with all inspector features enabled.
+See [`examples/inspector`](examples/inspector) for a complete branching pipeline (Partition, Broadcast, Merge, supervision, overflow) with all inspector features enabled. See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference.
 
 ## Tails
 
@@ -563,6 +565,8 @@ Tails are Kitsune's extension modules — optional packages that connect pipelin
 | **kpulsar** | `github.com/jonathan/go-kitsune/tails/kpulsar` | Apache Pulsar consumer source and producer sink |
 
 All tails follow the **user-managed connections** principle: you create, configure, and close clients yourself. Kitsune never opens or closes connections.
+
+See the [Tails Guide](doc/tails.md) for per-tail configuration, usage patterns, and examples.
 
 ## Runnable examples
 
@@ -611,9 +615,11 @@ examples/prometheus — kprometheus hook: per-stage counters, histograms, drops,
 examples/websocket  — kwebsocket: Read source and Write sink over an in-process server
 ```
 
-## Design
+## Docs
 
-See [`doc/design.md`](doc/design.md) for the full design specification, including the progressive complexity model, internal architecture, and design rationale.
+See [`doc/getting-started.md`](doc/getting-started.md) for a guided walkthrough: mental model, first pipeline, concurrency, error handling, branching, and testing patterns.
+
+See [`doc/internals.md`](doc/internals.md) for the internal architecture: DAG construction, runtime compilation, channel wiring, concurrency models, and node kinds.
 
 See [`doc/tuning.md`](doc/tuning.md) for performance tuning guidance: buffer sizing, concurrency, batching, and memory trade-offs.
 

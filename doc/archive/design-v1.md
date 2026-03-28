@@ -1,4 +1,8 @@
-# Kitsune — Design Specification
+# Kitsune — Design Specification (Historical)
+
+> **Archive notice**: This is the original v1 design specification, preserved for historical context. It describes the library as designed, not as built — the package layout, symbol counts, and "v2 Roadmap" section are outdated. For the current internal architecture, see [internals.md](../internals.md). For the current API, see the [README](../../README.md).
+
+---
 
 ## Context
 

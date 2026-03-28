@@ -124,15 +124,16 @@ Stage names appear in `Hook` events. Without names, profiling output is hard to 
 **Use the `Hook` interface for metrics:**
 ```go
 type Hook interface {
-    OnStart(name string)
-    OnDone(name string, count int, err error)
+    OnStageStart(ctx context.Context, stage string)
+    OnItem(ctx context.Context, stage string, dur time.Duration, err error)
+    OnStageDone(ctx context.Context, stage string, processed int64, errors int64)
 }
 ```
 Implement `Hook` to collect per-stage timing, throughput, and error counts. See `examples/metrics` for a working example that writes to a Prometheus registry.
 
 **Quick debugging with `LogHook`:**
 ```go
-pipe.WithHook(pipe.LogHook(slog.Default()))
+err := runner.Run(ctx, kitsune.WithHook(kitsune.LogHook(slog.Default())))
 ```
 `LogHook` logs stage start and done events with item counts to the provided `slog.Logger`. Useful for tracing where items are being lost or where a stage is slow.
 
