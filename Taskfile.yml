@@ -65,7 +65,7 @@ tasks:
       # Root-module examples — run via go test -run TestExamples (parallel, cached builds).
       - go test -v -run TestExamples -timeout 120s -count=1 .
       # Tail examples — own go.mod, run directly.
-      - for: [files, sqlite, http]
+      - for: [files, sqlite, http, prometheus, websocket]
         cmd: cd examples/{{.ITEM}} && go run . > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
       # Redis tail example — only if Redis is reachable.
       - redis-cli ping > /dev/null 2>&1 && (cd examples/redis && go run . > /dev/null 2>&1 && echo "PASS examples/redis") || echo "SKIP examples/redis (Redis not available)"

@@ -539,10 +539,28 @@ Tails are Kitsune's extension modules — optional packages that connect pipelin
 
 | Tail | Import | What |
 |---|---|---|
-| **kredis** | `github.com/jonathan/go-kitsune/tails/kredis` | Redis Store, Cache, DedupSet, list source/sink |
-| **ksqlite** | `github.com/jonathan/go-kitsune/tails/ksqlite` | SQLite query source, single/batch insert sinks |
 | **kfile** | `github.com/jonathan/go-kitsune/tails/kfile` | File, CSV, JSONL sources and sinks |
 | **khttp** | `github.com/jonathan/go-kitsune/tails/khttp` | Paginated HTTP GET source, POST/webhook sink |
+| **kkafka** | `github.com/jonathan/go-kitsune/tails/kkafka` | Kafka consumer source, producer sink |
+| **kpostgres** | `github.com/jonathan/go-kitsune/tails/kpostgres` | LISTEN/NOTIFY source, INSERT + COPY batch sink |
+| **kredis** | `github.com/jonathan/go-kitsune/tails/kredis` | Redis Store, Cache, DedupSet, list source/sink |
+| **ks3** | `github.com/jonathan/go-kitsune/tails/ks3` | S3-compatible object listing and line-streaming sources |
+| **ksqlite** | `github.com/jonathan/go-kitsune/tails/ksqlite` | SQLite query source, single/batch insert sinks |
+| **kotel** | `github.com/jonathan/go-kitsune/tails/kotel` | OpenTelemetry Hook — per-stage metrics and buffer gauges |
+| **kprometheus** | `github.com/jonathan/go-kitsune/tails/kprometheus` | Prometheus Hook — counters and duration histograms per stage |
+| **kdatadog** | `github.com/jonathan/go-kitsune/tails/kdatadog` | Datadog DogStatsD Hook — counts and distributions per stage |
+| **knats** | `github.com/jonathan/go-kitsune/tails/knats` | NATS core subscribe/publish + JetStream consume/publish |
+| **kpubsub** | `github.com/jonathan/go-kitsune/tails/kpubsub` | Google Cloud Pub/Sub subscribe source and publish sink |
+| **ksqs** | `github.com/jonathan/go-kitsune/tails/ksqs` | AWS SQS receive source, send sink, batch send sink |
+| **kkinesis** | `github.com/jonathan/go-kitsune/tails/kkinesis` | AWS Kinesis shard consumer source and PutRecords batch sink |
+| **kdynamo** | `github.com/jonathan/go-kitsune/tails/kdynamo` | AWS DynamoDB Scan/Query sources and BatchWriteItem sink |
+| **kmongo** | `github.com/jonathan/go-kitsune/tails/kmongo` | MongoDB Find/Watch sources and InsertMany batch sink |
+| **kclickhouse** | `github.com/jonathan/go-kitsune/tails/kclickhouse` | ClickHouse Query source and native-protocol batch Insert sink |
+| **kes** | `github.com/jonathan/go-kitsune/tails/kes` | Elasticsearch scrolling Search source and Bulk index sink |
+| **kgrpc** | `github.com/jonathan/go-kitsune/tails/kgrpc` | gRPC server-streaming source and client-streaming sink |
+| **kwebsocket** | `github.com/jonathan/go-kitsune/tails/kwebsocket` | WebSocket frame Read source and Write sink |
+| **kmqtt** | `github.com/jonathan/go-kitsune/tails/kmqtt` | MQTT Subscribe source and Publish sink |
+| **kpulsar** | `github.com/jonathan/go-kitsune/tails/kpulsar` | Apache Pulsar consumer source and producer sink |
 
 All tails follow the **user-managed connections** principle: you create, configure, and close clients yourself. Kitsune never opens or closes connections.
 
@@ -582,13 +600,15 @@ examples/withlatestfrom — WithLatestFrom: tag events with the latest secondary
 
 Run any example: `go run ./examples/basic`
 
-Four additional examples live in their own modules (they import tail packages):
+Six additional examples live in their own modules (they import tail packages):
 
 ```
-examples/files   — kfile CSV/JSONL sources and sinks
-examples/redis   — kredis list source, Redis-backed Store and Cache
-examples/sqlite  — ksqlite query source, batch insert sink
-examples/http    — HTTP pagination source with retry
+examples/files      — kfile CSV/JSONL sources and sinks
+examples/redis      — kredis list source, Redis-backed Store and Cache
+examples/sqlite     — ksqlite query source, batch insert sink
+examples/http       — HTTP pagination source with retry
+examples/prometheus — kprometheus hook: per-stage counters, histograms, drops, restarts
+examples/websocket  — kwebsocket: Read source and Write sink over an in-process server
 ```
 
 ## Design
