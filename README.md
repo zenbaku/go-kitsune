@@ -42,6 +42,12 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 | `NewChannel[T](buffer int)` | Push-based source for external producers (HTTP handlers, event loops); see [Channel[T]](#channelt--runasync) |
 | `Ticker(d)` | Emit `time.Time` on every tick of `d`; stops when context is cancelled |
 | `Interval(d)` | Emit a monotonically increasing `int64` (0, 1, 2, …) on every tick of `d` |
+| `Unfold[S,T](seed S, fn)` | Generate from a seed: `fn(acc)` → `(value, nextAcc, stop)`; halt when `stop` is true |
+| `Iterate[T](seed T, fn func(T) T)` | Infinite stream: emit `seed`, then `fn(seed)`, then `fn(fn(seed))`, … |
+| `Repeatedly[T](fn func() T)` | Infinite stream: call `fn` on each iteration; use `Take` to bound |
+| `Cycle[T](items []T)` | Infinite stream: loop over `items` forever; use `Take` to bound |
+| `Timer[T](delay, fn func() T)` | Emit exactly one value after `delay` by calling `fn`; stops if context is cancelled |
+| `Concat[T](factories …func() *Pipeline[T])` | Run each factory sequentially, forwarding all items from each before starting the next |
 
 ### 1:1 Transforms
 
@@ -52,6 +58,10 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 | `Map` + `CacheBy(keyFn, opts…)` | `Map` with TTL-based cache; skips `fn` on cache hit |
 | `MapRecover[I,O](p, fn, recover, opts…)` | `Map` that calls `recover(ctx, item, err)` instead of failing on error |
 | `MapResult[I,O](p, fn, opts…)` | Map that routes success to `ok *Pipeline[O]` and errors to `failed *Pipeline[ErrItem[I]]`; no halt or retry |
+| `MapEvery[T](p, nth, fn)` | Apply `fn` to every nth item (0-indexed); all other items pass through unchanged |
+| `WithIndex[T](p)` | Pair each item with its 0-based stream position; emits `Pair[int, T]` |
+| `Intersperse[T](p, sep T)` | Insert `sep` between consecutive items |
+| `MapIntersperse[T,O](p, sep O, fn)` | Apply `fn` to each item and insert `sep` between the results |
 
 ### 1:N Expansion
 
@@ -106,8 +116,11 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | Method / Function | Description |
 |---|---|
 | `.Filter(fn func(T) bool)` | Keep only items where `fn` returns true |
+| `Reject[T](p, fn)` | Keep only items where `fn` returns **false** (inverse of `Filter`) |
 | `.Take(n int)` | Emit the first `n` items, then stop the pipeline |
+| `TakeEvery[T](p, nth)` | Emit every nth item (0-indexed); `TakeEvery(p,2)` emits indices 0, 2, 4, … |
 | `.Skip(n int)` | Drop the first `n` items, emit the rest |
+| `DropEvery[T](p, nth)` | Drop every nth item (0-indexed); `DropEvery(p,2)` drops indices 0, 2, 4, … |
 | `TakeWhile[T](p, fn)` | Emit while `fn` returns true; stop (and signal sources) on first false |
 | `DropWhile[T](p, fn)` | Suppress while `fn` returns true; pass all items once `fn` returns false |
 
@@ -125,6 +138,8 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `Distinct[T comparable](p)` | Drop duplicate items; keeps first occurrence of each value |
 | `DistinctBy[T](p, key func(T) string)` | Drop duplicates by derived key; in-memory, unbounded |
 | `p.Dedupe(key, set …DedupSet)` | Drop items whose key is in `set`; defaults to in-process `MemoryDedupSet` |
+| `ConsecutiveDedup[T comparable](p)` | Drop consecutive duplicate values; non-adjacent duplicates are kept |
+| `ConsecutiveDedupBy[T,K](p, fn)` | Drop consecutive items with the same derived key |
 
 ### Aggregation & Reduction
 
@@ -132,7 +147,12 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|
 | `Scan[T,S](p, initial S, fn func(S,T) S)` | Running accumulator; emits updated state after every item |
 | `Reduce[T,S](p, seed S, fn func(S,T) S)` | Fold entire stream into one value; emits once when input closes (emits `seed` on empty stream) |
+| `ReduceWhile[T,S](ctx, p, seed S, fn)` | Like `Reduce` but `fn` returns `(newAcc, continue)`; pipeline stops (and `newAcc` is returned) when `continue` is false |
 | `GroupBy[T,K](p, key func(T) K)` | Collect all items into a `map[K][]T` and emit once (bounded streams only) |
+| `ChunkBy[T,K](p, fn)` | Group consecutive items with the same key into `[]T` slices (bounded streams only) |
+| `ChunkWhile[T](p, fn func(prev,next T) bool)` | Group consecutive items while `fn(prev,next)` returns true (bounded streams only) |
+| `Sort[T](p, less func(a,b T) bool)` | Buffer entire stream and emit in sorted order (bounded streams only) |
+| `SortBy[T,K](p, key, less)` | Buffer entire stream and sort by derived key (bounded streams only) |
 
 ### Side Effects
 
@@ -150,11 +170,12 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `Merge[T](ps…)` | Fan-in: combine multiple same-graph pipelines into one |
 | `Zip[A,B](a, b)` | Pair items by position into `Pair[A,B]`; stops when the shorter input closes |
 | `ZipWith[A,B,O](a, b, fn, opts…)` | Like `Zip` but applies `fn(a, b)` immediately, producing `O` directly without an intermediate `Pair` |
+| `Unzip[A,B](p)` | Split a `Pipeline[Pair[A,B]]` into two pipelines `(*Pipeline[A], *Pipeline[B])`; inverse of `Zip` |
 | `WithLatestFrom[A,B](primary, secondary)` | Combine each primary item with the most recent secondary value; drops primary items until secondary emits |
 
 ### Terminals
 
-| Method | Returns | Description |
+| Method / Function | Returns | Description |
 |---|---|---|
 | `.ForEach(fn, opts…)` | `*Runner` | Process each item; call `.Run(ctx)` to execute |
 | `.Drain()` | `*Runner` | Consume and discard all items |
@@ -165,6 +186,17 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `.Count(ctx, opts…)` | `(int64, error)` | Run and return the total number of items emitted |
 | `.Any(ctx, fn, opts…)` | `(bool, error)` | Run and return `true` if any item satisfies `fn`; stops early on first match |
 | `.All(ctx, fn, opts…)` | `(bool, error)` | Run and return `true` if every item satisfies `fn`; stops early on first mismatch |
+| `Find[T](ctx, p, pred)` | `(T, bool, error)` | Return the first item satisfying `pred`; stops the pipeline early; `false` if no match |
+| `Sum[T Numeric](ctx, p)` | `(T, error)` | Sum all items; returns zero on an empty stream |
+| `Min[T](ctx, p, less)` | `(T, bool, error)` | Smallest item; `false` if stream is empty |
+| `Max[T](ctx, p, less)` | `(T, bool, error)` | Largest item; `false` if stream is empty |
+| `MinMax[T](ctx, p, less)` | `(Pair[T,T], bool, error)` | Both min and max in one pass; `false` if empty |
+| `MinBy[T,K](ctx, p, key, less)` | `(T, bool, error)` | Item with the smallest derived key |
+| `MaxBy[T,K](ctx, p, key, less)` | `(T, bool, error)` | Item with the largest derived key |
+| `Frequencies[T comparable](ctx, p)` | `(map[T]int, error)` | Count occurrences of each distinct item |
+| `FrequenciesBy[T,K](ctx, p, key)` | `(map[K]int, error)` | Count occurrences of each distinct key |
+| `ReduceWhile[T,S](ctx, p, seed, fn)` | `(S, error)` | Fold with early termination; `fn` returns `(newAcc, continue)` |
+| `TakeRandom[T](ctx, p, n)` | `([]T, error)` | Uniform random sample of `n` items (reservoir sampling); all items if n ≥ stream length |
 
 ### Channel[T] + RunAsync
 
@@ -492,6 +524,106 @@ cached := kitsune.Map(items, expensiveLookup,
 runner.Run(ctx, kitsune.WithCache(myCache, 10*time.Minute))
 ```
 
+### Generative and infinite sources
+
+```go
+// Unfold — produce values from a seed; halt when the function says so.
+pages := kitsune.Unfold("", func(cursor string) (Page, string, bool) {
+    page, next, err := api.Fetch(ctx, cursor)
+    if err != nil || next == "" {
+        return page, "", true // halt
+    }
+    return page, next, false
+})
+
+// Iterate — emit a seed, then apply fn repeatedly.
+backoff := kitsune.Iterate(time.Second, func(d time.Duration) time.Duration {
+    return min(d*2, 30*time.Second) // exponential backoff values
+}).Take(8)
+
+// Cycle — round-robin over a fixed set.
+workers := kitsune.Cycle([]string{"worker-1", "worker-2", "worker-3"})
+
+// Concat — sequential multi-source pipelines without cross-graph constraints.
+all := kitsune.Concat(
+    func() *kitsune.Pipeline[Record] { return fetchPage(ctx, 1) },
+    func() *kitsune.Pipeline[Record] { return fetchPage(ctx, 2) },
+    func() *kitsune.Pipeline[Record] { return fetchPage(ctx, 3) },
+)
+```
+
+### Chunking and sorting
+
+```go
+// ChunkBy — group consecutive items that share the same key.
+// Useful for processing run-length encoded data or pre-sorted streams.
+chunks := kitsune.ChunkBy(events, func(e Event) string { return e.UserID })
+
+// ChunkWhile — group consecutive items while a pairwise predicate holds.
+// Use it to detect contiguous ranges or runs.
+ranges := kitsune.ChunkWhile(sortedIDs, func(prev, next int) bool {
+    return next-prev == 1 // contiguous integer range
+})
+
+// Sort / SortBy — buffer and re-emit in sorted order (bounded streams only).
+sorted := kitsune.SortBy(products,
+    func(p Product) float64 { return p.Price },
+    func(a, b float64) bool { return a < b },
+)
+```
+
+### Stream aggregation
+
+```go
+// Single-pass numeric aggregates.
+total, _        := kitsune.Sum(ctx, prices)
+cheapest, _, _  := kitsune.Min(ctx, prices, func(a, b float64) bool { return a < b })
+priciest, _, _  := kitsune.Max(ctx, prices, func(a, b float64) bool { return a < b })
+rng, _, _       := kitsune.MinMax(ctx, prices, func(a, b float64) bool { return a < b })
+
+// MinBy / MaxBy — return the item with the extreme derived key.
+oldest, _, _ := kitsune.MaxBy(ctx, users,
+    func(u User) time.Time { return u.CreatedAt },
+    func(a, b time.Time) bool { return a.Before(b) },
+)
+
+// Frequencies — count occurrences.
+tagCounts, _ := kitsune.Frequencies(ctx, tags)
+byCategory, _ := kitsune.FrequenciesBy(ctx, products,
+    func(p Product) string { return p.Category },
+)
+
+// ReduceWhile — fold until a condition is met; the halting item is included.
+budget := 500.0
+spent, _ := kitsune.ReduceWhile(ctx, items, 0.0,
+    func(acc float64, item Item) (float64, bool) {
+        acc += item.Price
+        return acc, acc < budget
+    },
+)
+
+// TakeRandom — uniform random sample without replacement.
+featured, _ := kitsune.TakeRandom(ctx, catalog, 3)
+```
+
+### Element-level transforms
+
+```go
+// WithIndex — attach position; useful for numbered output or position-aware logic.
+kitsune.WithIndex(items) // → Pipeline[Pair[int, T]]
+
+// TakeEvery / DropEvery — positional sub-sampling (0-indexed).
+kitsune.TakeEvery(metrics, 10) // keep every 10th sample
+kitsune.DropEvery(rows, 1)     // drop every other row
+
+// Intersperse — insert a separator between items.
+kitsune.Intersperse(fields, ",") // → f1, ",", f2, ",", f3
+
+// ConsecutiveDedup — collapse runs of identical consecutive values.
+kitsune.ConsecutiveDedup(sensorReadings)           // comparable T
+kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type }) // by key
+```
+
 ## Live inspector
 
 The `inspector` sub-package serves a real-time web dashboard that shows your pipeline graph, per-stage throughput, latency, error and drop counts, and a live sample trail.
@@ -633,6 +765,10 @@ examples/mapresult      — MapResult: route successes and failures to separate 
 examples/withlatestfrom — WithLatestFrom: tag events with the latest secondary value (config, cursor position)
 examples/zipwith        — ZipWith: combine two branches into a custom type without an intermediate Pair
 examples/enrich         — MapBatch, LookupBy, Enrich: bulk-lookup enrichment with key deduplication
+examples/streams        — Unfold, Iterate, Repeatedly, Cycle, Concat: generative and infinite sources
+examples/transform      — Reject, WithIndex, Intersperse, TakeEvery, DropEvery, MapEvery, ConsecutiveDedup
+examples/reshape        — ChunkBy, ChunkWhile, Sort, SortBy, Unzip: structural stream transforms
+examples/aggregate      — Sum, Min, Max, MinMax, MinBy, MaxBy, Find, Frequencies, ReduceWhile, TakeRandom
 ```
 
 Run any example: `go run ./examples/basic`

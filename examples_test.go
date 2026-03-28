@@ -25,6 +25,7 @@ func TestExamples(t *testing.T) {
 		t.Skip("skipping example smoke tests in short mode")
 	}
 	examples := []string{
+		"aggregate",
 		"basic",
 		"batch",
 		"broadcast",
@@ -34,6 +35,7 @@ func TestExamples(t *testing.T) {
 		"concatmap",
 		"concurrent",
 		"dedupe",
+		"enrich",
 		"errors",
 		"fanout",
 		"filter",
@@ -47,19 +49,21 @@ func TestExamples(t *testing.T) {
 		"pairwise",
 		"recover",
 		"reduce",
+		"reshape",
 		"scan",
 		"slidingwindow",
 		"stages",
 		"state",
+		"streams",
 		"supervise",
 		"ticker",
 		"timebased",
 		"timeout",
+		"transform",
 		"window",
 		"withlatestfrom",
 		"zip",
 		"zipwith",
-		"enrich",
 	}
 
 	for _, name := range examples {

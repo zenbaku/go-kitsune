@@ -32,8 +32,10 @@ err      := batched.ForEach(store).Run(ctx)
 This is a Go language constraint — methods cannot introduce new type parameters — but the style is an asset: each variable name documents what's flowing, and the compiler checks every type transition.
 
 **Rule of thumb:**
-- Free functions when the type changes: `Map`, `FlatMap`, `Batch`, `Unbatch`, `MapWith`, `FlatMapWith`
-- Methods when the type is preserved: `.Filter`, `.Tap`, `.Take`, `.Through`, `.ForEach`, `.Drain`
+- **Free functions** (type may change, or extra type parameters required): `Map`, `FlatMap`, `Batch`, `Unbatch`, `MapWith`, `FlatMapWith`, `Reject`, `ChunkBy`, `Sort`, `SortBy`, `ZipWith`, `Unzip`, `Enrich`, …
+- **Methods** (type-preserving, no extra type parameters): `.Filter`, `.Tap`, `.Take`, `.Skip`, `.Through`, `.ForEach`, `.Drain`
+
+Not every operator fits neatly — `Reject` keeps the type but is a free function because the method form would be ambiguous with complex generics. When in doubt, look for it in both places; the [operator catalog](../README.md#operator-catalog) lists every operator with its exact call form.
 
 ---
 
@@ -228,6 +230,7 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 |---|---|
 | `basic` | FromSlice, Map, Lift, ForEach |
 | `filter` | Filter, Tap, Take, Drain |
+| `batch` | Batch, Unbatch, BatchTimeout |
 | `concurrent` | Concurrency, Ordered, LogHook |
 | `errors` | Skip, Retry, RetryThen |
 | `fanout` | Partition, MergeRunners |
@@ -236,3 +239,16 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 | `state` | MapWith, FlatMapWith, Ref |
 | `supervise` | Supervise, RestartOnError, RestartOnPanic |
 | `inspector` | Live web dashboard with full branching topology |
+| `streams` | Unfold, Iterate, Repeatedly, Cycle, Concat — generative sources |
+| `transform` | Reject, WithIndex, Intersperse, TakeEvery, DropEvery, MapEvery, ConsecutiveDedup |
+| `reshape` | ChunkBy, ChunkWhile, Sort, SortBy, Unzip |
+| `aggregate` | Sum, Min, Max, MinMax, MinBy, MaxBy, Find, Frequencies, ReduceWhile, TakeRandom |
+| `enrich` | MapBatch, LookupBy, Enrich — bulk-fetch with key deduplication |
+| `zipwith` | ZipWith — combine two branches without an intermediate Pair |
+| `pairwise` | Pairwise, SlidingWindow — consecutive pair and window patterns |
+| `concatmap` | ConcatMap vs FlatMap — ordered sequential expansion |
+| `mapresult` | MapResult — route errors to a separate pipeline |
+| `dedupe` | Dedupe, Distinct, DistinctBy, CacheBy |
+| `timeout` | Timeout StageOption — per-item deadline |
+| `ticker` | Ticker, Interval — scheduled sources |
+| `withlatestfrom` | WithLatestFrom — combine a primary stream with the latest secondary value |

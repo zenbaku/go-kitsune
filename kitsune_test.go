@@ -3599,3 +3599,576 @@ func TestEnrichMissingKey(t *testing.T) {
 		t.Errorf("missing key: expected empty Name, got %q", results[1].Name)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Reject
+// ---------------------------------------------------------------------------
+
+func TestReject(t *testing.T) {
+	results, err := kitsune.Reject(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
+		func(n int) bool { return n%2 == 0 },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 3, 5}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WithIndex
+// ---------------------------------------------------------------------------
+
+func TestWithIndex(t *testing.T) {
+	results, err := kitsune.WithIndex(kitsune.FromSlice([]string{"a", "b", "c"})).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3, got %d", len(results))
+	}
+	for i, p := range results {
+		if p.First != i {
+			t.Errorf("item %d: index %d, want %d", i, p.First, i)
+		}
+		if p.Second != []string{"a", "b", "c"}[i] {
+			t.Errorf("item %d: value %q, want %q", i, p.Second, []string{"a", "b", "c"}[i])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Intersperse / MapIntersperse
+// ---------------------------------------------------------------------------
+
+func TestIntersperse(t *testing.T) {
+	results, err := kitsune.Intersperse(kitsune.FromSlice([]string{"a", "b", "c"}), ",").Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a", ",", "b", ",", "c"}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestIntersperseEmpty(t *testing.T) {
+	results, err := kitsune.Intersperse(kitsune.FromSlice([]string{}), ",").Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty, got %v", results)
+	}
+}
+
+func TestMapIntersperse(t *testing.T) {
+	results, err := kitsune.MapIntersperse(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		0,
+		func(_ context.Context, n int) (int, error) { return n * 10, nil },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 0, 20, 0, 30}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TakeEvery / DropEvery / MapEvery
+// ---------------------------------------------------------------------------
+
+func TestTakeEvery(t *testing.T) {
+	results, err := kitsune.TakeEvery(kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}), 2).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 3, 5}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestDropEvery(t *testing.T) {
+	results, err := kitsune.DropEvery(kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}), 2).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{2, 4, 6}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestMapEvery(t *testing.T) {
+	results, err := kitsune.MapEvery(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
+		3,
+		func(_ context.Context, n int) (int, error) { return n * -1, nil },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// indices 0,3 → negated; others pass through
+	want := []int{-1, 2, 3, -4, 5, 6}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ConsecutiveDedup / ConsecutiveDedupBy
+// ---------------------------------------------------------------------------
+
+func TestConsecutiveDedup(t *testing.T) {
+	results, err := kitsune.ConsecutiveDedup(
+		kitsune.FromSlice([]int{1, 1, 2, 3, 3, 3, 2}),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 2}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestConsecutiveDedupBy(t *testing.T) {
+	type item struct{ Val, Extra int }
+	results, err := kitsune.ConsecutiveDedupBy(
+		kitsune.FromSlice([]item{{1, 0}, {1, 1}, {2, 0}, {2, 1}, {1, 2}}),
+		func(x item) int { return x.Val },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3, got %d: %v", len(results), results)
+	}
+	if results[0].Val != 1 || results[1].Val != 2 || results[2].Val != 1 {
+		t.Errorf("unexpected values: %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ChunkBy / ChunkWhile
+// ---------------------------------------------------------------------------
+
+func TestChunkBy(t *testing.T) {
+	results, err := kitsune.ChunkBy(
+		kitsune.FromSlice([]int{1, 1, 2, 2, 3, 1}),
+		func(n int) int { return n },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]int{{1, 1}, {2, 2}, {3}, {1}}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, chunk := range results {
+		if !slices.Equal(chunk, want[i]) {
+			t.Errorf("chunk %d: got %v, want %v", i, chunk, want[i])
+		}
+	}
+}
+
+func TestChunkWhile(t *testing.T) {
+	results, err := kitsune.ChunkWhile(
+		kitsune.FromSlice([]int{1, 2, 4, 9, 10, 11, 15}),
+		func(prev, next int) bool { return next-prev <= 1 },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]int{{1, 2}, {4}, {9, 10, 11}, {15}}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, chunk := range results {
+		if !slices.Equal(chunk, want[i]) {
+			t.Errorf("chunk %d: got %v, want %v", i, chunk, want[i])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unzip
+// ---------------------------------------------------------------------------
+
+func TestUnzip(t *testing.T) {
+	pairSlice := []kitsune.Pair[int, string]{{First: 1, Second: "a"}, {First: 2, Second: "b"}, {First: 3, Second: "c"}}
+	src := kitsune.FromSlice(pairSlice)
+	as, bs := kitsune.Unzip(src)
+	aResults, err := as.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bResults, err := bs.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(aResults, []int{1, 2, 3}) {
+		t.Errorf("as: got %v, want [1 2 3]", aResults)
+	}
+	if !slices.Equal(bResults, []string{"a", "b", "c"}) {
+		t.Errorf("bs: got %v, want [a b c]", bResults)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sort / SortBy
+// ---------------------------------------------------------------------------
+
+func TestSort(t *testing.T) {
+	results, err := kitsune.Sort(
+		kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9, 2, 6}),
+		func(a, b int) bool { return a < b },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 1, 2, 3, 4, 5, 6, 9}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestSortBy(t *testing.T) {
+	type item struct{ Name string }
+	results, err := kitsune.SortBy(
+		kitsune.FromSlice([]item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results[0].Name != "apple" || results[1].Name != "banana" || results[2].Name != "cherry" {
+		t.Errorf("unexpected order: %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unfold / Iterate / Repeatedly / Cycle / Timer / Concat
+// ---------------------------------------------------------------------------
+
+func TestUnfold(t *testing.T) {
+	results, err := kitsune.Unfold(0, func(n int) (int, int, bool) {
+		if n >= 5 {
+			return 0, 0, true
+		}
+		return n, n + 1, false
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{0, 1, 2, 3, 4}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestIterate(t *testing.T) {
+	results, err := kitsune.Iterate(1, func(n int) int { return n * 2 }).Take(5).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 4, 8, 16}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestRepeatedly(t *testing.T) {
+	n := 0
+	results, err := kitsune.Repeatedly(func() int {
+		n++
+		return n
+	}).Take(4).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestCycle(t *testing.T) {
+	results, err := kitsune.Cycle([]string{"a", "b", "c"}).Take(7).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a", "b", "c", "a", "b", "c", "a"}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestTimer(t *testing.T) {
+	results, err := kitsune.Timer(1*time.Millisecond, func() string { return "ping" }).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != "ping" {
+		t.Errorf("got %v, want [ping]", results)
+	}
+}
+
+func TestConcat(t *testing.T) {
+	results, err := kitsune.Concat(
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2}) },
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{3, 4}) },
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{5}) },
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4, 5}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+func TestConcatEmpty(t *testing.T) {
+	results, err := kitsune.Concat[int]().Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty, got %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Sum
+// ---------------------------------------------------------------------------
+
+func TestSum(t *testing.T) {
+	got, err := kitsune.Sum(context.Background(), kitsune.FromSlice([]int{1, 2, 3, 4, 5}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 15 {
+		t.Errorf("got %d, want 15", got)
+	}
+}
+
+func TestSumEmpty(t *testing.T) {
+	got, err := kitsune.Sum(context.Background(), kitsune.FromSlice([]int{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Errorf("got %d, want 0", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Min / Max / MinMax
+// ---------------------------------------------------------------------------
+
+func TestMin(t *testing.T) {
+	v, ok, err := kitsune.Min(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || v != 1 {
+		t.Errorf("got %d ok=%v, want 1 true", v, ok)
+	}
+}
+
+func TestMinEmpty(t *testing.T) {
+	_, ok, err := kitsune.Min(context.Background(), kitsune.FromSlice([]int{}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty pipeline")
+	}
+}
+
+func TestMax(t *testing.T) {
+	v, ok, err := kitsune.Max(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || v != 5 {
+		t.Errorf("got %d ok=%v, want 5 true", v, ok)
+	}
+}
+
+func TestMinMax(t *testing.T) {
+	pair, ok, err := kitsune.MinMax(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || pair.First != 1 || pair.Second != 9 {
+		t.Errorf("got %v ok=%v, want {1,9} true", pair, ok)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MinBy / MaxBy
+// ---------------------------------------------------------------------------
+
+func TestMinBy(t *testing.T) {
+	type item struct{ Name string }
+	v, ok, err := kitsune.MinBy(
+		context.Background(),
+		kitsune.FromSlice([]item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || v.Name != "apple" {
+		t.Errorf("got %v ok=%v, want apple true", v, ok)
+	}
+}
+
+func TestMaxBy(t *testing.T) {
+	type item struct{ Name string }
+	v, ok, err := kitsune.MaxBy(
+		context.Background(),
+		kitsune.FromSlice([]item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || v.Name != "cherry" {
+		t.Errorf("got %v ok=%v, want cherry true", v, ok)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Find
+// ---------------------------------------------------------------------------
+
+func TestFind(t *testing.T) {
+	v, ok, err := kitsune.Find(context.Background(), kitsune.FromSlice([]int{1, 2, 3, 4, 5}), func(n int) bool { return n > 3 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || v != 4 {
+		t.Errorf("got %d ok=%v, want 4 true", v, ok)
+	}
+}
+
+func TestFindNotFound(t *testing.T) {
+	_, ok, err := kitsune.Find(context.Background(), kitsune.FromSlice([]int{1, 2, 3}), func(n int) bool { return n > 10 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false when no match")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Frequencies / FrequenciesBy
+// ---------------------------------------------------------------------------
+
+func TestFrequencies(t *testing.T) {
+	m, err := kitsune.Frequencies(context.Background(), kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["a"] != 3 || m["b"] != 2 || m["c"] != 1 {
+		t.Errorf("unexpected frequencies: %v", m)
+	}
+}
+
+func TestFrequenciesBy(t *testing.T) {
+	m, err := kitsune.FrequenciesBy(
+		context.Background(),
+		kitsune.FromSlice([]string{"cat", "dog", "cow", "ant", "bee"}),
+		func(s string) int { return len(s) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[3] != 5 {
+		t.Errorf("expected 5 words of length 3, got %d", m[3])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReduceWhile
+// ---------------------------------------------------------------------------
+
+func TestReduceWhile(t *testing.T) {
+	// Sum until running total exceeds 10.
+	got, err := kitsune.ReduceWhile(
+		context.Background(),
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7}),
+		0,
+		func(acc, n int) (int, bool) {
+			acc += n
+			return acc, acc <= 10
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1+2+3+4=10 (continue), 10+5=15 (halt and return 15)
+	if got != 15 {
+		t.Errorf("got %d, want 15", got)
+	}
+}
+
+func TestReduceWhileFullStream(t *testing.T) {
+	got, err := kitsune.ReduceWhile(
+		context.Background(),
+		kitsune.FromSlice([]int{1, 2, 3}),
+		0,
+		func(acc, n int) (int, bool) { return acc + n, true },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 6 {
+		t.Errorf("got %d, want 6", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TakeRandom
+// ---------------------------------------------------------------------------
+
+func TestTakeRandom(t *testing.T) {
+	items := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	got, err := kitsune.TakeRandom(context.Background(), kitsune.FromSlice(items), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(got))
+	}
+	for _, v := range got {
+		if !slices.Contains(items, v) {
+			t.Errorf("unexpected item %d", v)
+		}
+	}
+}
+
+func TestTakeRandomMoreThanAvailable(t *testing.T) {
+	items := []int{1, 2, 3}
+	got, err := kitsune.TakeRandom(context.Background(), kitsune.FromSlice(items), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+}

@@ -107,6 +107,18 @@ Grows unboundedly with every unique key seen. Fine for batch jobs with a bounded
 dedup := kredis.NewDedupSet(redisClient, "pipeline:seen-keys")
 ```
 
+**Buffering operators**
+
+Several operators materialise the *entire stream* in memory before emitting any output. Use them only on bounded (finite) pipelines and size your heap accordingly:
+
+| Operator | Memory held |
+|---|---|
+| `GroupBy` | All items, grouped by key |
+| `ChunkBy`, `ChunkWhile` | All items, then split into chunks |
+| `Sort`, `SortBy` | All items, then sorted |
+
+If you are sorting or grouping a large dataset, consider pre-sorting upstream (e.g., a sorted database query or a pre-bucketed Kafka topic) so the pipeline can process records without buffering them all.
+
 **Large items**
 
 For pipelines that process large items (reading big files line by line, large API responses), prefer streaming with small buffers over materializing everything. A `Buffer(4)` with large items uses far less memory than `Buffer(64)`.

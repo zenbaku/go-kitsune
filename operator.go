@@ -825,3 +825,176 @@ func Lift[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, error) {
 		return fn(in)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Reject
+// ---------------------------------------------------------------------------
+
+// Reject keeps only items for which pred returns false. It is the inverse of [Pipeline.Filter].
+//
+//	kitsune.Reject(p, func(n int) bool { return n%2 == 0 }) // keep odd numbers
+func Reject[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
+	return p.Filter(func(item T) bool { return !pred(item) })
+}
+
+// ---------------------------------------------------------------------------
+// WithIndex
+// ---------------------------------------------------------------------------
+
+// WithIndex pairs each item with its 0-based stream position.
+//
+//	kitsune.WithIndex(kitsune.FromSlice([]string{"a","b","c"}))
+//	// → Pair{0,"a"}, Pair{1,"b"}, Pair{2,"c"}
+func WithIndex[T any](p *Pipeline[T]) *Pipeline[Pair[int, T]] {
+	i := -1
+	return Map(p, func(_ context.Context, item T) (Pair[int, T], error) {
+		i++
+		return Pair[int, T]{First: i, Second: item}, nil
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Intersperse / MapIntersperse
+// ---------------------------------------------------------------------------
+
+// Intersperse inserts sep between consecutive items in the stream.
+// The separator is inserted only between items, not before the first or after the last.
+//
+//	kitsune.Intersperse(kitsune.FromSlice([]string{"a","b","c"}), ",")
+//	// → "a", ",", "b", ",", "c"
+func Intersperse[T any](p *Pipeline[T], sep T) *Pipeline[T] {
+	first := true
+	return FlatMap(p, func(_ context.Context, item T) ([]T, error) {
+		if first {
+			first = false
+			return []T{item}, nil
+		}
+		return []T{sep, item}, nil
+	})
+}
+
+// MapIntersperse applies fn to each item and inserts sep between mapped values.
+// Equivalent to [Intersperse] applied after [Map], but in a single pass.
+//
+//	kitsune.MapIntersperse(kitsune.FromSlice([]int{1,2,3}), 0,
+//	    func(_ context.Context, n int) (int, error) { return n * 10, nil },
+//	)
+//	// → 10, 0, 20, 0, 30
+func MapIntersperse[T, O any](p *Pipeline[T], sep O, fn func(context.Context, T) (O, error)) *Pipeline[O] {
+	first := true
+	return FlatMap(p, func(ctx context.Context, item T) ([]O, error) {
+		out, err := fn(ctx, item)
+		if err != nil {
+			return nil, err
+		}
+		if first {
+			first = false
+			return []O{out}, nil
+		}
+		return []O{sep, out}, nil
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TakeEvery / DropEvery / MapEvery
+// ---------------------------------------------------------------------------
+
+// TakeEvery emits every nth item starting from index 0.
+// TakeEvery(p, 1) is a pass-through; TakeEvery(p, 2) emits items at indices 0, 2, 4, …
+// Panics if nth <= 0.
+//
+//	kitsune.TakeEvery(kitsune.FromSlice([]int{1,2,3,4,5,6}), 2)
+//	// → 1, 3, 5
+func TakeEvery[T any](p *Pipeline[T], nth int) *Pipeline[T] {
+	if nth <= 0 {
+		panic("kitsune: TakeEvery requires nth > 0")
+	}
+	i := 0
+	return p.Filter(func(_ T) bool {
+		emit := i%nth == 0
+		i++
+		return emit
+	})
+}
+
+// DropEvery drops every nth item (0-indexed) and emits all others.
+// DropEvery(p, 3) drops items at indices 0, 3, 6, …
+// Panics if nth <= 0.
+//
+//	kitsune.DropEvery(kitsune.FromSlice([]int{1,2,3,4,5,6}), 2)
+//	// → 2, 4, 6
+func DropEvery[T any](p *Pipeline[T], nth int) *Pipeline[T] {
+	if nth <= 0 {
+		panic("kitsune: DropEvery requires nth > 0")
+	}
+	i := 0
+	return p.Filter(func(_ T) bool {
+		drop := i%nth == 0
+		i++
+		return !drop
+	})
+}
+
+// MapEvery applies fn to every nth item (0-indexed) and passes all other items
+// through unchanged. Panics if nth <= 0.
+//
+//	// Double every third item.
+//	kitsune.MapEvery(p, 3, func(_ context.Context, n int) (int, error) { return n * 2, nil })
+func MapEvery[T any](p *Pipeline[T], nth int, fn func(context.Context, T) (T, error)) *Pipeline[T] {
+	if nth <= 0 {
+		panic("kitsune: MapEvery requires nth > 0")
+	}
+	i := 0
+	return Map(p, func(ctx context.Context, item T) (T, error) {
+		apply := i%nth == 0
+		i++
+		if apply {
+			return fn(ctx, item)
+		}
+		return item, nil
+	})
+}
+
+// ---------------------------------------------------------------------------
+// ConsecutiveDedup / ConsecutiveDedupBy
+// ---------------------------------------------------------------------------
+
+// ConsecutiveDedup drops consecutive duplicate items, keeping only the first
+// in each run of equal values.
+// Unlike [Distinct], it does not deduplicate across the whole stream — the same
+// value may appear multiple times as long as it is not adjacent to itself.
+// T must be comparable.
+//
+//	kitsune.ConsecutiveDedup(kitsune.FromSlice([]int{1,1,2,3,3,3,2}))
+//	// → 1, 2, 3, 2
+func ConsecutiveDedup[T comparable](p *Pipeline[T]) *Pipeline[T] {
+	var prev T
+	hasPrev := false
+	return p.Filter(func(item T) bool {
+		if hasPrev && item == prev {
+			return false
+		}
+		prev = item
+		hasPrev = true
+		return true
+	})
+}
+
+// ConsecutiveDedupBy drops consecutive items that produce the same key under fn.
+// Use this when T is not comparable or when deduplication should be based on a
+// derived field.
+//
+//	kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type })
+func ConsecutiveDedupBy[T any, K comparable](p *Pipeline[T], fn func(T) K) *Pipeline[T] {
+	var prevKey K
+	hasPrev := false
+	return p.Filter(func(item T) bool {
+		k := fn(item)
+		if hasPrev && k == prevKey {
+			return false
+		}
+		prevKey = k
+		hasPrev = true
+		return true
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
 )
@@ -384,6 +385,282 @@ func ExampleEnrich() {
 	).Collect(context.Background())
 	fmt.Println(results)
 	// Output: [1=one 2=two 3=three]
+}
+
+func ExampleReject() {
+	input := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
+	results, _ := kitsune.Reject(input, func(n int) bool { return n%2 == 0 }).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 3 5]
+}
+
+func ExampleWithIndex() {
+	results, _ := kitsune.WithIndex(kitsune.FromSlice([]string{"a", "b", "c"})).Collect(context.Background())
+	for _, p := range results {
+		fmt.Printf("%d:%s\n", p.First, p.Second)
+	}
+	// Output:
+	// 0:a
+	// 1:b
+	// 2:c
+}
+
+func ExampleMapIntersperse() {
+	results, _ := kitsune.MapIntersperse(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		0,
+		func(_ context.Context, n int) (int, error) { return n * 10, nil },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [10 0 20 0 30]
+}
+
+func ExampleIntersperse() {
+	results, _ := kitsune.Intersperse(kitsune.FromSlice([]string{"a", "b", "c"}), ",").Collect(context.Background())
+	fmt.Println(results)
+	// Output: [a , b , c]
+}
+
+func ExampleTakeEvery() {
+	results, _ := kitsune.TakeEvery(kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}), 2).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 3 5]
+}
+
+func ExampleDropEvery() {
+	results, _ := kitsune.DropEvery(kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}), 2).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [2 4 6]
+}
+
+func ExampleMapEvery() {
+	// Double every third item (0-indexed: indices 0, 3, 6, …).
+	results, _ := kitsune.MapEvery(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
+		3,
+		func(_ context.Context, n int) (int, error) { return n * 2, nil },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [2 2 3 8 5 6]
+}
+
+func ExampleConsecutiveDedupBy() {
+	type Item struct{ Group, Name string }
+	results, _ := kitsune.ConsecutiveDedupBy(
+		kitsune.FromSlice([]Item{{"A", "x"}, {"A", "y"}, {"B", "z"}, {"A", "w"}}),
+		func(i Item) string { return i.Group },
+	).Collect(context.Background())
+	for _, r := range results {
+		fmt.Printf("%s:%s\n", r.Group, r.Name)
+	}
+	// Output:
+	// A:x
+	// B:z
+	// A:w
+}
+
+func ExampleConsecutiveDedup() {
+	results, _ := kitsune.ConsecutiveDedup(
+		kitsune.FromSlice([]int{1, 1, 2, 3, 3, 3, 2}),
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 3 2]
+}
+
+func ExampleChunkBy() {
+	results, _ := kitsune.ChunkBy(
+		kitsune.FromSlice([]int{1, 1, 2, 2, 3, 1}),
+		func(n int) int { return n },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [[1 1] [2 2] [3] [1]]
+}
+
+func ExampleChunkWhile() {
+	results, _ := kitsune.ChunkWhile(
+		kitsune.FromSlice([]int{1, 2, 4, 9, 10, 11, 15}),
+		func(prev, next int) bool { return next-prev <= 1 },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [[1 2] [4] [9 10 11] [15]]
+}
+
+func ExampleUnzip() {
+	pairs := []kitsune.Pair[int, string]{{First: 1, Second: "a"}, {First: 2, Second: "b"}, {First: 3, Second: "c"}}
+	as, bs := kitsune.Unzip(kitsune.FromSlice(pairs))
+	aRes, _ := as.Collect(context.Background())
+	bRes, _ := bs.Collect(context.Background())
+	fmt.Println(aRes)
+	fmt.Println(bRes)
+	// Output:
+	// [1 2 3]
+	// [a b c]
+}
+
+func ExampleSort() {
+	results, _ := kitsune.Sort(
+		kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9, 2, 6}),
+		func(a, b int) bool { return a < b },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 1 2 3 4 5 6 9]
+}
+
+func ExampleSortBy() {
+	type Item struct{ Name string }
+	results, _ := kitsune.SortBy(
+		kitsune.FromSlice([]Item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x Item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	).Collect(context.Background())
+	for _, r := range results {
+		fmt.Println(r.Name)
+	}
+	// Output:
+	// apple
+	// banana
+	// cherry
+}
+
+func ExampleUnfold() {
+	// Generate the first 8 Fibonacci numbers.
+	results, _ := kitsune.Unfold([2]int{0, 1}, func(s [2]int) (int, [2]int, bool) {
+		return s[0], [2]int{s[1], s[0] + s[1]}, false
+	}).Take(8).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [0 1 1 2 3 5 8 13]
+}
+
+func ExampleIterate() {
+	results, _ := kitsune.Iterate(1, func(n int) int { return n * 2 }).Take(6).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 4 8 16 32]
+}
+
+func ExampleRepeatedly() {
+	// Emit a counter value on each call.
+	n := 0
+	results, _ := kitsune.Repeatedly(func() int {
+		n++
+		return n * n
+	}).Take(5).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 4 9 16 25]
+}
+
+func ExampleCycle() {
+	results, _ := kitsune.Cycle([]string{"a", "b", "c"}).Take(7).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [a b c a b c a]
+}
+
+func ExampleTimer() {
+	// Timer emits a single value after a delay, then closes.
+	results, _ := kitsune.Timer(1*time.Millisecond, func() string { return "ready" }).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [ready]
+}
+
+func ExampleConcat() {
+	results, _ := kitsune.Concat(
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2}) },
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{3, 4}) },
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{5}) },
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 3 4 5]
+}
+
+func ExampleSum() {
+	total, _ := kitsune.Sum(context.Background(), kitsune.FromSlice([]int{1, 2, 3, 4, 5}))
+	fmt.Println(total)
+	// Output: 15
+}
+
+func ExampleMin() {
+	v, _, _ := kitsune.Min(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9}), func(a, b int) bool { return a < b })
+	fmt.Println(v)
+	// Output: 1
+}
+
+func ExampleMax() {
+	v, _, _ := kitsune.Max(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9}), func(a, b int) bool { return a < b })
+	fmt.Println(v)
+	// Output: 9
+}
+
+func ExampleMinMax() {
+	pair, _, _ := kitsune.MinMax(context.Background(), kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9}), func(a, b int) bool { return a < b })
+	fmt.Printf("min=%d max=%d\n", pair.First, pair.Second)
+	// Output: min=1 max=9
+}
+
+func ExampleMinBy() {
+	type Item struct{ Name string }
+	v, _, _ := kitsune.MinBy(
+		context.Background(),
+		kitsune.FromSlice([]Item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x Item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	)
+	fmt.Println(v.Name)
+	// Output: apple
+}
+
+func ExampleMaxBy() {
+	type Item struct{ Name string }
+	v, _, _ := kitsune.MaxBy(
+		context.Background(),
+		kitsune.FromSlice([]Item{{"banana"}, {"apple"}, {"cherry"}}),
+		func(x Item) string { return x.Name },
+		func(a, b string) bool { return a < b },
+	)
+	fmt.Println(v.Name)
+	// Output: cherry
+}
+
+func ExampleFrequenciesBy() {
+	m, _ := kitsune.FrequenciesBy(
+		context.Background(),
+		kitsune.FromSlice([]string{"cat", "dog", "ant", "bee", "cow"}),
+		func(s string) int { return len(s) },
+	)
+	fmt.Println(m[3]) // all five words have length 3
+	// Output: 5
+}
+
+func ExampleTakeRandom() {
+	items := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	sample, _ := kitsune.TakeRandom(context.Background(), items, 3)
+	fmt.Println(len(sample)) // always 3
+	// Output: 3
+}
+
+func ExampleFind() {
+	v, ok, _ := kitsune.Find(context.Background(), kitsune.FromSlice([]int{1, 2, 3, 4, 5}), func(n int) bool { return n > 3 })
+	fmt.Println(v, ok)
+	// Output: 4 true
+}
+
+func ExampleFrequencies() {
+	m, _ := kitsune.Frequencies(context.Background(), kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"}))
+	fmt.Println(m["a"], m["b"], m["c"])
+	// Output: 3 2 1
+}
+
+func ExampleReduceWhile() {
+	// Sum numbers until the running total exceeds 10.
+	total, _ := kitsune.ReduceWhile(
+		context.Background(),
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7}),
+		0,
+		func(acc, n int) (int, bool) {
+			acc += n
+			return acc, acc <= 10
+		},
+	)
+	fmt.Println(total)
+	// Output: 15
 }
 
 func ExampleWithLatestFrom() {

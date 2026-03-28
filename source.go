@@ -232,3 +232,149 @@ func Interval(d time.Duration) *Pipeline[int64] {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Unfold / Iterate / Repeatedly / Cycle
+// ---------------------------------------------------------------------------
+
+// Unfold generates a stream by repeatedly applying fn to a seed value.
+// fn receives the current accumulator and returns (value, nextAcc, stop).
+// When stop is true, the stream ends without emitting value.
+//
+//	// Fibonacci sequence
+//	kitsune.Unfold([2]int{0, 1}, func(s [2]int) (int, [2]int, bool) {
+//	    return s[0], [2]int{s[1], s[0] + s[1]}, false
+//	}).Take(8)
+//	// → 0, 1, 1, 2, 3, 5, 8, 13
+func Unfold[S, T any](seed S, fn func(S) (T, S, bool)) *Pipeline[T] {
+	return Generate(func(_ context.Context, yield func(T) bool) error {
+		acc := seed
+		for {
+			val, next, stop := fn(acc)
+			if stop {
+				return nil
+			}
+			if !yield(val) {
+				return nil
+			}
+			acc = next
+		}
+	})
+}
+
+// Iterate creates an infinite stream starting with seed where each subsequent
+// value is produced by applying fn to the previous value.
+// Use [Pipeline.Take] or [TakeWhile] to bound the output.
+//
+//	kitsune.Iterate(1, func(n int) int { return n * 2 }).Take(5)
+//	// → 1, 2, 4, 8, 16
+func Iterate[T any](seed T, fn func(T) T) *Pipeline[T] {
+	return Generate(func(_ context.Context, yield func(T) bool) error {
+		cur := seed
+		for {
+			if !yield(cur) {
+				return nil
+			}
+			cur = fn(cur)
+		}
+	})
+}
+
+// Repeatedly creates an infinite stream by calling fn on each iteration.
+// Use [Pipeline.Take] or [TakeWhile] to bound the output.
+//
+//	// Emit a random number on every tick.
+//	kitsune.Repeatedly(rand.Int).Take(5)
+func Repeatedly[T any](fn func() T) *Pipeline[T] {
+	return Generate(func(_ context.Context, yield func(T) bool) error {
+		for {
+			if !yield(fn()) {
+				return nil
+			}
+		}
+	})
+}
+
+// Cycle creates an infinite stream that repeatedly loops over items.
+// Panics if items is empty.
+//
+//	kitsune.Cycle([]string{"a","b","c"}).Take(7)
+//	// → "a","b","c","a","b","c","a"
+func Cycle[T any](items []T) *Pipeline[T] {
+	if len(items) == 0 {
+		panic("kitsune: Cycle requires a non-empty slice")
+	}
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		for {
+			for _, item := range items {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if !yield(item) {
+					return nil
+				}
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Timer
+// ---------------------------------------------------------------------------
+
+// Timer emits a single value after delay by calling fn, then closes.
+// The pipeline produces exactly one item unless the context is cancelled first.
+//
+//	// Emit a heartbeat message after 5 seconds.
+//	kitsune.Timer(5*time.Second, func() string { return "ping" })
+func Timer[T any](delay time.Duration, fn func() T) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		select {
+		case <-time.After(delay):
+			yield(fn())
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Concat
+// ---------------------------------------------------------------------------
+
+// Concat runs each pipeline factory sequentially, forwarding all items from
+// each before starting the next. Because each factory creates its own graph,
+// the sources are expressed as factory functions rather than *Pipeline values.
+//
+//	kitsune.Concat(
+//	    func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2}) },
+//	    func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{3, 4}) },
+//	)
+//	// → 1, 2, 3, 4
+func Concat[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		for _, factory := range factories {
+			innerCtx, cancel := context.WithCancel(ctx)
+			stopped := false
+			err := factory().ForEach(func(_ context.Context, item T) error {
+				if !yield(item) {
+					stopped = true
+					cancel()
+				}
+				return nil
+			}).Run(innerCtx)
+			cancel()
+			if stopped {
+				return nil
+			}
+			if err != nil && !errors.Is(err, context.Canceled) {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+}
