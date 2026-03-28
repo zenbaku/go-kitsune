@@ -20,7 +20,7 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 | `BatchUnbatch` | 10,000 items, `Batch(100)` + `Unbatch` | 4,228 µs | ~2.4 M/s | 599 KB | 20,041 |
 | `Filter` | 10,000 items, 50% pass | 3,153 µs | ~3.2 M/s | 79 KB | 9,786 |
 | `Dedupe` | 10,000 items, 50% unique | 4,232 µs | ~2.4 M/s | 653 KB | 29,048 |
-| `CachedMap` | 10,000 items, 1,000 unique keys (~90% hit) | 7,508 µs | ~1.3 M/s | 1.9 MB | 53,462 |
+| `MapWithCache` | 10,000 items, 1,000 unique keys (~90% hit) | 7,508 µs | ~1.3 M/s | 1.9 MB | 53,462 |
 
 ---
 
@@ -32,7 +32,7 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 
 **Dedupe allocs** are higher because each item requires a map lookup and potential insert into the `MemoryDedupSet`, which allocates map entries.
 
-**CachedMap allocs** are highest because every cache miss requires JSON marshalling and unmarshalling the result, and every item requires a map lookup. With a real workload of larger, less-frequent misses, the amortised cost will be lower.
+**MapWithCache allocs** are highest because every cache miss requires JSON marshalling and unmarshalling the result, and every item requires a map lookup. With a real workload of larger, less-frequent misses, the amortised cost will be lower.
 
 **Memory (B/op)** reflects allocations over the full pipeline lifetime — channels, goroutine stacks, item boxing, and any data structure overhead. Not peak RSS.
 

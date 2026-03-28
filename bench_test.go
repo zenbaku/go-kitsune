@@ -83,13 +83,13 @@ func BenchmarkDedupe(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		p := kitsune.FromSlice(items)
-		kitsune.Dedupe(p, func(n int) string {
+		p.Dedupe(func(n int) string {
 			return fmt.Sprintf("%d", n)
-		}, kitsune.MemoryDedupSet()).Drain().Run(context.Background())
+		}).Drain().Run(context.Background())
 	}
 }
 
-func BenchmarkCachedMap(b *testing.B) {
+func BenchmarkMapWithCache(b *testing.B) {
 	// 10k items, 1k unique keys → 90% hit rate after warmup.
 	items := makeItems(10_000)
 	for i := range items {
@@ -100,9 +100,9 @@ func BenchmarkCachedMap(b *testing.B) {
 	for range b.N {
 		cache := kitsune.MemoryCache(2000)
 		p := kitsune.FromSlice(items)
-		kitsune.CachedMap(p, func(_ context.Context, n int) (int, error) {
+		kitsune.Map(p, func(_ context.Context, n int) (int, error) {
 			return n * 2, nil
-		}, func(n int) string { return fmt.Sprintf("%d", n) }, cache, 0).Drain().Run(context.Background())
+		}, kitsune.CacheBy(func(n int) string { return fmt.Sprintf("%d", n) }, kitsune.CacheBackend(cache))).Drain().Run(context.Background())
 	}
 }
 

@@ -1,7 +1,7 @@
 // Example: redis — Redis source, sink, store, cache, and dedup.
 //
 // Demonstrates: kredis.FromList, kredis.ListPush, kredis.NewStore (WithStore),
-// kredis.NewCache (CachedMap), kredis.NewDedupSet (Dedupe).
+// kredis.NewCache (Map+CacheBy), kredis.NewDedupSet (Pipeline.Dedupe).
 //
 // Requires Redis running on localhost:6379.
 package main
@@ -54,25 +54,25 @@ func main() {
 	// --- Dedup via Redis set ---
 	fmt.Println("\n=== Redis-backed dedup ===")
 	items := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	deduped := kitsune.Dedupe(items,
-		func(s string) string { return s },
+	deduped := items.Dedupe(func(s string) string { return s },
 		kredis.NewDedupSet(rdb, "kex:dedup"),
 	)
 	unique, _ := deduped.Collect(ctx)
 	fmt.Println("Unique:", unique)
 
-	// --- CachedMap via Redis ---
+	// --- Map + CacheBy via Redis ---
 	fmt.Println("\n=== Redis-backed cache ===")
 	lookupCount := 0
 	ids := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	cached := kitsune.CachedMap(ids,
+	cached := kitsune.Map(ids,
 		func(_ context.Context, id string) (string, error) {
 			lookupCount++
 			return fmt.Sprintf("result(%s)", id), nil
 		},
-		func(id string) string { return id },
-		kredis.NewCache(rdb, "kex:cache:"),
-		10*time.Second,
+		kitsune.CacheBy(func(id string) string { return id },
+			kitsune.CacheBackend(kredis.NewCache(rdb, "kex:cache:")),
+			kitsune.CacheTTL(10*time.Second),
+		),
 	)
 	results, _ := cached.Collect(ctx)
 	fmt.Printf("Results: %v (%d lookups, rest cached in Redis)\n", results, lookupCount)

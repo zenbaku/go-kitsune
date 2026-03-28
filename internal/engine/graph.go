@@ -2,7 +2,10 @@
 // All values flow as [any]; the public kitsune package adds generic type safety.
 package engine
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Graph holds the pipeline DAG. Nodes are added during pipeline construction;
 // execution happens when [Run] is called.
@@ -88,6 +91,24 @@ type Node struct {
 
 	// Zip-specific.
 	ZipConvert func(any, any) any // (a, b) → Pair[A,B]
+
+	// Throttle/Debounce-specific.
+	ThrottleDuration int64 // nanoseconds; shared by ThrottleNode and DebounceNode
+
+	// Reduce-specific.
+	ReduceSeed any // initial accumulator value
+
+	// Cache-specific.
+	// CacheWrapFn, if set, is called at Run time to produce a cache-wrapped Fn.
+	// It receives the run-level default cache (type-erased) and TTL, and returns
+	// a replacement Fn. The factory closes over any per-stage overrides and
+	// falls back to the run-level defaults when they are nil/zero.
+	CacheWrapFn func(defaultCache any, defaultTTL time.Duration) any
+
+	// MapResult-specific.
+	// MapResultErrWrap converts an (input, error) pair into the type-erased ErrItem
+	// value that is sent to port 1. Set by the public kitsune.MapResult function.
+	MapResultErrWrap func(input any, err error) any
 }
 
 // InputRef identifies the output port of an upstream node.
@@ -106,19 +127,24 @@ type ChannelKey struct {
 type NodeKind int
 
 const (
-	Source        NodeKind = iota
-	Map                    // 1:1
-	FlatMap                // 1:N
-	Filter                 // predicate gate
-	Tap                    // side-effect passthrough
-	Take                   // limit N items
-	Batch                  // collect into slices
-	Partition              // split by predicate → two outputs
-	BroadcastNode          // copy to all N outputs
-	Merge                  // fan-in from multiple inputs
-	Sink                   // terminal consumer
-	TakeWhile              // emit until predicate fails, then signal done
-	ZipNode                // pair items from two inputs by position
+	Source             NodeKind = iota
+	Map                         // 1:1
+	FlatMap                     // 1:N
+	Filter                      // predicate gate
+	Tap                         // side-effect passthrough
+	Take                        // limit N items
+	Batch                       // collect into slices
+	Partition                   // split by predicate → two outputs
+	BroadcastNode               // copy to all N outputs
+	Merge                       // fan-in from multiple inputs
+	Sink                        // terminal consumer
+	TakeWhile                   // emit until predicate fails, then signal done
+	ZipNode                     // pair items from two inputs by position
+	ThrottleNode                // emit at most one item per duration window
+	DebounceNode                // emit item only after a quiet period of duration d
+	ReduceNode                  // fold entire stream into a single value, always emits once
+	MapResultNode               // map with error routing: success → port 0, error → port 1
+	WithLatestFromNode          // combine primary items with most-recent secondary value
 )
 
 // DefaultBuffer is the default channel buffer size between stages.

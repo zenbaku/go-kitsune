@@ -83,10 +83,21 @@ type BufferStatus = engine.BufferStatus
 func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	cfg := buildRunConfig(opts)
 	return engine.Run(ctx, r.g, engine.RunConfig{
-		Hook:         cfg.hook,
-		Store:        cfg.store,
-		DrainTimeout: cfg.drainTimeout,
+		Hook:            cfg.hook,
+		Store:           cfg.store,
+		DrainTimeout:    cfg.drainTimeout,
+		DefaultCache:    cfg.defaultCache,
+		DefaultCacheTTL: cfg.defaultCacheTTL,
 	})
+}
+
+// RunAsync starts the pipeline in a background goroutine and returns a channel
+// that receives exactly one value: nil on clean completion, or the first error.
+// It is the non-blocking counterpart to [Runner.Run].
+func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) <-chan error {
+	errCh := make(chan error, 1)
+	go func() { errCh <- r.Run(ctx, opts...) }()
+	return errCh
 }
 
 // MergeRunners combines multiple runners that share the same pipeline graph

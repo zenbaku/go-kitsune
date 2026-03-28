@@ -224,7 +224,7 @@ func TestSQLiteWithDedupe(t *testing.T) {
 	})
 
 	source := ksqlite.Query(db, "SELECT id, name, age FROM users ORDER BY id", scanUser)
-	deduped := kitsune.Dedupe(source, func(u User) string { return u.Name }, kitsune.MemoryDedupSet())
+	deduped := source.Dedupe(func(u User) string { return u.Name })
 
 	results, err := deduped.Collect(context.Background())
 	if err != nil {

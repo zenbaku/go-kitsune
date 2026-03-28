@@ -185,9 +185,9 @@ func CreateChannels(g *Graph) map[ChannelKey]chan any {
 		if buf <= 0 {
 			buf = DefaultBuffer
 		}
-		if n.Kind == Partition {
-			chans[ChannelKey{n.ID, 0}] = make(chan any, buf) // match
-			chans[ChannelKey{n.ID, 1}] = make(chan any, buf) // rest
+		if n.Kind == Partition || n.Kind == MapResultNode {
+			chans[ChannelKey{n.ID, 0}] = make(chan any, buf) // ok / match
+			chans[ChannelKey{n.ID, 1}] = make(chan any, buf) // err / rest
 		} else if n.Kind == BroadcastNode {
 			for i := range n.BroadcastN {
 				chans[ChannelKey{n.ID, i}] = make(chan any, buf)
@@ -212,7 +212,7 @@ func CreateOutboxes(g *Graph, chans map[ChannelKey]chan any, hook Hook) map[Chan
 			name = kindName(n.Kind)
 		}
 		overflow := n.Overflow
-		if n.Kind == Partition {
+		if n.Kind == Partition || n.Kind == MapResultNode {
 			outboxes[ChannelKey{n.ID, 0}] = NewOutbox(chans[ChannelKey{n.ID, 0}], overflow, hook, name)
 			outboxes[ChannelKey{n.ID, 1}] = NewOutbox(chans[ChannelKey{n.ID, 1}], overflow, hook, name)
 		} else if n.Kind == BroadcastNode {

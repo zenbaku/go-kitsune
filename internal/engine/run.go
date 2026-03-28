@@ -15,6 +15,10 @@ type RunConfig struct {
 	Hook         Hook
 	Store        any           // type-erased kitsune.Store; nil means memory-only
 	DrainTimeout time.Duration // 0 = no drain (default); >0 = graceful drain on context cancel
+
+	// Default cache for Map stages that use Cache(...) without an explicit backend.
+	DefaultCache    any           // type-erased kitsune.Cache; nil = no cache
+	DefaultCacheTTL time.Duration // 0 = no expiry
 }
 
 // Run validates the graph, wires channels, and executes all stages.
@@ -53,7 +57,7 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 				}
 				// For multi-port nodes (Partition, Broadcast), sum across ports.
 				total, cap_ := 0, 0
-				if n.Kind == Partition {
+				if n.Kind == Partition || n.Kind == MapResultNode {
 					for port := range 2 {
 						if ch, ok := chans[ChannelKey{n.ID, port}]; ok {
 							total += len(ch)
@@ -87,12 +91,12 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 	signalDone := func() { doneOnce.Do(func() { close(done) }) }
 
 	if cfg.DrainTimeout > 0 {
-		return runWithDrain(ctx, cfg.DrainTimeout, g, chans, outboxes, hook, done, signalDone)
+		return runWithDrain(ctx, cfg, g, chans, outboxes, hook, done, signalDone)
 	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, n := range g.Nodes {
-		eg.Go(nodeRunner(egCtx, n, chans, outboxes, hook, done, signalDone))
+		eg.Go(nodeRunner(egCtx, n, cfg, chans, outboxes, hook, done, signalDone))
 	}
 	return eg.Wait()
 }
@@ -101,7 +105,7 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 // When parentCtx is cancelled, sources are told to stop and the pipeline is
 // given up to drainTimeout to finish processing in-flight items naturally.
 // After the timeout, a hard cancel forces all remaining stages to exit.
-func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, g *Graph, chans map[ChannelKey]chan any, outboxes map[ChannelKey]Outbox, hook Hook, done chan struct{}, signalDone func()) error {
+func runWithDrain(parentCtx context.Context, cfg RunConfig, g *Graph, chans map[ChannelKey]chan any, outboxes map[ChannelKey]Outbox, hook Hook, done chan struct{}, signalDone func()) error {
 	// drainCtx is independent of parentCtx so stages keep running after parent cancel.
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 	defer drainCancel() // always clean up; also stops the monitor goroutine
@@ -118,7 +122,7 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, g *Grap
 			signalDone()
 			// Phase 2: wait for natural drain or timeout.
 			select {
-			case <-time.After(drainTimeout):
+			case <-time.After(cfg.DrainTimeout):
 				// Drain timeout exceeded — force hard stop via drainCancel.
 				drainCancel()
 			case <-drainCtx.Done():
@@ -130,7 +134,7 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, g *Grap
 	}()
 
 	for _, n := range g.Nodes {
-		eg.Go(nodeRunner(egCtx, n, chans, outboxes, hook, done, signalDone))
+		eg.Go(nodeRunner(egCtx, n, cfg, chans, outboxes, hook, done, signalDone))
 	}
 
 	return eg.Wait()
@@ -140,7 +144,7 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, g *Grap
 // Node dispatch
 // ---------------------------------------------------------------------------
 
-func nodeRunner(ctx context.Context, n *Node, chans map[ChannelKey]chan any, outboxes map[ChannelKey]Outbox, hook Hook, done <-chan struct{}, signalDone func()) func() error {
+func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKey]chan any, outboxes map[ChannelKey]Outbox, hook Hook, done <-chan struct{}, signalDone func()) func() error {
 	outCh := chans[ChannelKey{n.ID, 0}]
 	outbox := outboxes[ChannelKey{n.ID, 0}]
 
@@ -166,11 +170,13 @@ func nodeRunner(ctx context.Context, n *Node, chans map[ChannelKey]chan any, out
 		outCloser = func() { close(outCh) }
 		inner = func() error { return runSource(ctx, n, outbox, hook, done) }
 	case Map:
+		mn := resolveCacheWrap(n, cfg)
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runMap(ctx, n, inCh, outbox, hook) }
+		inner = func() error { return runMap(ctx, mn, inCh, outbox, hook) }
 	case FlatMap:
+		mn := resolveCacheWrap(n, cfg)
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runFlatMap(ctx, n, inCh, outbox, hook) }
+		inner = func() error { return runFlatMap(ctx, mn, inCh, outbox, hook) }
 	case Filter:
 		outCloser = func() { close(outCh) }
 		inner = func() error { return runFilter(ctx, n, inCh, outbox, hook, name) }
@@ -219,6 +225,29 @@ func nodeRunner(ctx context.Context, n *Node, chans map[ChannelKey]chan any, out
 			inCh2 = inChs[1]
 		}
 		inner = func() error { return runZip(ctx, n, inCh, inCh2, outbox, hook, name) }
+	case ReduceNode:
+		outCloser = func() { close(outCh) }
+		inner = func() error { return runReduce(ctx, n, inCh, outbox, hook, name) }
+	case ThrottleNode:
+		outCloser = func() { close(outCh) }
+		inner = func() error { return runThrottle(ctx, n, inCh, outbox, hook, name) }
+	case DebounceNode:
+		outCloser = func() { close(outCh) }
+		inner = func() error { return runDebounce(ctx, n, inCh, outbox, hook, name) }
+	case MapResultNode:
+		okCh := chans[ChannelKey{n.ID, 0}]
+		errCh := chans[ChannelKey{n.ID, 1}]
+		okOutbox := outboxes[ChannelKey{n.ID, 0}]
+		errOutbox := outboxes[ChannelKey{n.ID, 1}]
+		outCloser = func() { close(okCh); close(errCh) }
+		inner = func() error { return runMapResult(ctx, n, inCh, okOutbox, errOutbox, hook, name) }
+	case WithLatestFromNode:
+		outCloser = func() { close(outCh) }
+		var inCh2 chan any
+		if len(inChs) >= 2 {
+			inCh2 = inChs[1]
+		}
+		inner = func() error { return runWithLatestFrom(ctx, n, inCh, inCh2, outbox, hook, name) }
 	default:
 		outCloser = func() {}
 		inner = func() error { return fmt.Errorf("kitsune: unknown node kind %d", n.Kind) }
@@ -1239,6 +1268,16 @@ func kindName(k NodeKind) string {
 		return "takewhile"
 	case ZipNode:
 		return "zip"
+	case ThrottleNode:
+		return "throttle"
+	case DebounceNode:
+		return "debounce"
+	case ReduceNode:
+		return "reduce"
+	case MapResultNode:
+		return "mapresult"
+	case WithLatestFromNode:
+		return "withlatestfrom"
 	default:
 		return "unknown"
 	}
@@ -1249,4 +1288,255 @@ func nodeErrorHandler(n *Node) ErrorHandler {
 		return n.ErrorHandler
 	}
 	return DefaultHandler{}
+}
+
+// ---------------------------------------------------------------------------
+// Reduce
+// ---------------------------------------------------------------------------
+
+// runReduce folds the entire input stream into a single accumulated value and
+// emits it once when the input closes. Always emits exactly one item — the seed
+// value is emitted unchanged on empty input.
+func runReduce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+	fn := n.Fn.(func(any, any) any)
+	hook.OnStageStart(ctx, name)
+	var count int64
+	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
+
+	acc := n.ReduceSeed
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				// Input exhausted — emit the accumulated value.
+				hook.OnItem(ctx, name, 0, nil)
+				return outbox.Send(ctx, acc)
+			}
+			count++
+			acc = fn(acc, item)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Throttle
+// ---------------------------------------------------------------------------
+
+// runThrottle emits the first item that arrives in each window of d, dropping
+// all subsequent items that arrive before d has elapsed since the last emission.
+func runThrottle(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+	d := time.Duration(n.ThrottleDuration)
+	hook.OnStageStart(ctx, name)
+	var processed, dropped int64
+	defer func() { hook.OnStageDone(ctx, name, processed, dropped) }()
+
+	var lastEmit time.Time // zero value → nothing emitted yet
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			now := time.Now()
+			if lastEmit.IsZero() || now.Sub(lastEmit) >= d {
+				lastEmit = now
+				processed++
+				hook.OnItem(ctx, name, 0, nil)
+				if err := outbox.Send(ctx, item); err != nil {
+					return err
+				}
+			} else {
+				dropped++
+				hook.OnItem(ctx, name, 0, nil)
+				if oh, ok := hook.(OverflowHook); ok {
+					oh.OnDrop(ctx, name, item)
+				}
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Debounce
+// ---------------------------------------------------------------------------
+
+// runDebounce emits an item only after d has passed with no new items arriving.
+// Each new arrival resets the timer; only the last item in a burst is emitted.
+// On input close, any pending item is flushed immediately.
+func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+	d := time.Duration(n.ThrottleDuration)
+	hook.OnStageStart(ctx, name)
+	var processed, dropped int64
+	defer func() { hook.OnStageDone(ctx, name, processed, dropped) }()
+
+	var pending any
+	hasPending := false
+
+	timer := time.NewTimer(d)
+	timer.Stop()
+	// Drain the channel in case Stop raced with a fire.
+	select {
+	case <-timer.C:
+	default:
+	}
+	defer timer.Stop()
+
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				// Input closed — flush any pending item.
+				if hasPending {
+					processed++
+					hook.OnItem(ctx, name, 0, nil)
+					_ = outbox.Send(ctx, pending)
+				}
+				return nil
+			}
+			// Replace pending item; each replacement is a "drop" of the prior.
+			if hasPending {
+				dropped++
+			}
+			pending = item
+			hasPending = true
+			// Reset the quiet-period timer.
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(d)
+
+		case <-timer.C:
+			if hasPending {
+				processed++
+				hook.OnItem(ctx, name, 0, nil)
+				if err := outbox.Send(ctx, pending); err != nil {
+					return err
+				}
+				hasPending = false
+			}
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// runMapResult executes a Map-like transformation but routes successful results
+// to okOutbox (port 0) and failed results to errOutbox (port 1).
+// It does not use ErrorHandler — every error is always routed.
+func runMapResult(ctx context.Context, n *Node, inCh chan any, okOutbox, errOutbox Outbox, hook Hook, name string) error {
+	fn := n.Fn.(func(context.Context, any) (any, error))
+	wrapErr := n.MapResultErrWrap
+	hook.OnStageStart(ctx, name)
+	var processed, errCount int64
+	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
+
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			start := time.Now()
+			result, err := fn(ctx, item)
+			dur := time.Since(start)
+			if err != nil {
+				errCount++
+				hook.OnItem(ctx, name, dur, err)
+				if sendErr := errOutbox.Send(ctx, wrapErr(item, err)); sendErr != nil {
+					return sendErr
+				}
+				continue
+			}
+			processed++
+			hook.OnItem(ctx, name, dur, nil)
+			if sh, ok := hook.(SampleHook); ok && processed%10 == 0 {
+				sh.OnItemSample(ctx, name, result)
+			}
+			if sendErr := okOutbox.Send(ctx, result); sendErr != nil {
+				return sendErr
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// runWithLatestFrom combines each item from the primary channel with the most
+// recently seen value from the secondary channel. Primary items received before
+// any secondary value has arrived are silently dropped.
+func runWithLatestFrom(ctx context.Context, n *Node, primaryCh, secondaryCh chan any, outbox Outbox, hook Hook, name string) error {
+	convert := n.ZipConvert
+	hook.OnStageStart(ctx, name)
+	var count int64
+	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
+
+	var (
+		mu       sync.Mutex
+		latest   any
+		hasValue bool
+	)
+
+	// Background goroutine: drain secondary and keep the latest value.
+	go func() {
+		for {
+			select {
+			case item, ok := <-secondaryCh:
+				if !ok {
+					return
+				}
+				mu.Lock()
+				latest = item
+				hasValue = true
+				mu.Unlock()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	for {
+		select {
+		case item, ok := <-primaryCh:
+			if !ok {
+				return nil
+			}
+			mu.Lock()
+			hv, lv := hasValue, latest
+			mu.Unlock()
+			if !hv {
+				continue // no secondary value yet — drop
+			}
+			count++
+			hook.OnItem(ctx, name, 0, nil)
+			if err := outbox.Send(ctx, convert(item, lv)); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// resolveCacheWrap returns n unchanged if CacheWrapFn is nil; otherwise it
+// returns a shallow copy of n with Fn replaced by the cache-wrapped version.
+// This avoids mutating the shared graph node between runs.
+func resolveCacheWrap(n *Node, cfg RunConfig) *Node {
+	if n.CacheWrapFn == nil {
+		return n
+	}
+	wrapped := n.CacheWrapFn(cfg.DefaultCache, cfg.DefaultCacheTTL)
+	if wrapped == nil {
+		return n
+	}
+	cp := *n
+	cp.Fn = wrapped
+	return &cp
 }

@@ -1,6 +1,7 @@
-// Example: dedupe — deduplication and caching.
+// Example: dedupe — deduplication and cached map lookups.
 //
-// Demonstrates: Dedupe with MemoryDedupSet, CachedMap with MemoryCache.
+// Demonstrates: Pipeline.Dedupe with default MemoryDedupSet,
+// Map with the Cache stage option for transparent result caching.
 package main
 
 import (
@@ -28,10 +29,8 @@ func main() {
 		{"e4", "submit"},
 	})
 
-	unique := kitsune.Dedupe(events,
-		func(e Event) string { return e.ID },
-		kitsune.MemoryDedupSet(),
-	)
+	// No DedupSet argument → uses MemoryDedupSet by default.
+	unique := events.Dedupe(func(e Event) string { return e.ID })
 
 	results, err := unique.Collect(context.Background())
 	if err != nil {
@@ -42,20 +41,22 @@ func main() {
 	}
 	fmt.Printf("  → %d unique out of 6 total\n", len(results))
 
-	// --- CachedMap: expensive lookups cached by key ---
+	// --- Map + Cache: expensive lookups cached by key ---
 	fmt.Println("\n=== Cached lookups ===")
 	callCount := 0
 	ids := kitsune.FromSlice([]string{"user-1", "user-2", "user-1", "user-3", "user-1", "user-2"})
 
-	enriched := kitsune.CachedMap(ids,
+	enriched := kitsune.Map(ids,
 		func(_ context.Context, id string) (string, error) {
 			callCount++
 			fmt.Printf("  [cache miss] fetching %s\n", id)
 			return fmt.Sprintf("profile(%s)", id), nil
 		},
-		func(id string) string { return id },
-		kitsune.MemoryCache(100),
-		5*time.Minute,
+		kitsune.CacheBy(
+			func(id string) string { return id },
+			kitsune.CacheBackend(kitsune.MemoryCache(100)),
+			kitsune.CacheTTL(5*time.Minute),
+		),
 	)
 
 	profiles, err := enriched.Collect(context.Background())

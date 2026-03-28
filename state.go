@@ -240,7 +240,8 @@ func (s *memoryStore) Delete(_ context.Context, key string) error {
 // Cache — key-value cache with TTL
 // ---------------------------------------------------------------------------
 
-// Cache supports key-value caching with TTL for use with [CachedMap].
+// Cache supports key-value caching with TTL. Use it with the [Cache] stage
+// option on [Map] to skip redundant calls on repeated keys.
 // External implementations (Redis, Memcached) can implement this interface.
 type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool, error)

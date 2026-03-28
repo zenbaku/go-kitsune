@@ -27,31 +27,31 @@ tasks:
       - go vet {{.PACKAGE}}
 
   test:
-    desc: Run tests
+    desc: Run tests (fast; skips example smoke tests — use test:examples for those)
     cmds:
-      - go test -count=1 -timeout 30s {{.PACKAGE}}
+      - go test -short -count=1 -timeout 30s {{.PACKAGE}}
 
   test:verbose:
-    desc: Run tests with verbose output
+    desc: Run tests with verbose output (fast; skips example smoke tests)
     cmds:
-      - go test -v -count=1 -timeout 30s {{.PACKAGE}}
+      - go test -short -v -count=1 -timeout 30s {{.PACKAGE}}
 
   test:race:
-    desc: Run tests with race detector
+    desc: Run tests with race detector (fast; skips example smoke tests)
     cmds:
-      - go test -race -count=1 -timeout 60s {{.PACKAGE}}
+      - go test -short -race -count=1 -timeout 60s {{.PACKAGE}}
 
   test:cover:
-    desc: Run tests and show coverage
+    desc: Run tests and show coverage (fast; skips example smoke tests)
     cmds:
-      - go test -coverprofile=coverage.out -count=1 -timeout 30s {{.PACKAGE}}
+      - go test -short -coverprofile=coverage.out -count=1 -timeout 30s {{.PACKAGE}}
       - go tool cover -func=coverage.out
       - rm -f coverage.out
 
   test:ext:
     desc: Run tail tests (kredis, ksqlite, kfile, khttp)
     cmds:
-      - for: [kredis, ksqlite, kfile, khttp]
+      - for: [kredis, ksqlite, kfile, khttp, kotel]
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
 
   bench:
@@ -62,10 +62,9 @@ tasks:
   test:examples:
     desc: Build and run all examples (skips redis tail if unavailable)
     cmds:
-      # Core examples — build and run (all are fast and self-contained).
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow]
-        cmd: go run ./examples/{{.ITEM}} > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
-      # Tail examples — build and run.
+      # Root-module examples — run via go test -run TestExamples (parallel, cached builds).
+      - go test -v -run TestExamples -timeout 120s -count=1 .
+      # Tail examples — own go.mod, run directly.
       - for: [files, sqlite, http]
         cmd: cd examples/{{.ITEM}} && go run . > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
       # Redis tail example — only if Redis is reachable.
@@ -81,7 +80,7 @@ tasks:
   examples:
     desc: Run all examples
     cmds:
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow]
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow, channel, collectors, concatmap, groupby, mapresult, pairwise, reduce, scan, slidingwindow, stages, ticker, timebased, timeout, withlatestfrom]
         cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
       - for: [files, redis, sqlite, http]
         cmd: echo "=== {{.ITEM}} ===" && cd examples/{{.ITEM}} && go run .

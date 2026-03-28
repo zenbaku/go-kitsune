@@ -155,6 +155,50 @@ func TestOTelHookRestarts(t *testing.T) {
 	}
 }
 
+func TestOTelHookBuffers(t *testing.T) {
+	reader, provider := newTestMeter()
+	defer provider.Shutdown(context.Background())
+
+	meter := provider.Meter("test")
+	hook := kotel.New(meter)
+
+	const n = 200
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	// Slow consumer so buffers fill up during the run.
+	_, err := kitsune.Map(
+		kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+		kitsune.WithName("buffered"),
+		kitsune.Buffer(32),
+	).Collect(context.Background(), kitsune.WithHook(hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger a collection to exercise the observable gauge callback.
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect metrics: %v", err)
+	}
+	// The gauge may be zero after the pipeline drains — we just verify it was
+	// registered and the callback runs without error.
+	found := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "kitsune.stage.buffer_length" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("kitsune.stage.buffer_length gauge not registered")
+	}
+}
+
 func TestOTelHookGraph(t *testing.T) {
 	reader, provider := newTestMeter()
 	defer provider.Shutdown(context.Background())

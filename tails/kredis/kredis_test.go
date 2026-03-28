@@ -80,10 +80,10 @@ func TestRedisCache(t *testing.T) {
 	input := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
 
 	cache := kredis.NewCache(client, "kcache:")
-	cached := kitsune.CachedMap(input, func(_ context.Context, s string) (string, error) {
+	cached := kitsune.Map(input, func(_ context.Context, s string) (string, error) {
 		callCount++
 		return s + "!", nil
-	}, func(s string) string { return s }, cache, 10*time.Second)
+	}, kitsune.CacheBy(func(s string) string { return s }, kitsune.CacheBackend(cache), kitsune.CacheTTL(10*time.Second)))
 
 	results, err := cached.Collect(context.Background())
 	if err != nil {
@@ -104,7 +104,7 @@ func TestRedisDedupSet(t *testing.T) {
 	flushKeys(t, client, "kdedup:test")
 
 	input := kitsune.FromSlice([]string{"x", "y", "x", "z", "y", "x"})
-	deduped := kitsune.Dedupe(input, func(s string) string { return s },
+	deduped := input.Dedupe(func(s string) string { return s },
 		kredis.NewDedupSet(client, "kdedup:test"))
 
 	results, err := deduped.Collect(context.Background())

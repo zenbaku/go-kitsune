@@ -28,12 +28,23 @@ type stageConfig struct {
 	errorHandler engine.ErrorHandler
 	batchTimeout time.Duration
 	supervision  engine.SupervisionPolicy
+	cacheConfig  *stageCacheConfig
+	timeout      time.Duration
+}
+
+// stageCacheConfig holds cache settings for a single Map stage.
+type stageCacheConfig struct {
+	keyFn any           // func(I) string, type-erased
+	cache Cache         // explicit per-stage backend; nil = use runner default
+	ttl   time.Duration // explicit per-stage TTL; 0 = use runner default
 }
 
 type runConfig struct {
-	store        Store
-	hook         Hook
-	drainTimeout time.Duration
+	store           Store
+	hook            Hook
+	drainTimeout    time.Duration
+	defaultCache    Cache
+	defaultCacheTTL time.Duration
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -59,6 +70,12 @@ func buildRunConfig(opts []RunOption) runConfig {
 // newNode creates a standard engine.Node from a stage config and pipeline position.
 func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOption) *engine.Node {
 	cfg := buildStageConfig(opts)
+	if cfg.cacheConfig != nil && kind != engine.Map {
+		panic("kitsune: CacheBy is only supported on Map stages")
+	}
+	if cfg.timeout > 0 && kind != engine.Map && kind != engine.FlatMap {
+		panic("kitsune: Timeout is only supported on Map and FlatMap stages")
+	}
 	return &engine.Node{
 		Kind:         kind,
 		Name:         cfg.name,
@@ -118,6 +135,16 @@ func OnError(h ErrorHandler) StageOption {
 // Only meaningful when used with [Batch].
 func BatchTimeout(d time.Duration) StageOption {
 	return func(c *stageConfig) { c.batchTimeout = d }
+}
+
+// Timeout sets a per-item deadline for [Map] and [FlatMap] stages.
+// If the processing function does not return within d, its context is cancelled
+// and the item fails with [context.DeadlineExceeded]. Each retry attempt
+// (when combined with [Retry]) gets a fresh timeout.
+//
+// Panics at pipeline construction time if used on any stage other than Map or FlatMap.
+func Timeout(d time.Duration) StageOption {
+	return func(c *stageConfig) { c.timeout = d }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +241,51 @@ func Supervise(policy SupervisionPolicy) StageOption {
 }
 
 // ---------------------------------------------------------------------------
+// Cache stage option
+// ---------------------------------------------------------------------------
+
+// CacheOpt configures per-stage cache overrides on a [Cache] stage option.
+type CacheOpt func(*stageCacheConfig)
+
+// CacheTTL overrides the TTL for a cached stage.
+// If not set, the runner's default TTL (from [WithCache]) is used.
+func CacheTTL(ttl time.Duration) CacheOpt {
+	return func(c *stageCacheConfig) { c.ttl = ttl }
+}
+
+// CacheBackend overrides the cache backend for a cached stage.
+// If not set, the runner's default cache (from [WithCache]) is used.
+func CacheBackend(cache Cache) CacheOpt {
+	return func(c *stageCacheConfig) { c.cache = cache }
+}
+
+// CacheBy returns a [StageOption] that enables caching on a [Map] stage.
+// keyFn extracts the cache key from each input item. On a cache hit the map
+// function is skipped; on a miss the function is called and the result stored.
+//
+// CacheBy is only supported on [Map]. Passing it to any other stage (FlatMap,
+// Filter, etc.) panics at pipeline construction time.
+//
+// By default the runner's cache backend and TTL ([WithCache]) are used.
+// Override either per-stage with [CacheBackend] and [CacheTTL]:
+//
+//	// use runner defaults
+//	kitsune.Map(p, fetchUser,
+//	    kitsune.CacheBy(func(e Event) string { return e.UserID }),
+//	)
+//	// per-stage TTL override
+//	kitsune.Map(p, fetchUser,
+//	    kitsune.CacheBy(func(e Event) string { return e.UserID }, kitsune.CacheTTL(5*time.Minute)),
+//	)
+func CacheBy[I any](keyFn func(I) string, opts ...CacheOpt) StageOption {
+	cfg := &stageCacheConfig{keyFn: keyFn}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	return func(c *stageConfig) { c.cacheConfig = cfg }
+}
+
+// ---------------------------------------------------------------------------
 // Run options
 // ---------------------------------------------------------------------------
 
@@ -237,6 +309,17 @@ func WithHook(h Hook) RunOption {
 // cleanly. If the drain takes longer than timeout, a hard stop is forced.
 func WithDrain(timeout time.Duration) RunOption {
 	return func(c *runConfig) { c.drainTimeout = timeout }
+}
+
+// WithCache sets the default cache backend and TTL for all [Map] stages that
+// use the [Cache] stage option without an explicit [CacheBackend] override.
+//
+//	runner.Run(ctx, kitsune.WithCache(myCache, 10*time.Minute))
+func WithCache(cache Cache, ttl time.Duration) RunOption {
+	return func(c *runConfig) {
+		c.defaultCache = cache
+		c.defaultCacheTTL = ttl
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +397,79 @@ func (h *retryHandler) Backoff() func(int) time.Duration { return h.bo }
 // LogHook returns a [Hook] that logs pipeline events via the given [slog.Logger].
 func LogHook(logger *slog.Logger) Hook {
 	return &logHook{logger: logger}
+}
+
+// MultiHook combines multiple hooks into a single hook. Every registered hook
+// receives all events. Optional extension interfaces ([OverflowHook],
+// [SupervisionHook], [SampleHook], [GraphHook], [BufferHook]) are called only
+// for the sub-hooks that implement them.
+//
+//	err := runner.Run(ctx, kitsune.WithHook(kitsune.MultiHook(
+//	    kitsune.LogHook(slog.Default()),
+//	    insp, // inspector implements all extension interfaces
+//	)))
+func MultiHook(hooks ...Hook) Hook {
+	return &multiHook{hooks: hooks}
+}
+
+type multiHook struct{ hooks []Hook }
+
+func (m *multiHook) OnStageStart(ctx context.Context, stage string) {
+	for _, h := range m.hooks {
+		h.OnStageStart(ctx, stage)
+	}
+}
+
+func (m *multiHook) OnItem(ctx context.Context, stage string, dur time.Duration, err error) {
+	for _, h := range m.hooks {
+		h.OnItem(ctx, stage, dur, err)
+	}
+}
+
+func (m *multiHook) OnStageDone(ctx context.Context, stage string, processed int64, errors int64) {
+	for _, h := range m.hooks {
+		h.OnStageDone(ctx, stage, processed, errors)
+	}
+}
+
+func (m *multiHook) OnDrop(ctx context.Context, stage string, item any) {
+	for _, h := range m.hooks {
+		if oh, ok := h.(OverflowHook); ok {
+			oh.OnDrop(ctx, stage, item)
+		}
+	}
+}
+
+func (m *multiHook) OnStageRestart(ctx context.Context, stage string, attempt int, cause error) {
+	for _, h := range m.hooks {
+		if sh, ok := h.(SupervisionHook); ok {
+			sh.OnStageRestart(ctx, stage, attempt, cause)
+		}
+	}
+}
+
+func (m *multiHook) OnItemSample(ctx context.Context, stage string, item any) {
+	for _, h := range m.hooks {
+		if sh, ok := h.(SampleHook); ok {
+			sh.OnItemSample(ctx, stage, item)
+		}
+	}
+}
+
+func (m *multiHook) OnGraph(nodes []GraphNode) {
+	for _, h := range m.hooks {
+		if gh, ok := h.(GraphHook); ok {
+			gh.OnGraph(nodes)
+		}
+	}
+}
+
+func (m *multiHook) OnBuffers(query func() []BufferStatus) {
+	for _, h := range m.hooks {
+		if bh, ok := h.(BufferHook); ok {
+			bh.OnBuffers(query)
+		}
+	}
 }
 
 type logHook struct{ logger *slog.Logger }

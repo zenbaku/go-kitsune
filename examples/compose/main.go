@@ -1,6 +1,10 @@
 // Example: compose — reusable pipeline fragments with Through.
 //
-// Demonstrates: Through for middleware-style composition.
+// Demonstrates: Through for middleware-style composition using plain functions.
+//
+// Note: Stage[T,T] (from stage.go) has the same signature as the Through
+// parameter — it is directly assignable and is the idiomatic way to name and
+// compose reusable fragments. See examples/stages/ for Stage and Then usage.
 package main
 
 import (

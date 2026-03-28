@@ -14,17 +14,94 @@ import (
 // ---------------------------------------------------------------------------
 
 // Map applies a 1:1 transformation, potentially changing the item type.
+// Add the [CacheBy] stage option to skip fn on cache hits, or [Timeout] to
+// bound per-item execution time:
+//
+//	kitsune.Map(p, fetchUser, kitsune.CacheBy(func(e Event) string { return e.UserID }))
+//	kitsune.Map(p, fetchUser, kitsune.Timeout(500*time.Millisecond))
 func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) *Pipeline[O] {
+	cfg := buildStageConfig(opts)
+	if cfg.timeout > 0 {
+		d := cfg.timeout
+		inner := fn
+		fn = func(ctx context.Context, item I) (O, error) {
+			tCtx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(tCtx, item)
+		}
+	}
 	wrapped := func(ctx context.Context, in any) (any, error) {
 		return fn(ctx, in.(I))
 	}
 	n := newNode(engine.Map, wrapped, p, opts)
+	if cc := cfg.cacheConfig; cc != nil {
+		keyFn := cc.keyFn.(func(I) string)
+		explicitCache := cc.cache
+		explicitTTL := cc.ttl
+		n.CacheWrapFn = func(defaultCache any, defaultTTL time.Duration) any {
+			c, _ := func() (Cache, bool) {
+				if explicitCache != nil {
+					return explicitCache, true
+				}
+				dc, ok := defaultCache.(Cache)
+				return dc, ok
+			}()
+			ttl := explicitTTL
+			if ttl == 0 {
+				ttl = defaultTTL
+			}
+			if c == nil {
+				return nil // no cache available; passthrough
+			}
+			return func(ctx context.Context, in any) (any, error) {
+				item := in.(I)
+				k := keyFn(item)
+				if data, ok, err := c.Get(ctx, k); err == nil && ok {
+					var cached O
+					if err := json.Unmarshal(data, &cached); err == nil {
+						return cached, nil
+					}
+				}
+				result, err := fn(ctx, item)
+				if err != nil {
+					return nil, err
+				}
+				if data, err := json.Marshal(result); err == nil {
+					_ = c.Set(ctx, k, data, ttl)
+				}
+				return result, nil
+			}
+		}
+	}
 	id := p.g.AddNode(n)
 	return &Pipeline[O]{g: p.g, node: id}
 }
 
+// ConcatMap applies a 1:N transformation sequentially — each input is fully
+// expanded before the next is processed. This is equivalent to [FlatMap] with
+// [Concurrency](1) (which is the default), and is provided as a named alias
+// for users coming from reactive-streams terminology.
+//
+// For concurrent expansion use [FlatMap] with [Concurrency](n).
+func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I) ([]O, error), opts ...StageOption) *Pipeline[O] {
+	// Append Concurrency(1) last so it overrides any user-supplied Concurrency.
+	opts = append(opts, Concurrency(1))
+	return FlatMap(p, fn, opts...)
+}
+
 // FlatMap applies a 1:N transformation — each input produces zero or more outputs.
+// Use [Timeout] to bound per-item execution time.
 func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I) ([]O, error), opts ...StageOption) *Pipeline[O] {
+	cfg := buildStageConfig(opts)
+	if cfg.timeout > 0 {
+		d := cfg.timeout
+		inner := fn
+		fn = func(ctx context.Context, item I) ([]O, error) {
+			tCtx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(tCtx, item)
+		}
+	}
 	wrapped := func(ctx context.Context, in any) ([]any, error) {
 		results, err := fn(ctx, in.(I))
 		if err != nil {
@@ -219,22 +296,78 @@ func Window[T any](p *Pipeline[T], d time.Duration) *Pipeline[[]T] {
 	return Batch(p, math.MaxInt, BatchTimeout(d))
 }
 
+// SlidingWindow collects items into overlapping windows of a fixed size,
+// advancing by step items between successive windows.
+// The first window is emitted once size items have been received; each
+// subsequent window is emitted every step items.
+//
+// Panics if size <= 0, step <= 0, or step > size.
+//
+//	kitsune.SlidingWindow(p, 3, 1)  // [1,2,3], [2,3,4], [3,4,5]
+//	kitsune.SlidingWindow(p, 4, 2)  // [1,2,3,4], [3,4,5,6]
+//	kitsune.SlidingWindow(p, 3, 3)  // equivalent to Batch(3)
+func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
+	if size <= 0 {
+		panic("kitsune: SlidingWindow requires size > 0")
+	}
+	if step <= 0 {
+		panic("kitsune: SlidingWindow requires step > 0")
+	}
+	if step > size {
+		panic("kitsune: SlidingWindow requires step <= size")
+	}
+	buf := make([]T, 0, size)
+	sinceEmit := 0
+	return FlatMap(p, func(_ context.Context, item T) ([][]T, error) {
+		buf = append(buf, item)
+		sinceEmit++
+		if len(buf) < size {
+			return nil, nil // still filling the initial window
+		}
+		if sinceEmit < step {
+			return nil, nil // not yet time to slide
+		}
+		window := make([]T, size)
+		copy(window, buf[len(buf)-size:])
+		sinceEmit = 0
+		// Retain only the overlap (size-step items) for the next window.
+		keep := size - step
+		if keep > 0 {
+			retained := make([]T, keep)
+			copy(retained, buf[len(buf)-keep:])
+			buf = retained
+		} else {
+			buf = buf[:0]
+		}
+		return [][]T{window}, nil
+	})
+}
+
 // ---------------------------------------------------------------------------
-// Dedupe / CachedMap
+// Dedupe
 // ---------------------------------------------------------------------------
 
 // Dedupe drops items whose key has already been seen.
-// The [DedupSet] tracks seen keys — use [MemoryDedupSet] for in-process
-// deduplication or a Redis-backed implementation for distributed pipelines.
-func Dedupe[T any](p *Pipeline[T], key func(T) string, set DedupSet) *Pipeline[T] {
+// If no [DedupSet] is provided, an in-process [MemoryDedupSet] is used.
+// Pass a Redis-backed or other distributed set for cross-process deduplication.
+//
+//	p.Dedupe(func(e Event) string { return e.ID })            // in-process default
+//	p.Dedupe(func(e Event) string { return e.ID }, redisDedupSet) // distributed
+func (p *Pipeline[T]) Dedupe(key func(T) string, set ...DedupSet) *Pipeline[T] {
+	var s DedupSet
+	if len(set) > 0 {
+		s = set[0]
+	} else {
+		s = MemoryDedupSet()
+	}
 	wrapped := func(in any) bool {
 		item := in.(T)
 		k := key(item)
-		seen, err := set.Contains(context.Background(), k)
+		seen, err := s.Contains(context.Background(), k)
 		if err != nil || seen {
 			return false
 		}
-		_ = set.Add(context.Background(), k)
+		_ = s.Add(context.Background(), k)
 		return true
 	}
 	id := p.g.AddNode(&engine.Node{
@@ -244,40 +377,6 @@ func Dedupe[T any](p *Pipeline[T], key func(T) string, set DedupSet) *Pipeline[T
 		Buffer: engine.DefaultBuffer,
 	})
 	return &Pipeline[T]{g: p.g, node: id}
-}
-
-// CachedMap is like [Map] but checks the cache before calling fn.
-// On cache hit, the cached result is returned without calling fn.
-// On cache miss, fn is called and the result is cached with the given TTL.
-func CachedMap[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), key func(I) string, cache Cache, ttl time.Duration, opts ...StageOption) *Pipeline[O] {
-	wrapped := func(ctx context.Context, in any) (any, error) {
-		item := in.(I)
-		k := key(item)
-
-		// Check cache.
-		if data, ok, err := cache.Get(ctx, k); err == nil && ok {
-			var cached O
-			if err := json.Unmarshal(data, &cached); err == nil {
-				return cached, nil
-			}
-		}
-
-		// Cache miss — compute.
-		result, err := fn(ctx, item)
-		if err != nil {
-			return nil, err
-		}
-
-		// Store in cache (best-effort).
-		if data, err := json.Marshal(result); err == nil {
-			_ = cache.Set(ctx, k, data, ttl)
-		}
-
-		return result, nil
-	}
-	n := newNode(engine.Map, wrapped, p, opts)
-	id := p.g.AddNode(n)
-	return &Pipeline[O]{g: p.g, node: id}
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +528,132 @@ func DropWhile[T any](p *Pipeline[T], fn func(T) bool) *Pipeline[T] {
 	})
 }
 
+// Skip drops the first n items and emits all subsequent items.
+// Skip(0) is a no-op; Skip with n ≥ stream length produces an empty pipeline.
+//
+//	// Discard the header row, then process data rows.
+//	kitsune.DropWhile(lines, isHeader)          // predicate-based
+//	lines.Skip(1)                               // count-based
+//
+// [Pipeline.Take] is the complement: it emits the first n items.
+func (p *Pipeline[T]) Skip(n int) *Pipeline[T] {
+	remaining := n
+	return p.Filter(func(_ T) bool {
+		if remaining > 0 {
+			remaining--
+			return false
+		}
+		return true
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Reduce
+// ---------------------------------------------------------------------------
+
+// Reduce folds the entire stream into a single value using fn, emitting that
+// value once the input closes. seed is the initial accumulator value.
+//
+//	// Sum all prices.
+//	kitsune.Reduce(prices, 0.0, func(sum float64, p Price) float64 {
+//	    return sum + p.Amount
+//	})
+//
+//	// Collect into a custom struct.
+//	kitsune.Reduce(events, Stats{}, func(s Stats, e Event) Stats {
+//	    s.Count++
+//	    return s
+//	})
+//
+// On an empty stream, the seed is emitted unchanged — exactly one item is
+// always produced. For streaming accumulators that emit after each item, use [Scan].
+func Reduce[T, S any](p *Pipeline[T], seed S, fn func(S, T) S) *Pipeline[S] {
+	fold := func(acc, item any) any { return fn(acc.(S), item.(T)) }
+	id := p.g.AddNode(&engine.Node{
+		Kind:         engine.ReduceNode,
+		Fn:           fold,
+		Inputs:       []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:       engine.DefaultBuffer,
+		ReduceSeed:   seed,
+		ErrorHandler: engine.DefaultHandler{},
+		Concurrency:  1,
+	})
+	return &Pipeline[S]{g: p.g, node: id}
+}
+
+// ---------------------------------------------------------------------------
+// MapRecover
+// ---------------------------------------------------------------------------
+
+// MapRecover is like [Map] but calls recover whenever fn returns an error,
+// substituting the returned value instead of halting or skipping the item.
+// This lets you supply a default, log the failure, or transform the error
+// into a sentinel value — all without touching the error-handling policy.
+//
+//	// Replace API errors with a zero-value result and log them.
+//	kitsune.MapRecover(queries, callAPI,
+//	    func(ctx context.Context, q Query, err error) Result {
+//	        slog.WarnContext(ctx, "api error", "query", q, "err", err)
+//	        return Result{}
+//	    },
+//	)
+func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), recover func(context.Context, I, error) O, opts ...StageOption) *Pipeline[O] {
+	wrapped := func(ctx context.Context, item I) (O, error) {
+		result, err := fn(ctx, item)
+		if err != nil {
+			return recover(ctx, item, err), nil
+		}
+		return result, nil
+	}
+	return Map(p, wrapped, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// Throttle / Debounce
+// ---------------------------------------------------------------------------
+
+// Throttle emits at most one item per duration d. The first item that arrives
+// after the cooldown window expires is forwarded; all items arriving within d
+// of the last emission are dropped and reported to [OverflowHook] if present.
+//
+// Use Throttle for high-frequency event streams where only the first event in
+// each window matters (e.g., rate-limiting API calls, coalescing UI events).
+// For "emit last in quiet period" semantics, use [Debounce] instead.
+//
+//	// Allow at most one alert per 30 seconds.
+//	kitsune.Throttle(alerts, 30*time.Second)
+func Throttle[T any](p *Pipeline[T], d time.Duration) *Pipeline[T] {
+	id := p.g.AddNode(&engine.Node{
+		Kind:             engine.ThrottleNode,
+		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:           engine.DefaultBuffer,
+		ThrottleDuration: d.Nanoseconds(),
+	})
+	return &Pipeline[T]{g: p.g, node: id}
+}
+
+// Debounce suppresses items while they keep arriving. Only the last item in a
+// burst is emitted, after d has elapsed with no new items. Each new arrival
+// resets the quiet-period timer and replaces the pending item.
+//
+// On input close, any pending item is flushed immediately.
+//
+// Use Debounce for scenarios where only the final item in a rapid series
+// matters (e.g., search-as-you-type, configuration change coalescing).
+// For "emit first in window" semantics, use [Throttle] instead.
+//
+//	// Emit only after 500ms of user inactivity.
+//	kitsune.Debounce(keystrokes, 500*time.Millisecond)
+func Debounce[T any](p *Pipeline[T], d time.Duration) *Pipeline[T] {
+	id := p.g.AddNode(&engine.Node{
+		Kind:             engine.DebounceNode,
+		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:           engine.DefaultBuffer,
+		ThrottleDuration: d.Nanoseconds(),
+	})
+	return &Pipeline[T]{g: p.g, node: id}
+}
+
 // ---------------------------------------------------------------------------
 // Zip
 // ---------------------------------------------------------------------------
@@ -473,6 +698,103 @@ func Zip[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
 		ZipConvert: convert,
 	})
 	return &Pipeline[Pair[A, B]]{g: a.g, node: id}
+}
+
+// Pairwise emits consecutive overlapping pairs from the stream.
+// A stream of N items produces N-1 pairs; a stream with fewer than 2 items
+// produces nothing.
+//
+//	kitsune.Pairwise(kitsune.FromSlice([]int{1, 2, 3, 4}))
+//	// → Pair{1,2}, Pair{2,3}, Pair{3,4}
+func Pairwise[T any](p *Pipeline[T]) *Pipeline[Pair[T, T]] {
+	var prev T
+	hasPrev := false
+	return FlatMap(p, func(_ context.Context, item T) ([]Pair[T, T], error) {
+		if !hasPrev {
+			prev = item
+			hasPrev = true
+			return nil, nil
+		}
+		pair := Pair[T, T]{First: prev, Second: item}
+		prev = item
+		return []Pair[T, T]{pair}, nil
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Error routing
+// ---------------------------------------------------------------------------
+
+// ErrItem holds an input item alongside the error returned by its processing
+// function. Produced by [MapResult] on the failed output pipeline.
+type ErrItem[I any] struct {
+	Item I
+	Err  error
+}
+
+// MapResult applies a 1:1 transformation and routes results by outcome:
+// successful outputs go to the first (ok) pipeline; failures go to the second
+// (failed) pipeline as [ErrItem] values containing the original input and error.
+//
+//	ok, failed := kitsune.MapResult(p, fetchUser)
+//	// ok:     *Pipeline[User]       — successful lookups
+//	// failed: *Pipeline[ErrItem[ID]] — items that errored, with original input
+//
+// Unlike [Map] with [OnError], MapResult never halts, skips, or retries —
+// every error is always routed to the failed pipeline.
+// Both output pipelines must be consumed (same rule as [Partition]).
+func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) (*Pipeline[O], *Pipeline[ErrItem[I]]) {
+	wrapped := func(ctx context.Context, in any) (any, error) {
+		return fn(ctx, in.(I))
+	}
+	wrapErr := func(in any, err error) any {
+		return ErrItem[I]{Item: in.(I), Err: err}
+	}
+	cfg := buildStageConfig(opts)
+	n := &engine.Node{
+		Kind:             engine.MapResultNode,
+		Name:             cfg.name,
+		Fn:               wrapped,
+		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:           cfg.buffer,
+		MapResultErrWrap: wrapErr,
+	}
+	id := p.g.AddNode(n)
+	return &Pipeline[O]{g: p.g, node: id, port: 0},
+		&Pipeline[ErrItem[I]]{g: p.g, node: id, port: 1}
+}
+
+// ---------------------------------------------------------------------------
+// WithLatestFrom
+// ---------------------------------------------------------------------------
+
+// WithLatestFrom combines each item from the primary pipeline with the most
+// recent value seen from the secondary pipeline, emitting a [Pair].
+//
+// The secondary pipeline updates a shared "latest" value on every item it
+// produces, but does not drive output — only primary items cause emissions.
+// Primary items that arrive before any secondary value has been seen are
+// silently dropped.
+//
+// Both pipelines must share the same graph. Panics otherwise.
+//
+//	// Enrich each click event with the current mouse position:
+//	kitsune.WithLatestFrom(clicks, positions)
+//	// → Pair{click, latestPosition} for each click after the first position
+func WithLatestFrom[A, B any](primary *Pipeline[A], secondary *Pipeline[B]) *Pipeline[Pair[A, B]] {
+	if primary.g != secondary.g {
+		panic("kitsune: WithLatestFrom requires both pipelines to share the same pipeline graph")
+	}
+	convert := func(va, vb any) any {
+		return Pair[A, B]{First: va.(A), Second: vb.(B)}
+	}
+	id := primary.g.AddNode(&engine.Node{
+		Kind:       engine.WithLatestFromNode,
+		Inputs:     []engine.InputRef{{Node: primary.node, Port: primary.port}, {Node: secondary.node, Port: secondary.port}},
+		Buffer:     engine.DefaultBuffer,
+		ZipConvert: convert,
+	})
+	return &Pipeline[Pair[A, B]]{g: primary.g, node: id}
 }
 
 // ---------------------------------------------------------------------------
