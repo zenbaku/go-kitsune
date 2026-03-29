@@ -1,14 +1,21 @@
-// Package kotel provides an OpenTelemetry metrics hook for Kitsune pipelines.
+// Package kotel provides an OpenTelemetry metrics and tracing hook for
+// Kitsune pipelines.
 //
 // OTelHook implements kitsune.Hook plus the optional OverflowHook,
 // SupervisionHook, GraphHook, and BufferHook interfaces. Pass it to
-// kitsune.WithHook to record per-stage counters, latency histograms, and live
-// buffer-fill gauges using any OTel-compatible metrics backend.
+// kitsune.WithHook to record per-stage counters, latency histograms, live
+// buffer-fill gauges, and (optionally) stage-level spans using any
+// OTel-compatible backend.
 //
-// Usage:
+// Metrics-only usage:
 //
 //	meter := otel.Meter("my-app")
 //	hook  := kotel.New(meter)
+//	runner.Run(ctx, kitsune.WithHook(hook))
+//
+// Metrics + tracing usage:
+//
+//	hook := kotel.NewWithTracing(otel.Meter("my-app"), otel.Tracer("my-app"))
 //	runner.Run(ctx, kitsune.WithHook(hook))
 //
 // The hook records:
@@ -18,19 +25,26 @@
 //   - kitsune.stage.restarts      — Counter{stage}
 //   - kitsune.pipeline.stages     — UpDownCounter (total stage count)
 //   - kitsune.stage.buffer_length — ObservableGauge{stage, capacity} (items currently buffered)
+//
+// When a tracer is provided via [NewWithTracing], the hook additionally creates
+// one span per stage, named "kitsune.stage.<name>", as a child of the context
+// passed to [Runner.Run].
 package kotel
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // OTelHook records Kitsune pipeline events as OpenTelemetry metrics.
-// Create with [New].
+// Optionally also creates stage-level spans when a tracer is configured.
+// Create with [New] (metrics only) or [NewWithTracing] (metrics + tracing).
 type OTelHook struct {
 	meter    metric.Meter
 	items    metric.Int64Counter
@@ -38,6 +52,10 @@ type OTelHook struct {
 	drops    metric.Int64Counter
 	restarts metric.Int64Counter
 	stages   metric.Int64UpDownCounter
+
+	// tracing (nil when not configured)
+	tracer trace.Tracer
+	spans  sync.Map // map[string]trace.Span — one span per stage, keyed by name
 }
 
 // New creates an OTelHook using the provided meter.
@@ -100,8 +118,17 @@ func New(meter metric.Meter) *OTelHook {
 	}
 }
 
-// OnStageStart implements kitsune.Hook.
-func (h *OTelHook) OnStageStart(ctx context.Context, stage string) {}
+// OnStageStart implements kitsune.Hook. When a tracer is configured, it
+// starts a span named "kitsune.stage.<stage>" as a child of ctx.
+func (h *OTelHook) OnStageStart(ctx context.Context, stage string) {
+	if h.tracer == nil {
+		return
+	}
+	_, span := h.tracer.Start(ctx, "kitsune.stage."+stage,
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
+	h.spans.Store(stage, span)
+}
 
 // OnItem implements kitsune.Hook.
 func (h *OTelHook) OnItem(ctx context.Context, stage string, dur time.Duration, err error) {
@@ -124,8 +151,21 @@ func (h *OTelHook) OnItem(ctx context.Context, stage string, dur time.Duration, 
 	}
 }
 
-// OnStageDone implements kitsune.Hook.
-func (h *OTelHook) OnStageDone(ctx context.Context, stage string, processed int64, errors int64) {}
+// OnStageDone implements kitsune.Hook. When a tracer is configured, it
+// ends the stage span and records processed/error counts as attributes.
+func (h *OTelHook) OnStageDone(_ context.Context, stage string, processed int64, errors int64) {
+	if h.tracer == nil {
+		return
+	}
+	if v, ok := h.spans.LoadAndDelete(stage); ok {
+		span := v.(trace.Span)
+		span.SetAttributes(
+			attribute.Int64("kitsune.processed", processed),
+			attribute.Int64("kitsune.errors", errors),
+		)
+		span.End()
+	}
+}
 
 // OnDrop implements kitsune.OverflowHook.
 func (h *OTelHook) OnDrop(ctx context.Context, stage string, _ any) {

@@ -64,6 +64,11 @@ func TestExamples(t *testing.T) {
 		"withlatestfrom",
 		"zip",
 		"zipwith",
+		// gap-fill features
+		"circuitbreaker",
+		"metricsapi",
+		"pool",
+		"ratelimit",
 	}
 
 	for _, name := range examples {

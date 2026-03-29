@@ -781,3 +781,95 @@ func ExampleScan_withName() {
 	fmt.Println(results)
 	// Output: [1 3 6 10]
 }
+
+func ExampleNewMetricsHook() {
+	m := kitsune.NewMetricsHook()
+	results, _ := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (int, error) { return n * 10, nil },
+		kitsune.WithName("mul10"),
+	).Collect(context.Background(), kitsune.WithHook(m))
+	fmt.Println(results)
+	fmt.Println("processed:", m.Stage("mul10").Processed)
+	// Output:
+	// [10 20 30]
+	// processed: 3
+}
+
+func ExampleRateLimit() {
+	// RateLimit with Wait mode — 6 items, rate=1000/sec, burst=6.
+	// All items pass; burst=6 means the token bucket starts full so there
+	// is no delay in this example.
+	results, _ := kitsune.RateLimit(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
+		1000,
+		[]kitsune.RateLimitOption{kitsune.Burst(6)},
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 3 4 5 6]
+}
+
+func ExampleRateLimit_drop() {
+	// Drop mode discards items when the token bucket is empty.
+	// With rate=1000/sec and burst=3, only the first 3 items can pass
+	// before the bucket empties (pipeline runs much faster than 1 s).
+	m := kitsune.NewMetricsHook()
+	results, _ := kitsune.RateLimit(
+		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
+		1000,
+		[]kitsune.RateLimitOption{
+			kitsune.Burst(3),
+			kitsune.RateMode(kitsune.RateLimitDrop),
+		},
+		kitsune.WithName("rl"),
+	).Collect(context.Background(), kitsune.WithHook(m))
+	fmt.Println("passed:", len(results))
+	fmt.Println("dropped:", m.Stage("rl").Skipped)
+	// Output:
+	// passed: 3
+	// dropped: 3
+}
+
+func ExampleCircuitBreaker() {
+	// Closed circuit: all items pass when the fn never errors.
+	results, _ := kitsune.CircuitBreaker(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (int, error) { return n * 10, nil },
+		nil,
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [10 20 30]
+}
+
+func ExampleMapPooled() {
+	pool := kitsune.NewPool(func() *[2]int { return new([2]int) })
+	pooled, _ := kitsune.MapPooled(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		pool,
+		func(_ context.Context, n int, buf *[2]int) (*[2]int, error) {
+			buf[0] = n
+			buf[1] = n * n
+			return buf, nil
+		},
+	).Collect(context.Background())
+	for _, p := range pooled {
+		fmt.Printf("%d²=%d\n", p.Value[0], p.Value[1])
+	}
+	kitsune.ReleaseAll(pooled)
+	// Output:
+	// 1²=1
+	// 2²=4
+	// 3²=9
+}
+
+func ExampleReleaseAll() {
+	pool := kitsune.NewPool(func() *int { v := 0; return &v })
+	items, _ := kitsune.MapPooled(
+		kitsune.FromSlice([]int{10, 20}),
+		pool,
+		func(_ context.Context, n int, v *int) (*int, error) { *v = n; return v, nil },
+	).Collect(context.Background())
+	fmt.Println(*items[0].Value, *items[1].Value)
+	kitsune.ReleaseAll(items)
+	// Output: 10 20
+}

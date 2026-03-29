@@ -132,6 +132,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|
 | `Throttle[T](p, d)` | Emit the first item per window of `d`; drop items arriving within the cooldown |
 | `Debounce[T](p, d)` | Emit only the last item after `d` of silence; each new arrival resets the timer |
+| `RateLimit[T](p, rps, rlOpts, opts…)` | Token-bucket rate limiter; `Burst(n)` controls burst capacity; `RateMode(RateLimitWait)` (default) applies backpressure, `RateMode(RateLimitDrop)` silently discards excess items |
 
 ### Deduplication
 
@@ -341,6 +342,13 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 | `Timeout(d)` | Per-item deadline for `Map` and `FlatMap`; each attempt gets a fresh timeout |
 | `Supervise(policy)` | Per-stage restart and panic-recovery policy |
 
+### Fault Tolerance
+
+| Symbol | Description |
+|---|---|
+| `CircuitBreaker[I,O](p, fn, cbOpts, opts…)` | Closed → Open → Half-Open state machine; `FailureThreshold(n)` sets consecutive-failure limit; `CooldownDuration(d)` controls recovery wait; `HalfOpenProbes(n)` sets probe count; rejected items return `ErrCircuitOpen` (compose with `OnError(Skip())` to drop) |
+| `ErrCircuitOpen` | Sentinel error returned when the circuit is open |
+
 ### Error Handling
 
 | Symbol | Description |
@@ -371,9 +379,46 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 | `SampleHook` | Optional extension: `OnItemSample` called for ~every 10th item |
 | `GraphHook` | Optional extension: `OnGraph` called once with the full DAG topology |
 | `BufferHook` | Optional extension: `OnBuffers` called with a channel fill-level query fn |
+| `NewMetricsHook()` | Built-in zero-config hook; implements all five hook interfaces; lock-free atomic counters per stage; call `Stage(name)` for counts/latency or `Snapshot()` for a JSON-serializable point-in-time capture |
+| `StageMetrics` | `Processed`, `Errors`, `Skipped`, `Dropped`, `Restarts`, `TotalNs`, `MinNs`, `MaxNs`; helpers `Throughput(elapsed)`, `MeanLatency()`, `ErrorRate()` |
 | `LogHook(logger)` | Structured logging via `slog` |
 | `MultiHook(hooks…)` | Compose multiple hooks; each sub-hook receives all events it implements |
 | `WithHook(h)` | Run option: attach a hook to a pipeline run |
+
+### Memory Pooling
+
+Plain `Map` allocates a new output object on the heap for every item. At high
+throughput (millions of items/sec) this creates GC pressure that shows up as
+latency spikes. `MapPooled` eliminates the per-item allocation by drawing
+pre-allocated objects from a `sync.Pool` and handing them directly to your
+transform function. The caller is responsible for returning objects to the pool
+once done — either item-by-item with `Pooled[T].Release()` inside `ForEach`, or
+in bulk with `ReleaseAll` after `Collect`.
+
+Use pooling when profiling shows allocation as a bottleneck, or when the output
+type is large (e.g. byte buffers, structs with pre-allocated slices). For small
+output types the overhead of pool management usually outweighs the saving.
+
+```go
+pool := kitsune.NewPool(func() *MyStruct { return &MyStruct{Buf: make([]byte, 0, 4096)} })
+
+results, _ := kitsune.MapPooled(src, pool,
+    func(ctx context.Context, item Input, obj *MyStruct) (*MyStruct, error) {
+        obj.Buf = obj.Buf[:0] // reset before reuse
+        obj.Buf = append(obj.Buf, process(item)...)
+        return obj, nil
+    },
+).Collect(ctx)
+
+kitsune.ReleaseAll(results) // return every object to the pool when done
+```
+
+| Symbol | Description |
+|---|---|
+| `Pool[T]` / `NewPool(factory)` | Generic `sync.Pool` wrapper; `Get()` and `Put(v)` are safe for concurrent use |
+| `MapPooled[I,O](p, pool, fn, opts…)` | Acquire a pre-allocated `O` from `pool`, call `fn(ctx, item, obj)`, emit `Pooled[O]`; call `Pooled[O].Release()` or `ReleaseAll(items)` after consumption |
+| `Pooled[T]` | Wraps a pool-owned value; `Value T` is the payload; `Release()` returns it to the pool (idempotent) |
+| `ReleaseAll[T](items)` | Bulk-release a `[]Pooled[T]` slice back to its pool after `Collect` |
 
 ### Helpers & Run Options
 
