@@ -31,6 +31,8 @@ type stageConfig struct {
 	cacheConfig  *stageCacheConfig
 	timeout      time.Duration
 	dedupSet     DedupSet
+	cbConfig     *cbConfig
+	rlConfig     *rateLimitConfig
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.

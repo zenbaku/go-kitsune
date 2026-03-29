@@ -371,3 +371,58 @@ func TestSlowSink(t *testing.T) {
 		t.Errorf("SlowSink(%v) × 2 items took only %v, expected ≥ 20ms", 10*time.Millisecond, elapsed)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MetricsHook-based performance assertion tests
+// ---------------------------------------------------------------------------
+
+func TestAssertThroughputAbove_Passes(t *testing.T) {
+	hook := kitsune.NewMetricsHook()
+	p := kitsune.FromSlice(make([]int, 100))
+	_, err := kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n, nil },
+		kitsune.WithName("fast")).Collect(context.Background(), kitsune.WithHook(hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Throughput should be well above 1/s for an in-memory stage.
+	testkit.AssertThroughputAbove(t, hook, "fast", 1.0)
+}
+
+func TestAssertMeanLatencyUnder_Passes(t *testing.T) {
+	hook := kitsune.NewMetricsHook()
+	_, err := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (int, error) { return n, nil },
+		kitsune.WithName("q"),
+	).Collect(context.Background(), kitsune.WithHook(hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testkit.AssertMeanLatencyUnder(t, hook, "q", time.Second)
+}
+
+func TestAssertPercentileUnder_Passes(t *testing.T) {
+	hook := kitsune.NewMetricsHook()
+	_, err := kitsune.Map(
+		kitsune.FromSlice(make([]int, 50)),
+		func(_ context.Context, n int) (int, error) { return n, nil },
+		kitsune.WithName("stage"),
+	).Collect(context.Background(), kitsune.WithHook(hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testkit.AssertPercentileUnder(t, hook, "stage", 0.99, time.Second)
+}
+
+func TestAssertNoDropsMetrics_Passes(t *testing.T) {
+	hook := kitsune.NewMetricsHook()
+	_, err := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (int, error) { return n, nil },
+		kitsune.WithName("nodrop"),
+	).Collect(context.Background(), kitsune.WithHook(hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testkit.AssertNoDropsMetrics(t, hook)
+}

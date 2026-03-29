@@ -172,7 +172,9 @@ vip := kitsune.Map(high, priorityProcess).ForEach(notifyVIP)
 std := kitsune.Map(regular, standardProcess).ForEach(store)
 
 // MergeRunners runs both branches — blocks until both complete
-err := kitsune.MergeRunners(vip, std).Run(ctx)
+merged, err := kitsune.MergeRunners(vip, std)
+if err != nil { /* handle */ }
+err = merged.Run(ctx)
 ```
 
 **`Broadcast`** copies every item to all N output pipelines (unlike Partition, where each item goes to exactly one):

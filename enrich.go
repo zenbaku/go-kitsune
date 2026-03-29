@@ -74,6 +74,20 @@ type LookupConfig[T any, K comparable, V any] struct {
 	BatchSize int
 }
 
+// NewLookupConfig creates a LookupConfig with the given key extractor and fetch
+// function. BatchSize is set to the default (100). Set BatchSize on the
+// returned config to override.
+func NewLookupConfig[T any, K comparable, V any](
+	key func(T) K,
+	fetch func(context.Context, []K) (map[K]V, error),
+) LookupConfig[T, K, V] {
+	return LookupConfig[T, K, V]{
+		Key:       key,
+		Fetch:     fetch,
+		BatchSize: defaultLookupBatchSize,
+	}
+}
+
 // LookupBy enriches each item with a value fetched in bulk, emitting a [Pair]
 // of the original item and its looked-up value.
 //
@@ -128,6 +142,22 @@ type EnrichConfig[T any, K comparable, V, O any] struct {
 	Fetch     func(context.Context, []K) (map[K]V, error)
 	Join      func(T, V) O
 	BatchSize int
+}
+
+// NewEnrichConfig creates an EnrichConfig with the given key extractor, fetch
+// function, and join function. BatchSize is set to the default (100). Set
+// BatchSize on the returned config to override.
+func NewEnrichConfig[T any, K comparable, V, O any](
+	key func(T) K,
+	fetch func(context.Context, []K) (map[K]V, error),
+	join func(T, V) O,
+) EnrichConfig[T, K, V, O] {
+	return EnrichConfig[T, K, V, O]{
+		Key:       key,
+		Fetch:     fetch,
+		Join:      join,
+		BatchSize: defaultLookupBatchSize,
+	}
 }
 
 // Enrich enriches each item with a value fetched in bulk, combining the two

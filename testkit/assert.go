@@ -2,6 +2,9 @@ package testkit
 
 import (
 	"testing"
+	"time"
+
+	kitsune "github.com/jonathan/go-kitsune"
 )
 
 // AssertNoErrors fails the test if the hook recorded any item errors.
@@ -72,4 +75,58 @@ func AssertStageErrors(t testing.TB, hook *RecordingHook, stage string, want int
 		}
 	}
 	t.Errorf("testkit.AssertStageErrors: no done event for stage %q", stage)
+}
+
+// ---------------------------------------------------------------------------
+// MetricsHook-based performance assertions
+// ---------------------------------------------------------------------------
+
+// AssertThroughputAbove fails the test if the named stage's throughput is
+// below minPerSec. Elapsed time is taken from the hook's snapshot.
+func AssertThroughputAbove(t testing.TB, hook *kitsune.MetricsHook, stage string, minPerSec float64) {
+	t.Helper()
+	snap := hook.Snapshot()
+	m, ok := snap.Stages[stage]
+	if !ok {
+		t.Errorf("testkit.AssertThroughputAbove: unknown stage %q", stage)
+		return
+	}
+	got := m.Throughput(snap.Elapsed)
+	if got < minPerSec {
+		t.Errorf("testkit.AssertThroughputAbove(%q): got %.2f/s, want >= %.2f/s", stage, got, minPerSec)
+	}
+}
+
+// AssertMeanLatencyUnder fails the test if the named stage's mean per-item
+// latency exceeds maxLatency.
+func AssertMeanLatencyUnder(t testing.TB, hook *kitsune.MetricsHook, stage string, maxLatency time.Duration) {
+	t.Helper()
+	m := hook.Stage(stage)
+	got := m.MeanLatency()
+	if got > maxLatency {
+		t.Errorf("testkit.AssertMeanLatencyUnder(%q): got %v, want <= %v", stage, got, maxLatency)
+	}
+}
+
+// AssertPercentileUnder fails the test if the q-th percentile latency for the
+// named stage exceeds maxLatency. q must be in [0, 1].
+func AssertPercentileUnder(t testing.TB, hook *kitsune.MetricsHook, stage string, q float64, maxLatency time.Duration) {
+	t.Helper()
+	m := hook.Stage(stage)
+	got := m.Percentile(q)
+	if got > maxLatency {
+		t.Errorf("testkit.AssertPercentileUnder(%q, p%.0f): got %v, want <= %v", stage, q*100, got, maxLatency)
+	}
+}
+
+// AssertNoDropsMetrics fails the test if any stage in the hook recorded a
+// non-zero drop count.
+func AssertNoDropsMetrics(t testing.TB, hook *kitsune.MetricsHook) {
+	t.Helper()
+	snap := hook.Snapshot()
+	for name, m := range snap.Stages {
+		if m.Dropped > 0 {
+			t.Errorf("testkit.AssertNoDropsMetrics: stage %q dropped %d items", name, m.Dropped)
+		}
+	}
 }

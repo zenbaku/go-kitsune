@@ -13,6 +13,7 @@ package kitsune
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jonathan/go-kitsune/engine"
 )
@@ -109,13 +110,53 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	})
 }
 
-// RunAsync starts the pipeline in a background goroutine and returns a channel
-// that receives exactly one value: nil on clean completion, or the first error.
-// It is the non-blocking counterpart to [Runner.Run].
-func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) <-chan error {
+// ErrNoRunners is returned by [MergeRunners] when called with no arguments.
+var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runner")
+
+// ErrGraphMismatch is returned by [MergeRunners] when the provided runners do
+// not all share the same pipeline graph.
+var ErrGraphMismatch = errors.New("kitsune: MergeRunners requires all runners to share the same pipeline graph")
+
+// RunHandle is returned by [Runner.RunAsync]. It provides multiple ways to
+// observe the pipeline's completion.
+type RunHandle struct {
+	errCh <-chan error
+	done  chan struct{}
+}
+
+// Wait blocks until the pipeline completes and returns its error (or nil).
+func (h *RunHandle) Wait() error {
+	return <-h.errCh
+}
+
+// Done returns a channel that is closed when the pipeline completes.
+// Use this in a select alongside other channels.
+func (h *RunHandle) Done() <-chan struct{} {
+	return h.done
+}
+
+// Err returns the underlying error channel for use in select statements.
+// The channel receives exactly one value: nil on success, or the first error.
+func (h *RunHandle) Err() <-chan error {
+	return h.errCh
+}
+
+// RunAsync starts the pipeline in a background goroutine and returns a
+// [RunHandle] for observing completion. It is the non-blocking counterpart
+// to [Runner.Run].
+//
+//	h := runner.RunAsync(ctx)
+//	if err := h.Wait(); err != nil {
+//	    log.Fatal(err)
+//	}
+func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 	errCh := make(chan error, 1)
-	go func() { errCh <- r.Run(ctx, opts...) }()
-	return errCh
+	done := make(chan struct{})
+	go func() {
+		errCh <- r.Run(ctx, opts...)
+		close(done)
+	}()
+	return &RunHandle{errCh: errCh, done: done}
 }
 
 // MergeRunners combines multiple runners that share the same pipeline graph
@@ -125,19 +166,20 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) <-chan error {
 //	valid, invalid := kitsune.Partition(parsed, isValid)
 //	stored := valid.ForEach(storeEvent)
 //	logged := invalid.ForEach(logRejection)
-//	err := kitsune.MergeRunners(stored, logged).Run(ctx)
+//	runner, _ := kitsune.MergeRunners(stored, logged)
+//	err := runner.Run(ctx)
 //
-// MergeRunners panics if no runners are provided or if the runners do not
-// share the same pipeline graph.
-func MergeRunners(runners ...*Runner) *Runner {
+// MergeRunners returns [ErrNoRunners] if called with no arguments, or
+// [ErrGraphMismatch] if the runners do not share the same pipeline graph.
+func MergeRunners(runners ...*Runner) (*Runner, error) {
 	if len(runners) == 0 {
-		panic("kitsune: MergeRunners requires at least one runner")
+		return nil, ErrNoRunners
 	}
 	g := runners[0].g
 	for _, r := range runners[1:] {
 		if r.g != g {
-			panic("kitsune: MergeRunners requires all runners to share the same pipeline graph")
+			return nil, ErrGraphMismatch
 		}
 	}
-	return runners[0]
+	return runners[0], nil
 }

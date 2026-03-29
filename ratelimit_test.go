@@ -11,7 +11,7 @@ import (
 func TestRateLimit_WaitMode_PassesAllItems(t *testing.T) {
 	// High rate → all items pass through without dropping.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	limited := kitsune.RateLimit(p, 10_000, nil)
+	limited := kitsune.RateLimit(p, 10_000)
 
 	results, err := limited.Collect(context.Background())
 	if err != nil {
@@ -24,7 +24,7 @@ func TestRateLimit_WaitMode_PassesAllItems(t *testing.T) {
 
 func TestRateLimit_WaitMode_PreservesOrder(t *testing.T) {
 	p := kitsune.FromSlice([]int{10, 20, 30})
-	limited := kitsune.RateLimit(p, 10_000, nil)
+	limited := kitsune.RateLimit(p, 10_000)
 
 	results, err := limited.Collect(context.Background())
 	if err != nil {
@@ -41,7 +41,7 @@ func TestRateLimit_WaitMode_PreservesOrder(t *testing.T) {
 func TestRateLimit_WaitMode_EnforcesRate(t *testing.T) {
 	// 5 items at 10 items/sec with burst=1 should take ~400ms.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	limited := kitsune.RateLimit(p, 10, []kitsune.RateLimitOption{kitsune.Burst(1)})
+	limited := kitsune.RateLimit(p, 10, kitsune.Burst(1))
 
 	start := time.Now()
 	results, err := limited.Collect(context.Background())
@@ -63,7 +63,7 @@ func TestRateLimit_WaitMode_EnforcesRate(t *testing.T) {
 func TestRateLimit_Burst(t *testing.T) {
 	// burst=5 means the first 5 items pass immediately.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	limited := kitsune.RateLimit(p, 1, []kitsune.RateLimitOption{kitsune.Burst(5)})
+	limited := kitsune.RateLimit(p, 1, kitsune.Burst(5))
 
 	start := time.Now()
 	results, err := limited.Collect(context.Background())
@@ -84,10 +84,10 @@ func TestRateLimit_Burst(t *testing.T) {
 func TestRateLimit_DropMode_DropsExcess(t *testing.T) {
 	// Very slow rate, no burst — most items should be dropped.
 	p := kitsune.FromSlice(make([]int, 100))
-	limited := kitsune.RateLimit(p, 1, []kitsune.RateLimitOption{
+	limited := kitsune.RateLimit(p, 1,
 		kitsune.Burst(1),
 		kitsune.RateMode(kitsune.RateLimitDrop),
-	})
+	)
 
 	results, err := limited.Collect(context.Background())
 	if err != nil {
@@ -102,10 +102,10 @@ func TestRateLimit_DropMode_DropsExcess(t *testing.T) {
 func TestRateLimit_DropMode_PassesAll_HighRate(t *testing.T) {
 	// High rate+burst → nothing should be dropped.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	limited := kitsune.RateLimit(p, 100_000, []kitsune.RateLimitOption{
+	limited := kitsune.RateLimit(p, 100_000,
 		kitsune.Burst(100),
 		kitsune.RateMode(kitsune.RateLimitDrop),
-	})
+	)
 
 	results, err := limited.Collect(context.Background())
 	if err != nil {
@@ -119,7 +119,7 @@ func TestRateLimit_DropMode_PassesAll_HighRate(t *testing.T) {
 func TestRateLimit_WaitMode_ContextCancellation(t *testing.T) {
 	// Very slow rate; cancel context before all items pass.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	limited := kitsune.RateLimit(p, 1, []kitsune.RateLimitOption{kitsune.Burst(1)})
+	limited := kitsune.RateLimit(p, 1, kitsune.Burst(1))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -132,7 +132,7 @@ func TestRateLimit_WaitMode_ContextCancellation(t *testing.T) {
 
 func TestRateLimit_WithName(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	limited := kitsune.RateLimit(p, 10_000, nil, kitsune.WithName("throttle"))
+	limited := kitsune.RateLimit(p, 10_000, kitsune.WithName("throttle"))
 
 	m := kitsune.NewMetricsHook()
 	results, err := limited.Collect(context.Background(), kitsune.WithHook(m))

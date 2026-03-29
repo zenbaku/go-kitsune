@@ -1,6 +1,6 @@
 // Example: state — sharing typed state across pipeline stages.
 //
-// Demonstrates: NewKey, Ref, MapWith, FlatMapWith, Update, Get
+// Demonstrates: NewKey, Ref, MapWith, FlatMapWith, Update, Get, UpdateAndGet
 package main
 
 import (
@@ -78,5 +78,32 @@ func main() {
 
 	for _, r := range out {
 		fmt.Printf("Query %s → originated from %q\n", r.QueryID, r.ItemName)
+	}
+
+	// --- UpdateAndGet: atomic read-modify-write that returns the new value ---
+	//
+	// Unlike Update (fire and forget), UpdateAndGet returns the updated state
+	// so you can use it directly in the output without a second Get call.
+	fmt.Println("\n=== UpdateAndGet: running totals ===")
+
+	var totalKey = kitsune.NewKey("total", 0)
+	amounts := kitsune.FromSlice([]int{10, 25, 5, 40})
+
+	runningTotals, err := kitsune.MapWith(amounts, totalKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], amount int) (string, error) {
+			newTotal, err := ref.UpdateAndGet(ctx, func(v int) (int, error) {
+				return v + amount, nil
+			})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("+%d → total=%d", amount, newTotal), nil
+		},
+	).Collect(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	for _, line := range runningTotals {
+		fmt.Println(line)
 	}
 }

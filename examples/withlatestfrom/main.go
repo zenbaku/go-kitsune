@@ -69,7 +69,7 @@ func main() {
 	)
 
 	var results []Tagged
-	errCh := combined.ForEach(func(_ context.Context, t Tagged) error {
+	h := combined.ForEach(func(_ context.Context, t Tagged) error {
 		results = append(results, t)
 		return nil
 	}).RunAsync(context.Background())
@@ -91,7 +91,7 @@ func main() {
 	_ = src.Send(ctx, Event{Kind: KindRequest, RequestID: "req-C"})
 
 	src.Close()
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		panic(err)
 	}
 
@@ -135,7 +135,7 @@ func main() {
 	)
 
 	var measurements2 []Adjusted
-	errCh2 := adjusted.ForEach(func(_ context.Context, a Adjusted) error {
+	h2 := adjusted.ForEach(func(_ context.Context, a Adjusted) error {
 		measurements2 = append(measurements2, a)
 		return nil
 	}).RunAsync(context.Background())
@@ -157,7 +157,7 @@ func main() {
 	_ = src2.Send(ctx2, Reading{Value: 11.2})
 
 	src2.Close()
-	if err := <-errCh2; err != nil {
+	if err := h2.Wait(); err != nil {
 		panic(err)
 	}
 

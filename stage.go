@@ -1,5 +1,7 @@
 package kitsune
 
+import "context"
+
 // Stage[I, O] is a reusable, composable pipeline transformation.
 // A Stage is a first-class value that can be defined, stored, passed as an
 // argument, tested in isolation, and combined with other stages via [Then].
@@ -30,5 +32,22 @@ func (s Stage[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 func Then[A, B, C any](first Stage[A, B], second Stage[B, C]) Stage[A, C] {
 	return func(p *Pipeline[A]) *Pipeline[C] {
 		return second(first(p))
+	}
+}
+
+// Or returns a Stage that tries primary and, on error, falls back to fallback.
+// If primary succeeds, its result is emitted. If primary returns an error,
+// fallback is called with the same item; its result (or error) is used instead.
+//
+//	cache := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
+func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ...StageOption) Stage[I, O] {
+	return func(p *Pipeline[I]) *Pipeline[O] {
+		return Map(p, func(ctx context.Context, item I) (O, error) {
+			result, err := primary(ctx, item)
+			if err != nil {
+				return fallback(ctx, item)
+			}
+			return result, nil
+		}, opts...)
 	}
 }

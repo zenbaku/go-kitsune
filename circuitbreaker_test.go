@@ -27,7 +27,6 @@ func TestCircuitBreaker_ClosedPassesItems(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	out := kitsune.CircuitBreaker(p,
 		func(_ context.Context, n int) (int, error) { return n * 10, nil },
-		nil,
 	)
 	results, err := out.Collect(context.Background())
 	if err != nil {
@@ -48,10 +47,8 @@ func TestCircuitBreaker_TripsAfterThreshold(t *testing.T) {
 	// All with OnError(Skip()) → 0 results expected.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
 	out := kitsune.CircuitBreaker(p, failFirstN(3),
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(3),
-			kitsune.CooldownDuration(10 * time.Second),
-		},
+		kitsune.FailureThreshold(3),
+		kitsune.CooldownDuration(10*time.Second),
 		kitsune.OnError(kitsune.Skip()),
 	)
 	results, err := out.Collect(context.Background())
@@ -70,10 +67,8 @@ func TestCircuitBreaker_SkipsOpenItems(t *testing.T) {
 	p := kitsune.FromSlice(make([]int, 10))
 	out := kitsune.CircuitBreaker(p,
 		func(_ context.Context, n int) (int, error) { return 0, errCB },
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(3),
-			kitsune.CooldownDuration(10 * time.Second),
-		},
+		kitsune.FailureThreshold(3),
+		kitsune.CooldownDuration(10*time.Second),
 		kitsune.OnError(kitsune.Skip()),
 	)
 	results, err := out.Collect(context.Background())
@@ -115,11 +110,9 @@ func TestCircuitBreaker_HalfOpen_ProbeSuccess_ClosesCircuit(t *testing.T) {
 	})
 
 	out := kitsune.CircuitBreaker(p, fn,
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(threshold),
-			kitsune.CooldownDuration(cooldown),
-			kitsune.HalfOpenProbes(1),
-		},
+		kitsune.FailureThreshold(threshold),
+		kitsune.CooldownDuration(cooldown),
+		kitsune.HalfOpenProbes(1),
 		kitsune.OnError(kitsune.Skip()),
 	)
 
@@ -144,10 +137,8 @@ func TestCircuitBreaker_HalfOpen_ProbeFailure_ReopensCircuit(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
 	out := kitsune.CircuitBreaker(p,
 		func(_ context.Context, n int) (int, error) { return 0, errCB },
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(2),
-			kitsune.CooldownDuration(cooldown),
-		},
+		kitsune.FailureThreshold(2),
+		kitsune.CooldownDuration(cooldown),
 		kitsune.OnError(kitsune.Skip()),
 	)
 	results, err := out.Collect(context.Background())
@@ -168,7 +159,6 @@ func TestCircuitBreaker_Concurrency(t *testing.T) {
 	p := kitsune.FromSlice(items)
 	out := kitsune.CircuitBreaker(p,
 		func(_ context.Context, n int) (int, error) { return n, nil },
-		nil,
 		kitsune.Concurrency(4),
 		kitsune.OnError(kitsune.Skip()),
 	)
@@ -185,10 +175,8 @@ func TestCircuitBreaker_TripsAfterOneFailure(t *testing.T) {
 	// threshold=1: first failure immediately trips the circuit.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	out := kitsune.CircuitBreaker(p, failFirstN(1),
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(1),
-			kitsune.CooldownDuration(10 * time.Second),
-		},
+		kitsune.FailureThreshold(1),
+		kitsune.CooldownDuration(10*time.Second),
 		kitsune.OnError(kitsune.Skip()),
 	)
 	results, err := out.Collect(context.Background())
@@ -211,6 +199,106 @@ func TestCircuitBreaker_ErrCircuitOpenIsDistinct(t *testing.T) {
 	}
 }
 
+func TestCircuitBreaker_HalfOpenTimeout_ExpiresAndReopens(t *testing.T) {
+	// Probe fn sleeps 200ms; HalfOpenTimeout=20ms cancels it → circuit re-opens.
+	const cooldown = 20 * time.Millisecond
+	const threshold = 2
+
+	var calls atomic.Int32
+	slowFn := func(ctx context.Context, _ int) (int, error) {
+		c := calls.Add(1)
+		if c <= threshold {
+			return 0, errCB // first 2 calls fail → circuit opens
+		}
+		// Probe call: sleep longer than the timeout.
+		select {
+		case <-time.After(500 * time.Millisecond):
+			return 99, nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+
+	// Generate items with a pause so cooldown expires before item 3.
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := 1; i <= 5; i++ {
+			if i == 3 {
+				select {
+				case <-time.After(cooldown + 10*time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			if !yield(i) {
+				return nil
+			}
+		}
+		return nil
+	})
+
+	results, err := kitsune.CircuitBreaker(p, slowFn,
+		kitsune.FailureThreshold(threshold),
+		kitsune.CooldownDuration(cooldown),
+		kitsune.HalfOpenTimeout(20*time.Millisecond), // short timeout → probe fails
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Items 1-2 fail → circuit opens. Item 3 is probe but times out → re-opens.
+	// Items 4-5 are rejected. No items should pass.
+	if len(results) != 0 {
+		t.Errorf("got %d results, want 0 (probe timed out, circuit re-opened)", len(results))
+	}
+}
+
+func TestCircuitBreaker_HalfOpenTimeout_FastProbeSucceeds(t *testing.T) {
+	// Probe fn is fast; generous HalfOpenTimeout → circuit closes normally.
+	const cooldown = 20 * time.Millisecond
+	const threshold = 2
+
+	var calls atomic.Int32
+	fn := func(_ context.Context, n int) (int, error) {
+		c := calls.Add(1)
+		if c <= threshold {
+			return 0, errCB
+		}
+		return n * 10, nil
+	}
+
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := 1; i <= 6; i++ {
+			if i == 3 {
+				select {
+				case <-time.After(cooldown + 10*time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			if !yield(i) {
+				return nil
+			}
+		}
+		return nil
+	})
+
+	results, err := kitsune.CircuitBreaker(p, fn,
+		kitsune.FailureThreshold(threshold),
+		kitsune.CooldownDuration(cooldown),
+		kitsune.HalfOpenTimeout(5*time.Second), // generous timeout → probe succeeds
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Items 1-2 fail → circuit opens. Item 3 probes (fast) → circuit closes.
+	// Items 4-6 pass. Expected at least [30, 40, 50, 60].
+	if len(results) == 0 {
+		t.Error("expected items to pass after fast probe closes the circuit")
+	}
+	t.Logf("results: %v", results)
+}
+
 func TestCircuitBreaker_TwoIndependentBreakers(t *testing.T) {
 	// Two circuit breakers using Broadcast fan-out have independent state.
 	p := kitsune.FromSlice([]int{1, 2, 3})
@@ -218,16 +306,18 @@ func TestCircuitBreaker_TwoIndependentBreakers(t *testing.T) {
 
 	cb1 := kitsune.CircuitBreaker(branches[0],
 		func(_ context.Context, n int) (int, error) { return n, nil },
-		nil,
 	)
 	cb2 := kitsune.CircuitBreaker(branches[1],
 		func(_ context.Context, n int) (int, error) { return n * 10, nil },
-		nil,
 	)
 
 	r1 := cb1.Drain()
 	r2 := cb2.Drain()
-	if err := kitsune.MergeRunners(r1, r2).Run(context.Background()); err != nil {
+	merged, err := kitsune.MergeRunners(r1, r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

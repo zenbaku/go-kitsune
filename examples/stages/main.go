@@ -145,7 +145,7 @@ func main() {
 
 	// Production source (push-based):
 	src := kitsune.NewChannel[string](16)
-	errCh := pipeline.Apply(src.Source()).ForEach(func(_ context.Context, s string) error {
+	h := pipeline.Apply(src.Source()).ForEach(func(_ context.Context, s string) error {
 		fmt.Println("live:", s)
 		return nil
 	}).RunAsync(ctx)
@@ -153,5 +153,29 @@ func main() {
 		src.Send(ctx, v) //nolint
 	}
 	src.Close()
-	<-errCh
+	h.Wait() //nolint
+
+	// --- 7. Or: try primary, fall back on error ---
+	//
+	// Or returns a Stage that tries primary and, on any error, calls fallback
+	// with the same item. Useful for cache-aside, service fallbacks, etc.
+
+	fmt.Println("\n=== Or: primary / fallback ===")
+
+	cachedValues := map[string]int{"a": 1, "b": 2}
+	fetchFromCache := func(_ context.Context, key string) (int, error) {
+		if v, ok := cachedValues[key]; ok {
+			return v, nil
+		}
+		return 0, fmt.Errorf("cache miss: %s", key)
+	}
+	fetchFromDB := func(_ context.Context, key string) (int, error) {
+		// Simulated DB: compute value from key length.
+		return len(key) * 10, nil
+	}
+
+	lookupStage := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("lookup"))
+	lookupResults, _ := lookupStage.Apply(kitsune.FromSlice([]string{"a", "b", "c", "dd"})).
+		Collect(ctx)
+	fmt.Println("lookup results:", lookupResults)
 }

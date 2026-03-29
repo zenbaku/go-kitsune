@@ -265,3 +265,50 @@ func TestMetricsHook_GraphHook(t *testing.T) {
 		t.Error("expected Graph to be populated via GraphHook")
 	}
 }
+
+func TestMetricsHook_Histogram_BucketsPopulated(t *testing.T) {
+	m := kitsune.NewMetricsHook()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+		return n, nil
+	}, kitsune.WithName("fast")).Collect(context.Background(), kitsune.WithHook(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := m.Stage("fast")
+	total := int64(0)
+	for _, c := range s.Buckets {
+		total += c
+	}
+	if total != 3 {
+		t.Errorf("Buckets total = %d, want 3", total)
+	}
+}
+
+func TestStageMetrics_Percentile_Basic(t *testing.T) {
+	// Construct known buckets: 10 items in bucket 3 (1ms–5ms).
+	var m kitsune.StageMetrics
+	m.Buckets[3] = 10
+	p50 := m.Percentile(0.5)
+	if p50 < time.Millisecond || p50 > 5*time.Millisecond {
+		t.Errorf("p50 = %v, expected in [1ms, 5ms]", p50)
+	}
+}
+
+func TestStageMetrics_Percentile_Empty(t *testing.T) {
+	var m kitsune.StageMetrics
+	if got := m.Percentile(0.99); got != 0 {
+		t.Errorf("Percentile on empty = %v, want 0", got)
+	}
+}
+
+func TestStageMetrics_Percentile_Bounds(t *testing.T) {
+	var m kitsune.StageMetrics
+	m.Buckets[0] = 5
+	if got := m.Percentile(0); got < 0 {
+		t.Errorf("p0 should be non-negative, got %v", got)
+	}
+	if got := m.Percentile(1); got < 0 {
+		t.Errorf("p100 should be non-negative, got %v", got)
+	}
+}

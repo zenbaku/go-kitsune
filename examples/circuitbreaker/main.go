@@ -1,7 +1,7 @@
 // Example: circuitbreaker — fault tolerance via the circuit breaker pattern.
 //
 // Demonstrates: CircuitBreaker, FailureThreshold, CooldownDuration,
-// HalfOpenProbes, ErrCircuitOpen, OnError(Skip()).
+// HalfOpenProbes, HalfOpenTimeout, ErrCircuitOpen, OnError(Skip()).
 //
 // The circuit breaker protects a downstream service (or slow operation) from
 // being overwhelmed when it is already failing. When too many consecutive
@@ -30,7 +30,7 @@ func main() {
 	results, err := kitsune.CircuitBreaker(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5}),
 		func(_ context.Context, n int) (int, error) { return n * 10, nil },
-		nil, // defaults: threshold=5, cooldown=30s, probes=1
+		// defaults: threshold=5, cooldown=30s, probes=1
 	).Collect(context.Background())
 	if err != nil {
 		panic(err)
@@ -57,10 +57,8 @@ func main() {
 	tripped, err := kitsune.CircuitBreaker(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}),
 		failFirst3,
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(3),
-			kitsune.CooldownDuration(10 * time.Second), // long cooldown so circuit stays open
-		},
+		kitsune.FailureThreshold(3),
+		kitsune.CooldownDuration(10*time.Second), // long cooldown so circuit stays open
 		kitsune.OnError(kitsune.Skip()),
 		kitsune.WithName("cb-trips"),
 	).Collect(context.Background(), kitsune.WithHook(m))
@@ -107,11 +105,9 @@ func main() {
 	})
 
 	recovered, err := kitsune.CircuitBreaker(recovering, recoverFn,
-		[]kitsune.CircuitBreakerOption{
-			kitsune.FailureThreshold(3),
-			kitsune.CooldownDuration(cooldown),
-			kitsune.HalfOpenProbes(1),
-		},
+		kitsune.FailureThreshold(3),
+		kitsune.CooldownDuration(cooldown),
+		kitsune.HalfOpenProbes(1),
 		kitsune.OnError(kitsune.Skip()),
 	).Collect(context.Background())
 	if err != nil {
@@ -122,6 +118,55 @@ func main() {
 	// it succeeds, closing the circuit. Items 5-7 pass normally.
 	fmt.Printf("After recovery, received %d items: %v\n", len(recovered), recovered)
 	if len(recovered) > 0 {
-		fmt.Println("Circuit closed and processing resumed ✓")
+		fmt.Println("Circuit closed and processing resumed.")
 	}
+
+	// --- HalfOpenTimeout: probe timeout prevents indefinite hangs ---
+	//
+	// A slow probe (simulating a still-unhealthy service) with HalfOpenTimeout
+	// causes the probe to be cancelled and the circuit to re-open.
+	fmt.Println("\n=== HalfOpen probe timeout: slow probe re-opens circuit ===")
+
+	var probeIdx atomic.Int32
+	slowFn := func(ctx context.Context, n int) (int, error) {
+		i := int(probeIdx.Add(1))
+		if i <= 2 {
+			return 0, errors.New("service unavailable")
+		}
+		// Probe is slow — will be cancelled by HalfOpenTimeout.
+		select {
+		case <-time.After(200 * time.Millisecond):
+			return n, nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+
+	const shortCooldown = 30 * time.Millisecond
+	slowRecovering := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := 1; i <= 5; i++ {
+			if i == 3 {
+				select {
+				case <-time.After(shortCooldown + 10*time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			if !yield(i) {
+				return nil
+			}
+		}
+		return nil
+	})
+
+	timeoutResults, err := kitsune.CircuitBreaker(slowRecovering, slowFn,
+		kitsune.FailureThreshold(2),
+		kitsune.CooldownDuration(shortCooldown),
+		kitsune.HalfOpenTimeout(50*time.Millisecond), // probe cancelled after 50ms
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("With probe timeout: %d items passed (probe was cancelled)\n", len(timeoutResults))
 }

@@ -1,7 +1,7 @@
 // Example: metricsapi — built-in MetricsHook for zero-config observability.
 //
 // Demonstrates: NewMetricsHook, Stage, StageMetrics, Snapshot, Throughput,
-// MeanLatency, ErrorRate, WithHook, WithName.
+// MeanLatency, ErrorRate, Percentile, WithHook, WithName.
 //
 // MetricsHook implements all five hook interfaces (Hook, OverflowHook,
 // SupervisionHook, GraphHook, BufferHook) so a single call to WithHook
@@ -136,4 +136,25 @@ func main() {
 	d := m4.Stage("double")
 	fmt.Printf("Processed %d items across 4 workers\n", d.Processed)
 	fmt.Printf("First 5 results: %v\n", concResults[:5])
+
+	// --- Percentile latency from histogram ---
+	//
+	// Percentile(q) estimates the q-th percentile latency using the fixed-bucket
+	// histogram built into StageMetrics. No external histogram library needed.
+	fmt.Println("\n=== Latency percentiles ===")
+
+	m5 := kitsune.NewMetricsHook()
+	_, err = kitsune.Map(
+		kitsune.FromSlice(make([]int, 100)),
+		func(_ context.Context, n int) (int, error) { return n, nil },
+		kitsune.WithName("noop"),
+	).Collect(context.Background(), kitsune.WithHook(m5))
+	if err != nil {
+		panic(err)
+	}
+
+	noop := m5.Stage("noop")
+	fmt.Printf("p50 latency: %v\n", noop.Percentile(0.50))
+	fmt.Printf("p90 latency: %v\n", noop.Percentile(0.90))
+	fmt.Printf("p99 latency: %v\n", noop.Percentile(0.99))
 }

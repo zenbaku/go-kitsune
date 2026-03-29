@@ -65,6 +65,36 @@ func (r *Ref[T]) Set(ctx context.Context, value T) error {
 	return r.storeSet(ctx, value)
 }
 
+// GetOrSet returns the current state value if it has been explicitly set, or
+// calls fn to compute and store a default. For memory Refs, the in-memory
+// value (including the initial value) is always returned directly without
+// calling fn. For store-backed Refs, fn is called only when the key is absent
+// from the store.
+func (r *Ref[T]) GetOrSet(ctx context.Context, fn func() (T, error)) (T, error) {
+	if r.store == nil {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		return r.value, nil
+	}
+	return r.storeGetOrSet(ctx, fn)
+}
+
+// UpdateAndGet performs an atomic read-modify-write and returns the new value.
+func (r *Ref[T]) UpdateAndGet(ctx context.Context, fn func(T) (T, error)) (T, error) {
+	if r.store == nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		v, err := fn(r.value)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		r.value = v
+		return v, nil
+	}
+	return r.storeUpdateAndGet(ctx, fn)
+}
+
 // Update performs an atomic read-modify-write on the state value.
 func (r *Ref[T]) Update(ctx context.Context, fn func(T) (T, error)) error {
 	if r.store == nil {
@@ -108,6 +138,72 @@ func (r *Ref[T]) storeSet(ctx context.Context, value T) error {
 		return err
 	}
 	return r.store.Set(ctx, r.key, data)
+}
+
+func (r *Ref[T]) storeGetOrSet(ctx context.Context, fn func() (T, error)) (T, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	data, ok, err := r.store.Get(ctx, r.key)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if ok {
+		var val T
+		if err := r.codec.Unmarshal(data, &val); err != nil {
+			var zero T
+			return zero, err
+		}
+		return val, nil
+	}
+	// Key absent — call fn, store the result.
+	val, err := fn()
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	data, err = r.codec.Marshal(val)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if err := r.store.Set(ctx, r.key, data); err != nil {
+		var zero T
+		return zero, err
+	}
+	return val, nil
+}
+
+func (r *Ref[T]) storeUpdateAndGet(ctx context.Context, fn func(T) (T, error)) (T, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.value
+	data, ok, err := r.store.Get(ctx, r.key)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if ok {
+		if err := r.codec.Unmarshal(data, &current); err != nil {
+			var zero T
+			return zero, err
+		}
+	}
+	newVal, err := fn(current)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	data, err = r.codec.Marshal(newVal)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if err := r.store.Set(ctx, r.key, data); err != nil {
+		var zero T
+		return zero, err
+	}
+	return newVal, nil
 }
 
 func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {

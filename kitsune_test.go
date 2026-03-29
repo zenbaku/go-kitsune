@@ -318,8 +318,11 @@ func TestPartition(t *testing.T) {
 		return nil
 	})
 
-	err := kitsune.MergeRunners(evenRunner, oddRunner).Run(context.Background())
+	merged, err := kitsune.MergeRunners(evenRunner, oddRunner)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(evens) != 3 {
@@ -679,8 +682,11 @@ func TestBroadcast(t *testing.T) {
 		})
 	}
 
-	err := kitsune.MergeRunners(runners...).Run(context.Background())
+	merged, err := kitsune.MergeRunners(runners...)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -940,26 +946,20 @@ func TestOrderedRetry(t *testing.T) {
 	}
 }
 
-func TestMergeRunnersPanics(t *testing.T) {
-	t.Run("no runners", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected MergeRunners() to panic")
-			}
-		}()
-		kitsune.MergeRunners()
-	})
+func TestMergeRunners_NoRunners(t *testing.T) {
+	_, err := kitsune.MergeRunners()
+	if !errors.Is(err, kitsune.ErrNoRunners) {
+		t.Fatalf("expected ErrNoRunners, got %v", err)
+	}
+}
 
-	t.Run("different graphs", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected MergeRunners with different graphs to panic")
-			}
-		}()
-		r1 := kitsune.FromSlice([]int{1}).Drain()
-		r2 := kitsune.FromSlice([]int{2}).Drain() // different graph
-		kitsune.MergeRunners(r1, r2)
-	})
+func TestMergeRunners_DifferentGraphs(t *testing.T) {
+	r1 := kitsune.FromSlice([]int{1}).Drain()
+	r2 := kitsune.FromSlice([]int{2}).Drain() // different graph
+	_, err := kitsune.MergeRunners(r1, r2)
+	if !errors.Is(err, kitsune.ErrGraphMismatch) {
+		t.Fatalf("expected ErrGraphMismatch, got %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,7 +1363,11 @@ func TestOverflowBroadcast(t *testing.T) {
 			return nil
 		})
 
-	if err := kitsune.MergeRunners(r1, r2).Run(context.Background()); err != nil {
+	merged, err := kitsune.MergeRunners(r1, r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if fastCount.Load() != int64(n) {
@@ -2807,7 +2811,7 @@ func TestChannel_SendAndCollect(t *testing.T) {
 
 	var mu sync.Mutex
 	var collected []int
-	errCh := p.ForEach(func(_ context.Context, n int) error {
+	h := p.ForEach(func(_ context.Context, n int) error {
 		mu.Lock()
 		collected = append(collected, n)
 		mu.Unlock()
@@ -2821,7 +2825,7 @@ func TestChannel_SendAndCollect(t *testing.T) {
 	}
 	src.Close()
 
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	if len(collected) != 10 {
@@ -2891,7 +2895,7 @@ func TestChannel_Backpressure(t *testing.T) {
 	p := src.Source()
 
 	var received atomic.Int64
-	errCh := p.ForEach(func(_ context.Context, _ int) error {
+	h := p.ForEach(func(_ context.Context, _ int) error {
 		received.Add(1)
 		return nil
 	}).RunAsync(context.Background())
@@ -2903,7 +2907,7 @@ func TestChannel_Backpressure(t *testing.T) {
 	}
 	src.Close()
 
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	if received.Load() != 5 {
@@ -2917,8 +2921,8 @@ func TestChannel_Backpressure(t *testing.T) {
 
 func TestRunAsync_ReturnsNilOnSuccess(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	errCh := p.Drain().RunAsync(context.Background())
-	if err := <-errCh; err != nil {
+	h := p.Drain().RunAsync(context.Background())
+	if err := h.Wait(); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -2929,9 +2933,36 @@ func TestRunAsync_PropagatesError(t *testing.T) {
 	mapped := kitsune.Map(p, func(_ context.Context, _ int) (int, error) {
 		return 0, boom
 	})
-	errCh := mapped.Drain().RunAsync(context.Background())
-	if err := <-errCh; !errors.Is(err, boom) {
+	h := mapped.Drain().RunAsync(context.Background())
+	if err := h.Wait(); !errors.Is(err, boom) {
 		t.Fatalf("expected boom error, got %v", err)
+	}
+}
+
+func TestRunAsync_Done_ClosesOnCompletion(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	h := p.Drain().RunAsync(context.Background())
+	select {
+	case <-h.Done():
+		// good
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done() channel did not close")
+	}
+}
+
+func TestRunAsync_Err_Channel(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.FromSlice([]int{1})
+	h := kitsune.Map(p, func(_ context.Context, _ int) (int, error) {
+		return 0, boom
+	}).Drain().RunAsync(context.Background())
+	select {
+	case err := <-h.Err():
+		if !errors.Is(err, boom) {
+			t.Fatalf("expected boom, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Err() channel did not receive")
 	}
 }
 
@@ -3067,7 +3098,7 @@ func TestChannel_WithStage(t *testing.T) {
 
 	var mu sync.Mutex
 	var collected []int
-	errCh := p.ForEach(func(_ context.Context, n int) error {
+	h := p.ForEach(func(_ context.Context, n int) error {
 		mu.Lock()
 		collected = append(collected, n)
 		mu.Unlock()
@@ -3081,7 +3112,7 @@ func TestChannel_WithStage(t *testing.T) {
 	}
 	src.Close()
 
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	slices.Sort(collected)
@@ -3616,7 +3647,7 @@ func TestWithLatestFrom(t *testing.T) {
 
 	var mu sync.Mutex
 	var results []kitsune.Pair[int, int]
-	errCh := combined.ForEach(func(_ context.Context, p kitsune.Pair[int, int]) error {
+	h := combined.ForEach(func(_ context.Context, p kitsune.Pair[int, int]) error {
 		mu.Lock()
 		results = append(results, p)
 		mu.Unlock()
@@ -3628,7 +3659,7 @@ func TestWithLatestFrom(t *testing.T) {
 	}
 	ch.Close()
 
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	// Some items may be dropped before secondary has a value; rest must be valid pairs.
@@ -4984,5 +5015,204 @@ func TestCodecStore(t *testing.T) {
 	}
 	if codec.unmarshals.Load() == 0 {
 		t.Error("expected Unmarshal calls via custom codec")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Ref.GetOrSet and Ref.UpdateAndGet tests
+// ---------------------------------------------------------------------------
+
+func TestRef_GetOrSet_MemoryRef(t *testing.T) {
+	key := kitsune.NewKey("counter", 42)
+	var got int
+	p := kitsune.FromSlice([]int{1})
+	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], _ int) (int, error) {
+		v, err := ref.GetOrSet(ctx, func() (int, error) {
+			t.Error("fn should not be called for memory Ref")
+			return 0, nil
+		})
+		got = v
+		return v, err
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 42 {
+		t.Errorf("GetOrSet = %d, want 42 (initial value)", got)
+	}
+}
+
+func TestRef_GetOrSet_StoreBacked(t *testing.T) {
+	key := kitsune.NewKey("val", 0)
+	var callCount atomic.Int64
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], n int) (int, error) {
+		v, err := ref.GetOrSet(ctx, func() (int, error) {
+			callCount.Add(1)
+			return 99, nil
+		})
+		return v + n, err
+	}).Collect(context.Background(), kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fn should be called exactly once (first call when key absent).
+	if callCount.Load() != 1 {
+		t.Errorf("GetOrSet fn called %d times, want 1", callCount.Load())
+	}
+}
+
+func TestRef_UpdateAndGet_ReturnsNewValue(t *testing.T) {
+	key := kitsune.NewKey("counter", 0)
+	var results []int
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], n int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(v int) (int, error) {
+			return v + n, nil
+		})
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	results = got
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+	// Final value should be 1+2+3 = 6.
+	if results[len(results)-1] != 6 {
+		t.Errorf("final value = %d, want 6", results[len(results)-1])
+	}
+}
+
+func TestRef_UpdateAndGet_StoreBacked(t *testing.T) {
+	key := kitsune.NewKey("sum", 0)
+	p := kitsune.FromSlice([]int{10, 20})
+	results, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], n int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(v int) (int, error) {
+			return v + n, nil
+		})
+	}).Collect(context.Background(), kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// results should be [10, 30] (cumulative sums).
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0] != 10 || results[1] != 30 {
+		t.Errorf("got %v, want [10 30]", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewLookupConfig / NewEnrichConfig tests
+// ---------------------------------------------------------------------------
+
+func TestNewLookupConfig_DefaultBatchSize(t *testing.T) {
+	cfg := kitsune.NewLookupConfig(
+		func(n int) int { return n },
+		func(_ context.Context, keys []int) (map[int]string, error) {
+			m := make(map[int]string)
+			for _, k := range keys {
+				m[k] = fmt.Sprintf("val:%d", k)
+			}
+			return m, nil
+		},
+	)
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	results, err := kitsune.LookupBy(p, cfg).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+}
+
+func TestNewEnrichConfig_DefaultBatchSize(t *testing.T) {
+	cfg := kitsune.NewEnrichConfig(
+		func(n int) int { return n },
+		func(_ context.Context, keys []int) (map[int]string, error) {
+			m := make(map[int]string)
+			for _, k := range keys {
+				m[k] = fmt.Sprintf("enriched:%d", k)
+			}
+			return m, nil
+		},
+		func(n int, s string) string { return fmt.Sprintf("%d=%s", n, s) },
+	)
+	p := kitsune.FromSlice([]int{1, 2})
+	results, err := kitsune.Enrich(p, cfg).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stage.Or tests
+// ---------------------------------------------------------------------------
+
+func TestOr_PrimarySucceeds(t *testing.T) {
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("primary:%d", n), nil },
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("fallback:%d", n), nil },
+	)
+	results, err := stage.Apply(kitsune.FromSlice([]int{1, 2, 3})).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r[:7] != "primary" {
+			t.Errorf("expected primary result, got %q", r)
+		}
+	}
+}
+
+func TestOr_FallbackOnPrimaryError(t *testing.T) {
+	boom := errors.New("boom")
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "", boom },
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("fallback:%d", n), nil },
+	)
+	results, err := stage.Apply(kitsune.FromSlice([]int{1})).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != "fallback:1" {
+		t.Errorf("got %v, want [fallback:1]", results)
+	}
+}
+
+func TestOr_BothFail(t *testing.T) {
+	boom := errors.New("boom")
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "", boom },
+		func(_ context.Context, n int) (string, error) { return "", boom },
+	)
+	_, err := stage.Apply(kitsune.FromSlice([]int{1})).Collect(context.Background())
+	if !errors.Is(err, boom) {
+		t.Errorf("expected boom, got %v", err)
+	}
+}
+
+func TestOr_ComposesWithThen(t *testing.T) {
+	orStage := kitsune.Or(
+		func(_ context.Context, n int) (int, error) { return n * 2, nil },
+		func(_ context.Context, n int) (int, error) { return n, nil },
+	)
+	doubleAgain := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n * 2, nil })
+	})
+	composed := kitsune.Then(orStage, doubleAgain)
+	results, err := composed.Apply(kitsune.FromSlice([]int{1, 2, 3})).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{4, 8, 12}
+	if !slices.Equal(results, expected) {
+		t.Errorf("got %v, want %v", results, expected)
 	}
 }

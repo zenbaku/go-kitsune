@@ -1,7 +1,8 @@
 // Example: enrich — bulk-lookup enrichment with MapBatch, LookupBy, and Enrich.
 //
 // Demonstrates: MapBatch (batched transforms), LookupBy (keyed bulk lookup returning Pair),
-// Enrich (keyed bulk lookup with join), key deduplication across a batch.
+// Enrich (keyed bulk lookup with join), NewLookupConfig/NewEnrichConfig constructors,
+// key deduplication across a batch.
 package main
 
 import (
@@ -135,4 +136,36 @@ func main() {
 	for _, e := range enriched {
 		fmt.Printf("  event-%d: %s by %s (%s)\n", e.EventID, e.Action, e.UserName, e.UserRole)
 	}
+
+	// -------------------------------------------------------------------------
+	// NewLookupConfig / NewEnrichConfig: constructor helpers that set the
+	// default BatchSize (100) automatically.
+	// -------------------------------------------------------------------------
+	fmt.Println("\n=== NewLookupConfig / NewEnrichConfig constructors ===")
+
+	lookupCfg := kitsune.NewLookupConfig(
+		func(e Event) int { return e.UserID },
+		fetchUsers,
+	)
+	// Override BatchSize if needed:
+	lookupCfg.BatchSize = 3
+
+	pairs2, err := kitsune.LookupBy(kitsune.FromSlice(events), lookupCfg).Collect(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("LookupBy via constructor: %d pairs\n", len(pairs2))
+
+	enrichCfg := kitsune.NewEnrichConfig(
+		func(e Event) int { return e.UserID },
+		fetchUsers,
+		func(e Event, u User) EnrichedEvent {
+			return EnrichedEvent{EventID: e.ID, Action: e.Action, UserName: u.Name, UserRole: u.Role}
+		},
+	)
+	enriched2, err := kitsune.Enrich(kitsune.FromSlice(events), enrichCfg).Collect(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Enrich via constructor: %d enriched events\n", len(enriched2))
 }

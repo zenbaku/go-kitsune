@@ -31,31 +31,61 @@ const (
 // discard rejected items.
 var ErrCircuitOpen = errors.New("kitsune: circuit breaker open")
 
-// CircuitBreakerOption configures a [CircuitBreaker] stage.
-type CircuitBreakerOption func(*cbConfig)
-
 type cbConfig struct {
 	failureThreshold int
 	cooldown         time.Duration
 	halfOpenProbes   int
+	halfOpenTimeout  time.Duration
+}
+
+func defaultCBConfig() *cbConfig {
+	return &cbConfig{failureThreshold: 5, cooldown: 30 * time.Second, halfOpenProbes: 1}
 }
 
 // FailureThreshold sets the number of consecutive failures that trip the
 // circuit breaker into the open state. Defaults to 5.
-func FailureThreshold(n int) CircuitBreakerOption {
-	return func(c *cbConfig) { c.failureThreshold = n }
+func FailureThreshold(n int) StageOption {
+	return func(c *stageConfig) {
+		if c.cbConfig == nil {
+			c.cbConfig = defaultCBConfig()
+		}
+		c.cbConfig.failureThreshold = n
+	}
 }
 
 // CooldownDuration sets the time the circuit stays open before transitioning
 // to half-open to test recovery. Defaults to 30s.
-func CooldownDuration(d time.Duration) CircuitBreakerOption {
-	return func(c *cbConfig) { c.cooldown = d }
+func CooldownDuration(d time.Duration) StageOption {
+	return func(c *stageConfig) {
+		if c.cbConfig == nil {
+			c.cbConfig = defaultCBConfig()
+		}
+		c.cbConfig.cooldown = d
+	}
 }
 
 // HalfOpenProbes sets the maximum number of probe items allowed through in
 // the half-open state before a decision is made. Defaults to 1.
-func HalfOpenProbes(n int) CircuitBreakerOption {
-	return func(c *cbConfig) { c.halfOpenProbes = n }
+func HalfOpenProbes(n int) StageOption {
+	return func(c *stageConfig) {
+		if c.cbConfig == nil {
+			c.cbConfig = defaultCBConfig()
+		}
+		c.cbConfig.halfOpenProbes = n
+	}
+}
+
+// HalfOpenTimeout sets a deadline for each probe request in the half-open
+// state. If the probe function does not return within d the context is
+// cancelled, the probe is counted as a failure, and the circuit re-opens.
+// Without this option probe requests can hang indefinitely.
+func HalfOpenTimeout(d time.Duration) StageOption {
+	return func(c *stageConfig) {
+		if c.cbConfig == nil {
+			c.cbConfig = defaultCBConfig()
+		}
+		c.cbConfig.halfOpenTimeout = d
+	}
 }
 
 // cbState is the internal state for one circuit breaker instance,
@@ -87,10 +117,8 @@ var cbCounter atomic.Int64
 // Combine with [OnError](Skip()) to silently drop rejected items:
 //
 //	results := kitsune.CircuitBreaker(p, callAPI,
-//	    []kitsune.CircuitBreakerOption{
-//	        kitsune.FailureThreshold(3),
-//	        kitsune.CooldownDuration(10 * time.Second),
-//	    },
+//	    kitsune.FailureThreshold(3),
+//	    kitsune.CooldownDuration(10 * time.Second),
 //	    kitsune.OnError(kitsune.Skip()),
 //	)
 //
@@ -99,16 +127,12 @@ var cbCounter atomic.Int64
 func CircuitBreaker[I, O any](
 	p *Pipeline[I],
 	fn func(context.Context, I) (O, error),
-	cbOpts []CircuitBreakerOption,
 	opts ...StageOption,
 ) *Pipeline[O] {
-	cfg := cbConfig{
-		failureThreshold: 5,
-		cooldown:         30 * time.Second,
-		halfOpenProbes:   1,
-	}
-	for _, o := range cbOpts {
-		o(&cfg)
+	sc := buildStageConfig(opts)
+	cfg := sc.cbConfig
+	if cfg == nil {
+		cfg = defaultCBConfig()
 	}
 
 	keyName := fmt.Sprintf("kitsune:cb:%d", cbCounter.Add(1))
@@ -155,7 +179,15 @@ func CircuitBreaker[I, O any](
 		// ----------------------------------------------------------------
 		// Phase 2: call fn outside the lock.
 		// ----------------------------------------------------------------
-		result, fnErr := fn(ctx, item)
+		callCtx := ctx
+		var probeCancel context.CancelFunc
+		if action == cbProbe && cfg.halfOpenTimeout > 0 {
+			callCtx, probeCancel = context.WithTimeout(ctx, cfg.halfOpenTimeout)
+		}
+		result, fnErr := fn(callCtx, item)
+		if probeCancel != nil {
+			probeCancel()
+		}
 
 		// ----------------------------------------------------------------
 		// Phase 3: record outcome and transition state.

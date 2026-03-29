@@ -200,3 +200,36 @@ func BenchmarkMapPooled_Allocations(b *testing.B) {
 		kitsune.ReleaseAll(results)
 	}
 }
+
+func TestPool_Warmup_PreAllocates(t *testing.T) {
+	var factoryCalls atomic.Int64
+	pool := kitsune.NewPool(func() *int {
+		factoryCalls.Add(1)
+		v := 0
+		return &v
+	})
+	pool.Warmup(5)
+	if factoryCalls.Load() != 5 {
+		t.Errorf("factory called %d times, want 5", factoryCalls.Load())
+	}
+	// Getting from the pool should reuse pre-allocated objects (not call factory).
+	before := factoryCalls.Load()
+	for i := 0; i < 5; i++ {
+		pool.Get()
+	}
+	// sync.Pool may or may not reuse — we just ensure Warmup didn't panic and called factory N times.
+	_ = before
+}
+
+func TestPool_Warmup_ZeroIsNoop(t *testing.T) {
+	var factoryCalls atomic.Int64
+	pool := kitsune.NewPool(func() int {
+		factoryCalls.Add(1)
+		return 0
+	})
+	pool.Warmup(0)
+	pool.Warmup(-1)
+	if factoryCalls.Load() != 0 {
+		t.Errorf("factory called %d times on zero warmup, want 0", factoryCalls.Load())
+	}
+}

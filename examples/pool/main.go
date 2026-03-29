@@ -1,6 +1,6 @@
 // Example: pool — memory pooling to reduce allocations in high-throughput pipelines.
 //
-// Demonstrates: Pool, NewPool, MapPooled, Pooled, ReleaseAll.
+// Demonstrates: Pool, NewPool, Warmup, MapPooled, Pooled, ReleaseAll.
 //
 // MapPooled acquires a pre-allocated object from a Pool before calling the
 // transform function, then wraps the result in Pooled[O] so the caller can
@@ -41,6 +41,9 @@ func main() {
 	pool := kitsune.NewPool(func() *record {
 		return &record{Tags: make([]string, 0, 4)}
 	})
+	// Warmup pre-allocates objects before the first pipeline run to avoid
+	// cold-start allocation bursts under high concurrency.
+	pool.Warmup(8)
 
 	input := kitsune.FromSlice([]string{
 		"user:alice:admin,reader",

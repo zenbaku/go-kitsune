@@ -3,12 +3,36 @@ package kitsune
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jonathan/go-kitsune/engine"
 )
+
+// ---------------------------------------------------------------------------
+// Latency histogram constants
+// ---------------------------------------------------------------------------
+
+const numBuckets = 11
+
+// bucketBounds defines the upper bound (exclusive) of each histogram bucket
+// in nanoseconds. The final bucket catches everything above 5s.
+var bucketBounds = [numBuckets + 1]int64{
+	0,
+	100_000,       // 100µs
+	500_000,       // 500µs
+	1_000_000,     // 1ms
+	5_000_000,     // 5ms
+	10_000_000,    // 10ms
+	50_000_000,    // 50ms
+	100_000_000,   // 100ms
+	500_000_000,   // 500ms
+	1_000_000_000, // 1s
+	5_000_000_000, // 5s
+	math.MaxInt64, // ∞
+}
 
 // Compile-time interface checks.
 var (
@@ -25,14 +49,55 @@ var (
 
 // StageMetrics holds a point-in-time view of metrics for one pipeline stage.
 type StageMetrics struct {
-	Processed int64 `json:"processed"` // items that exited successfully
-	Errors    int64 `json:"errors"`    // items that resulted in a non-skip error
-	Skipped   int64 `json:"skipped"`   // items dropped via OnError(Skip())
-	Dropped   int64 `json:"dropped"`   // items dropped due to buffer overflow
-	Restarts  int64 `json:"restarts"`  // stage restarts via supervision policy
-	TotalNs   int64 `json:"total_ns"`  // cumulative item processing time (ns)
-	MinNs     int64 `json:"min_ns"`    // fastest single-item duration (ns)
-	MaxNs     int64 `json:"max_ns"`    // slowest single-item duration (ns)
+	Processed int64             `json:"processed"` // items that exited successfully
+	Errors    int64             `json:"errors"`    // items that resulted in a non-skip error
+	Skipped   int64             `json:"skipped"`   // items dropped via OnError(Skip())
+	Dropped   int64             `json:"dropped"`   // items dropped due to buffer overflow
+	Restarts  int64             `json:"restarts"`  // stage restarts via supervision policy
+	TotalNs   int64             `json:"total_ns"`  // cumulative item processing time (ns)
+	MinNs     int64             `json:"min_ns"`    // fastest single-item duration (ns)
+	MaxNs     int64             `json:"max_ns"`    // slowest single-item duration (ns)
+	Buckets   [numBuckets]int64 `json:"buckets"`   // latency histogram counts per bucket
+}
+
+// Percentile returns an estimate of the q-th percentile latency (0 ≤ q ≤ 1).
+// It uses the histogram buckets and assumes a uniform distribution within
+// each bucket. Returns 0 if no items have been recorded.
+func (m StageMetrics) Percentile(q float64) time.Duration {
+	if q < 0 {
+		q = 0
+	}
+	if q > 1 {
+		q = 1
+	}
+	total := int64(0)
+	for _, c := range m.Buckets {
+		total += c
+	}
+	if total == 0 {
+		return 0
+	}
+	target := int64(math.Ceil(float64(total) * q))
+	if target <= 0 {
+		target = 1
+	}
+	cumulative := int64(0)
+	for i := 0; i < numBuckets; i++ {
+		cumulative += m.Buckets[i]
+		if cumulative >= target {
+			// Interpolate within the bucket.
+			lo := bucketBounds[i]
+			hi := bucketBounds[i+1]
+			if hi == math.MaxInt64 {
+				return time.Duration(lo)
+			}
+			prev := cumulative - m.Buckets[i]
+			fraction := float64(target-prev) / float64(m.Buckets[i])
+			ns := float64(lo) + fraction*float64(hi-lo)
+			return time.Duration(int64(ns))
+		}
+	}
+	return time.Duration(bucketBounds[numBuckets-1])
 }
 
 // Throughput returns the number of successfully processed items per second
@@ -93,6 +158,7 @@ type stageState struct {
 	totalNs   atomic.Int64
 	minNs     atomic.Int64 // initialized to maxInt64; 0 means "no items yet"
 	maxNs     atomic.Int64
+	buckets   [numBuckets]atomic.Int64
 }
 
 const maxInt64 = int64(^uint64(0) >> 1)
@@ -176,6 +242,13 @@ func (h *MetricsHook) OnItem(_ context.Context, stage string, dur time.Duration,
 				break
 			}
 		}
+		// Update histogram bucket.
+		for i := 0; i < numBuckets; i++ {
+			if ns < bucketBounds[i+1] {
+				s.buckets[i].Add(1)
+				break
+			}
+		}
 	}
 
 	if err == nil {
@@ -227,6 +300,10 @@ func (h *MetricsHook) Stage(name string) StageMetrics {
 	if minNs == maxInt64 {
 		minNs = 0 // no items processed yet
 	}
+	var buckets [numBuckets]int64
+	for i := range buckets {
+		buckets[i] = s.buckets[i].Load()
+	}
 	return StageMetrics{
 		Processed: s.processed.Load(),
 		Errors:    s.errors.Load(),
@@ -236,6 +313,7 @@ func (h *MetricsHook) Stage(name string) StageMetrics {
 		TotalNs:   s.totalNs.Load(),
 		MinNs:     minNs,
 		MaxNs:     s.maxNs.Load(),
+		Buckets:   buckets,
 	}
 }
 

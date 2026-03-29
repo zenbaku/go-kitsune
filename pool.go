@@ -40,6 +40,21 @@ func (p *Pool[T]) Put(v T) {
 	p.p.Put(v)
 }
 
+// Warmup pre-allocates n objects and places them in the pool. Call this before
+// the first pipeline run to avoid cold-start allocation storms under high concurrency.
+func (p *Pool[T]) Warmup(n int) {
+	if n <= 0 {
+		return
+	}
+	items := make([]T, n)
+	for i := range items {
+		items[i] = p.Get()
+	}
+	for _, item := range items {
+		p.Put(item)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Pooled — pool-aware item wrapper
 // ---------------------------------------------------------------------------

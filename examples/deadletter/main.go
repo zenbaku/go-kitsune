@@ -51,7 +51,11 @@ func main() {
 		return nil
 	}, kitsune.WithName("collect-dlq"))
 
-	if err := kitsune.MergeRunners(goodRunner, dlqRunner).Run(context.Background()); err != nil {
+	merged1, err := kitsune.MergeRunners(goodRunner, dlqRunner)
+	if err != nil {
+		panic(err)
+	}
+	if err := merged1.Run(context.Background()); err != nil {
 		panic(err)
 	}
 
@@ -90,7 +94,11 @@ func main() {
 		return nil
 	}, kitsune.WithName("collect-sink-dlq"))
 
-	if err := kitsune.MergeRunners(runner, dlqRunner2).Run(context.Background()); err != nil {
+	merged2, err := kitsune.MergeRunners(runner, dlqRunner2)
+	if err != nil {
+		panic(err)
+	}
+	if err := merged2.Run(context.Background()); err != nil {
 		panic(err)
 	}
 

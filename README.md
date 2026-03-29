@@ -182,7 +182,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|
 | `Throttle[T](p, d)` | Emit the first item per window of `d`; drop items arriving within the cooldown |
 | `Debounce[T](p, d)` | Emit only the last item after `d` of silence; each new arrival resets the timer |
-| `RateLimit[T](p, rps, rlOpts, opts…)` | Token-bucket rate limiter; `Burst(n)` controls burst capacity; `RateMode(RateLimitWait)` (default) applies backpressure, `RateMode(RateLimitDrop)` silently discards excess items |
+| `RateLimit[T](p, rps, opts…)` | Token-bucket rate limiter; `Burst(n)` controls burst capacity; `RateMode(RateLimitWait)` (default) applies backpressure, `RateMode(RateLimitDrop)` silently discards excess items |
 
 ### Deduplication
 
@@ -232,7 +232,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|---|
 | `.ForEach(fn, opts…)` | `*Runner` | Process each item; call `.Run(ctx)` to execute |
 | `.Drain()` | `*Runner` | Consume and discard all items |
-| `runner.RunAsync(ctx, opts…)` | `<-chan error` | Start pipeline in background; channel receives one value (nil or error) |
+| `runner.RunAsync(ctx, opts…)` | `*RunHandle` | Start pipeline in background; call `.Wait()`, select on `.Done()`, or read `.Err()` |
 | `.Collect(ctx, opts…)` | `([]T, error)` | Run and materialize all items into a slice |
 | `.First(ctx, opts…)` | `(T, bool, error)` | Run and return the first item; `false` if stream is empty |
 | `.Last(ctx, opts…)` | `(T, bool, error)` | Run and return the final item; `false` if stream is empty |
@@ -256,16 +256,16 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 `Channel[T]` is a push-based source for scenarios where external code drives when items arrive — HTTP handlers, CLI loops, event bridges.
 
 ```go
-src   := kitsune.NewChannel[string](256)
-errCh := kitsune.Map(src.Source(), parse).ForEach(store).RunAsync(ctx)
+src := kitsune.NewChannel[string](256)
+h   := kitsune.Map(src.Source(), parse).ForEach(store).RunAsync(ctx)
 
 http.HandleFunc("/ingest", func(w http.ResponseWriter, r *http.Request) {
     if err := src.Send(r.Context(), readBody(r)); err != nil {
         http.Error(w, err.Error(), 500)
     }
 })
-src.Close()      // signal no more items (e.g. on server shutdown)
-<-errCh          // wait for pipeline to drain
+src.Close()    // signal no more items (e.g. on server shutdown)
+h.Wait()       // block until pipeline drains; returns error if one occurred
 ```
 
 | Symbol | Description |
@@ -276,7 +276,10 @@ src.Close()      // signal no more items (e.g. on server shutdown)
 | `(c) TrySend(item) bool` | Non-blocking send; returns `false` if buffer is full or channel is closed |
 | `(c) Close()` | Idempotent close; pipeline drains remaining items then exits |
 | `ErrChannelClosed` | Returned by `Send` when the channel has been closed |
-| `runner.RunAsync(ctx)` | Start pipeline in background goroutine; returns `<-chan error` (buffered 1) |
+| `runner.RunAsync(ctx)` | Start pipeline in background goroutine; returns `*RunHandle` |
+| `RunHandle.Wait()` | Block until the pipeline finishes; returns nil or an error |
+| `RunHandle.Done()` | `<-chan struct{}` closed when the pipeline finishes |
+| `RunHandle.Err()` | `<-chan error` that receives exactly one value (nil or error) |
 
 ### Stage[I, O] + Then
 
@@ -361,8 +364,10 @@ var FullPipeline = kitsune.Then(ParseStage, EnrichStage) // Stage[string, Result
 results, _ := FullPipeline.Apply(kitsune.FromSlice(testFixtures)).Collect(ctx)
 
 // Production — accept pushes from HTTP handlers or event streams:
-src   := kitsune.NewChannel[string](256)
-errCh := FullPipeline.Apply(src.Source()).ForEach(store).RunAsync(ctx)
+src := kitsune.NewChannel[string](256)
+h   := FullPipeline.Apply(src.Source()).ForEach(store).RunAsync(ctx)
+// ... send items ...
+h.Wait()
 ```
 
 See [`examples/stages/`](examples/stages/) for a runnable version covering all four patterns.
@@ -376,6 +381,8 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 | `Ref[T].Get(ctx)` | Read current state value |
 | `Ref[T].Set(ctx, v)` | Overwrite state value |
 | `Ref[T].Update(ctx, fn)` | Atomic read-modify-write |
+| `Ref[T].GetOrSet(ctx, fn)` | Return current value; for store-backed Refs calls fn if key is absent |
+| `Ref[T].UpdateAndGet(ctx, fn)` | Atomic read-modify-write; returns the new value |
 | `MemoryStore()` | In-process state backend (default) |
 
 ### Stage Options
@@ -396,7 +403,7 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 
 | Symbol | Description |
 |---|---|
-| `CircuitBreaker[I,O](p, fn, cbOpts, opts…)` | Closed → Open → Half-Open state machine; `FailureThreshold(n)` sets consecutive-failure limit; `CooldownDuration(d)` controls recovery wait; `HalfOpenProbes(n)` sets probe count; rejected items return `ErrCircuitOpen` (compose with `OnError(Skip())` to drop) |
+| `CircuitBreaker[I,O](p, fn, opts…)` | Closed → Open → Half-Open state machine; `FailureThreshold(n)` sets consecutive-failure limit; `CooldownDuration(d)` controls recovery wait; `HalfOpenProbes(n)` sets probe count; `HalfOpenTimeout(d)` limits probe duration; rejected items return `ErrCircuitOpen` (compose with `OnError(Skip())` to drop) |
 | `ErrCircuitOpen` | Sentinel error returned when the circuit is open |
 
 ### Error Handling
@@ -479,7 +486,7 @@ kitsune.ReleaseAll(results) // return every object to the pool when done
 | `ErrItem[I]` | Output type of `MapResult`/`DeadLetter` failed branch: `{Item I; Err error}` |
 | `StageError` | Error type returned by `Runner.Run`; carries `Stage`, `Attempt`, and `Cause` fields; unwrappable with `errors.As` |
 | `WithDedupSet(s)` | Stage option: custom `DedupSet` backend for `Dedupe` (e.g. Redis-backed) |
-| `MergeRunners(runners…)` | Combine forked terminal branches into a single `Runner` |
+| `MergeRunners(runners…)` | Combine forked terminal branches into a single `Runner`; returns `(*Runner, error)` |
 | `WithStore(s)` | Run option: set the state backend (default: `MemoryStore`) |
 | `WithDrain(timeout)` | Run option: graceful shutdown — drain in-flight items before exiting |
 | `WithCache(cache, ttl)` | Run option: default cache backend and TTL for all `Map`+`CacheBy` stages |
@@ -535,7 +542,9 @@ high, regular := kitsune.Partition(orders, func(o Order) bool { return o.Amount 
 vip := kitsune.Map(high, priorityProcess).ForEach(notifyVIP)
 std := kitsune.Map(regular, standardProcess).ForEach(store)
 
-err := kitsune.MergeRunners(vip, std).Run(ctx)
+merged, err := kitsune.MergeRunners(vip, std)
+if err != nil { /* handle */ }
+err = merged.Run(ctx)
 ```
 
 ### Shared state across stages

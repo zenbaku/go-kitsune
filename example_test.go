@@ -242,7 +242,7 @@ func ExampleNewChannel() {
 	// call Close when done — the pipeline drains and exits cleanly.
 	src := kitsune.NewChannel[int](8)
 
-	errCh := kitsune.Map(src.Source(), func(_ context.Context, n int) (int, error) {
+	h := kitsune.Map(src.Source(), func(_ context.Context, n int) (int, error) {
 		return n * 10, nil
 	}).ForEach(func(_ context.Context, n int) error {
 		fmt.Println(n)
@@ -253,7 +253,7 @@ func ExampleNewChannel() {
 		src.Send(ctx, v) //nolint
 	}
 	src.Close()
-	<-errCh
+	h.Wait() //nolint
 	// Output:
 	// 10
 	// 20
@@ -262,12 +262,13 @@ func ExampleNewChannel() {
 
 func ExampleRunner_RunAsync() {
 	// RunAsync starts the pipeline in a background goroutine and returns a
-	// channel that receives exactly one value: nil on success, or an error.
-	errCh := kitsune.FromSlice([]int{1, 2, 3}).
+	// *RunHandle. Call Wait() to block until completion, Done() to select on
+	// completion, or Err() to receive the error channel directly.
+	h := kitsune.FromSlice([]int{1, 2, 3}).
 		Drain().
 		RunAsync(context.Background())
 
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		fmt.Println("error:", err)
 	} else {
 		fmt.Println("done")
@@ -803,7 +804,7 @@ func ExampleRateLimit() {
 	results, _ := kitsune.RateLimit(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
 		1000,
-		[]kitsune.RateLimitOption{kitsune.Burst(6)},
+		kitsune.Burst(6),
 	).Collect(context.Background())
 	fmt.Println(results)
 	// Output: [1 2 3 4 5 6]
@@ -817,10 +818,8 @@ func ExampleRateLimit_drop() {
 	results, _ := kitsune.RateLimit(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
 		1000,
-		[]kitsune.RateLimitOption{
-			kitsune.Burst(3),
-			kitsune.RateMode(kitsune.RateLimitDrop),
-		},
+		kitsune.Burst(3),
+		kitsune.RateMode(kitsune.RateLimitDrop),
 		kitsune.WithName("rl"),
 	).Collect(context.Background(), kitsune.WithHook(m))
 	fmt.Println("passed:", len(results))
@@ -835,7 +834,6 @@ func ExampleCircuitBreaker() {
 	results, _ := kitsune.CircuitBreaker(
 		kitsune.FromSlice([]int{1, 2, 3}),
 		func(_ context.Context, n int) (int, error) { return n * 10, nil },
-		nil,
 	).Collect(context.Background())
 	fmt.Println(results)
 	// Output: [10 20 30]

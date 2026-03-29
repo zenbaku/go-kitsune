@@ -49,8 +49,11 @@ func main() {
 	})
 
 	// Run both branches.
-	err := kitsune.MergeRunners(highRunner, regularRunner).Run(context.Background())
+	runner, err := kitsune.MergeRunners(highRunner, regularRunner)
 	if err != nil {
+		panic(err)
+	}
+	if err := runner.Run(context.Background()); err != nil {
 		panic(err)
 	}
 

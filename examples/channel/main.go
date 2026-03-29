@@ -28,7 +28,7 @@ func main() {
 	})
 
 	// Start the pipeline in the background — it runs until src is closed.
-	errCh := upper.ForEach(func(_ context.Context, s string) error {
+	h := upper.ForEach(func(_ context.Context, s string) error {
 		fmt.Println("processed:", s)
 		return nil
 	}).RunAsync(ctx)
@@ -46,7 +46,7 @@ func main() {
 	src.Close()
 
 	// Wait for the pipeline to finish.
-	if err := <-errCh; err != nil {
+	if err := h.Wait(); err != nil {
 		fmt.Println("pipeline error:", err)
 	}
 }

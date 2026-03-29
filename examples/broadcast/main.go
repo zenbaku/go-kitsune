@@ -32,8 +32,11 @@ func main() {
 	r2 := billing.ForEach(func(_ context.Context, s string) error { fmt.Println(" ", s); return nil })
 	r3 := audit.ForEach(func(_ context.Context, s string) error { fmt.Println(" ", s); return nil })
 
-	err := kitsune.MergeRunners(r1, r2, r3).Run(context.Background())
+	runner, err := kitsune.MergeRunners(r1, r2, r3)
 	if err != nil {
+		panic(err)
+	}
+	if err := runner.Run(context.Background()); err != nil {
 		panic(err)
 	}
 

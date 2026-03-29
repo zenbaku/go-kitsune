@@ -58,7 +58,11 @@ func main() {
 	}, kitsune.WithName("dead-letter"))
 
 	// Both branches must run concurrently — MergeRunners handles this.
-	if err := kitsune.MergeRunners(goodRunner, failedRunner).Run(context.Background()); err != nil {
+	runner, err := kitsune.MergeRunners(goodRunner, failedRunner)
+	if err != nil {
+		panic(err)
+	}
+	if err := runner.Run(context.Background()); err != nil {
 		panic(err)
 	}
 

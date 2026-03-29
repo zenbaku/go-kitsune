@@ -29,7 +29,7 @@ func main() {
 	results, err := kitsune.RateLimit(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
 		10, // 10 items per second
-		[]kitsune.RateLimitOption{kitsune.Burst(1)},
+		kitsune.Burst(1),
 		kitsune.WithName("rate-wait"),
 	).Collect(context.Background())
 	if err != nil {
@@ -51,7 +51,7 @@ func main() {
 	burstResults, err := kitsune.RateLimit(
 		kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6}),
 		10,
-		[]kitsune.RateLimitOption{kitsune.Burst(5)},
+		kitsune.Burst(5),
 		kitsune.WithName("rate-burst"),
 	).Collect(context.Background())
 	if err != nil {
@@ -86,10 +86,8 @@ func main() {
 	m := kitsune.NewMetricsHook()
 	dropResults, err := kitsune.RateLimit(
 		source, 10,
-		[]kitsune.RateLimitOption{
-			kitsune.Burst(1),
-			kitsune.RateMode(kitsune.RateLimitDrop),
-		},
+		kitsune.Burst(1),
+		kitsune.RateMode(kitsune.RateLimitDrop),
 		kitsune.WithName("rate-drop"),
 	).Collect(context.Background(), kitsune.WithHook(m))
 	if err != nil {
