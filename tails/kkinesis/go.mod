@@ -15,6 +15,7 @@ require (
 	github.com/aws/smithy-go v1.22.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )
 
 replace github.com/jonathan/go-kitsune => ../..

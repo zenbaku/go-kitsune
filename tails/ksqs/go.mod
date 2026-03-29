@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.35 // indirect
 	github.com/aws/smithy-go v1.22.2 // indirect
 	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )
 
 replace github.com/jonathan/go-kitsune => ../..
