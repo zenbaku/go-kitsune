@@ -605,7 +605,7 @@ dispatchDone:
 // ---------------------------------------------------------------------------
 
 func runFlatMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook) error {
-	fn := n.Fn.(func(context.Context, any) ([]any, error))
+	fn := n.Fn.(func(context.Context, any, func(any) error) error)
 	handler := nodeErrorHandler(n)
 	name := nodeName(n, "flatmap")
 
@@ -618,12 +618,51 @@ func runFlatMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook
 	return runFlatMapConcurrent(ctx, fn, inCh, outbox, n.Concurrency, handler, name, hook)
 }
 
-func runFlatMapSingle(ctx context.Context, fn func(context.Context, any) ([]any, error), inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook) error {
-	adapted := func(ctx context.Context, in any) (any, error) { return fn(ctx, in) }
+// flatMapProcessItem invokes fn with a buffering yield callback, handling retry
+// and skip semantics. Only used when a custom error handler is attached; the
+// common default-handler path yields directly to outbox.Send instead.
+func flatMapProcessItem(ctx context.Context, fn func(context.Context, any, func(any) error) error, item any, h ErrorHandler, send func(any) error) (err error, attempt int) {
+	for {
+		var buf []any
+		err = fn(ctx, item, func(v any) error {
+			buf = append(buf, v)
+			return nil
+		})
+		if err == nil {
+			for _, v := range buf {
+				if err = send(v); err != nil {
+					return err, attempt
+				}
+			}
+			return nil, attempt
+		}
+		switch h.Handle(err, attempt) {
+		case ActionSkip:
+			return ErrSkipped, attempt
+		case ActionRetry:
+			bo := h.Backoff()
+			if bo == nil {
+				return err, attempt
+			}
+			select {
+			case <-time.After(bo(attempt)):
+				attempt++
+				continue
+			case <-ctx.Done():
+				return ctx.Err(), attempt
+			}
+		default:
+			return err, attempt
+		}
+	}
+}
 
+func runFlatMapSingle(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook) error {
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
+
+	_, isDefault := handler.(DefaultHandler)
 
 	for {
 		select {
@@ -632,7 +671,20 @@ func runFlatMapSingle(ctx context.Context, fn func(context.Context, any) ([]any,
 				return nil
 			}
 			start := time.Now()
-			resultAny, err, attempt := ProcessItem(ctx, adapted, item, handler)
+			var err error
+			var attempt int
+
+			if isDefault {
+				// Fast path: yield directly to outbox — no intermediate []any allocation.
+				err = fn(ctx, item, func(v any) error {
+					return outbox.Send(ctx, v)
+				})
+			} else {
+				err, attempt = flatMapProcessItem(ctx, fn, item, handler, func(v any) error {
+					return outbox.Send(ctx, v)
+				})
+			}
+
 			err = wrapStageErr(name, err, attempt)
 			dur := time.Since(start)
 
@@ -648,24 +700,20 @@ func runFlatMapSingle(ctx context.Context, fn func(context.Context, any) ([]any,
 			processed++
 			hook.OnItem(ctx, name, dur, nil)
 
-			for _, r := range resultAny.([]any) {
-				if err := outbox.Send(ctx, r); err != nil {
-					return err
-				}
-			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
 }
 
-func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any) ([]any, error), inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook) error {
-	adapted := func(ctx context.Context, in any) (any, error) { return fn(ctx, in) }
+func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook) error {
 	innerCtx, innerCancel := context.WithCancel(ctx)
 	defer innerCancel()
 
 	hook.OnStageStart(ctx, name)
 	var processed, errCount atomic.Int64
+
+	_, isDefault := handler.(DefaultHandler)
 
 	var (
 		wg       sync.WaitGroup
@@ -684,7 +732,20 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any) ([]
 						return
 					}
 					start := time.Now()
-					resultAny, err, attempt := ProcessItem(innerCtx, adapted, item, handler)
+					var err error
+					var attempt int
+
+					if isDefault {
+						// Fast path: yield directly, no buffering.
+						err = fn(innerCtx, item, func(v any) error {
+							return outbox.Send(innerCtx, v)
+						})
+					} else {
+						err, attempt = flatMapProcessItem(innerCtx, fn, item, handler, func(v any) error {
+							return outbox.Send(innerCtx, v)
+						})
+					}
+
 					err = wrapStageErr(name, err, attempt)
 					dur := time.Since(start)
 
@@ -702,13 +763,6 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any) ([]
 					processed.Add(1)
 					hook.OnItem(innerCtx, name, dur, nil)
 
-					for _, r := range resultAny.([]any) {
-						if err := outbox.Send(innerCtx, r); err != nil {
-							errOnce.Do(func() { firstErr = err })
-							innerCancel()
-							return
-						}
-					}
 				case <-innerCtx.Done():
 					return
 				}
@@ -721,12 +775,13 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any) ([]
 	return firstErr
 }
 
-func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) ([]any, error), inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook) error {
-	adapted := func(ctx context.Context, in any) (any, error) { return fn(ctx, in) }
+func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook) error {
 	innerCtx, innerCancel := context.WithCancel(ctx)
 	defer innerCancel()
 
 	hook.OnStageStart(ctx, name)
+
+	_, isDefault := handler.(DefaultHandler)
 
 	type slot struct {
 		item    any
@@ -745,12 +800,21 @@ func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, a
 			defer wg.Done()
 			for s := range jobs {
 				start := time.Now()
-				resultAny, err, attempt := ProcessItem(innerCtx, adapted, s.item, handler)
-				s.err = wrapStageErr(name, err, attempt)
-				hook.OnItem(innerCtx, name, time.Since(start), s.err)
-				if s.err == nil {
-					s.results = resultAny.([]any)
+				if isDefault {
+					s.err = fn(innerCtx, s.item, func(v any) error {
+						s.results = append(s.results, v)
+						return nil
+					})
+					s.err = wrapStageErr(name, s.err, 0)
+				} else {
+					var attempt int
+					s.err, attempt = flatMapProcessItem(innerCtx, fn, s.item, handler, func(v any) error {
+						s.results = append(s.results, v)
+						return nil
+					})
+					s.err = wrapStageErr(name, s.err, attempt)
 				}
+				hook.OnItem(innerCtx, name, time.Since(start), s.err)
 				close(s.done)
 			}
 		}()

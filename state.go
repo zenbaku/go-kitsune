@@ -161,7 +161,7 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 }
 
 // FlatMapWith applies a 1:N transform with access to typed pipeline state.
-func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) ([]O, error), opts ...StageOption) *Pipeline[O] {
+func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	g := p.g
 	g.RegisterKey(key.name, func(store any) any {
 		ref := &Ref[S]{value: key.initial, key: key.name}
@@ -171,17 +171,11 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 		return ref
 	})
 
-	wrapped := func(ctx context.Context, in any) ([]any, error) {
+	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
 		ref := g.GetRef(key.name).(*Ref[S])
-		results, err := fn(ctx, ref, in.(I))
-		if err != nil {
-			return nil, err
-		}
-		out := make([]any, len(results))
-		for i, r := range results {
-			out[i] = r
-		}
-		return out, nil
+		return fn(ctx, ref, in.(I), func(out O) error {
+			return yield(out)
+		})
 	}
 	n := newNode(engine.FlatMap, wrapped, p, opts)
 	id := g.AddNode(n)

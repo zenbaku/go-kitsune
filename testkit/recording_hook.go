@@ -17,8 +17,8 @@ type StageStartEvent struct {
 type ItemEvent struct {
 	Stage    string
 	Duration time.Duration
-	Err      error   // nil for successful items
-	Sample   any     // non-nil only for sample events
+	Err      error // nil for successful items
+	Sample   any   // non-nil only for sample events
 	IsSample bool
 }
 
@@ -55,13 +55,13 @@ type StageDoneEvent struct {
 //	fmt.Println(hook.Errors())       // only events with non-nil error
 //	fmt.Println(hook.Restarts())     // supervision restarts
 type RecordingHook struct {
-	mu      sync.Mutex
-	starts  []StageStartEvent
-	items   []ItemEvent
-	dones   []StageDoneEvent
-	drops   []DropEvent
+	mu       sync.Mutex
+	starts   []StageStartEvent
+	items    []ItemEvent
+	dones    []StageDoneEvent
+	drops    []DropEvent
 	restarts []RestartEvent
-	graph   []kitsune.GraphNode
+	graph    []kitsune.GraphNode
 }
 
 // OnStageStart implements kitsune.Hook.

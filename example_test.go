@@ -28,8 +28,13 @@ func ExampleMap() {
 
 func ExampleFlatMap() {
 	input := kitsune.FromSlice([]string{"a,b", "c,d,e"})
-	split := kitsune.FlatMap(input, func(_ context.Context, s string) ([]string, error) {
-		return strings.Split(s, ","), nil
+	split := kitsune.FlatMap(input, func(_ context.Context, s string, yield func(string) error) error {
+		for _, part := range strings.Split(s, ",") {
+			if err := yield(part); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	results, _ := split.Collect(context.Background())
 	fmt.Println(results)
@@ -291,8 +296,13 @@ func ExampleSlidingWindow() {
 func ExampleConcatMap() {
 	// ConcatMap guarantees sequential processing order (Concurrency=1).
 	results, _ := kitsune.ConcatMap(kitsune.FromSlice([]int{1, 2, 3}),
-		func(_ context.Context, n int) ([]string, error) {
-			return []string{strconv.Itoa(n), strconv.Itoa(n * 10)}, nil
+		func(_ context.Context, n int, yield func(string) error) error {
+			for _, v := range []string{strconv.Itoa(n), strconv.Itoa(n * 10)} {
+				if err := yield(v); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	).Collect(context.Background())
 	fmt.Println(results)

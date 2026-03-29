@@ -89,8 +89,13 @@ func TestTake(t *testing.T) {
 
 func TestFlatMap(t *testing.T) {
 	input := kitsune.FromSlice([]string{"a,b", "c,d,e"})
-	split := kitsune.FlatMap(input, func(_ context.Context, s string) ([]string, error) {
-		return strings.Split(s, ","), nil
+	split := kitsune.FlatMap(input, func(_ context.Context, s string, yield func(string) error) error {
+		for _, part := range strings.Split(s, ",") {
+			if err := yield(part); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	results, err := split.Collect(context.Background())
@@ -106,6 +111,21 @@ func TestFlatMap(t *testing.T) {
 			t.Errorf("results[%d] = %q, want %q", i, v, expected[i])
 		}
 	}
+}
+
+func TestFlatMapEarlyExit(t *testing.T) {
+	// Verify fn respects yield errors when context is cancelled.
+	var called int
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	kitsune.FlatMap(input, func(_ context.Context, n int, yield func(int) error) error {
+		called++
+		return yield(n)
+	}).Drain().Run(ctx) //nolint:errcheck
+	// with cancelled context the pipeline may process 0 or 1 items — just ensure no panic
+	_ = called
 }
 
 func TestBatchAndUnbatch(t *testing.T) {
@@ -495,7 +515,7 @@ func TestDedupeAddErrorHaltsPipeline(t *testing.T) {
 type failingDedupSet struct{ addErr error }
 
 func (f *failingDedupSet) Contains(_ context.Context, _ string) (bool, error) { return false, nil }
-func (f *failingDedupSet) Add(_ context.Context, _ string) error               { return f.addErr }
+func (f *failingDedupSet) Add(_ context.Context, _ string) error              { return f.addErr }
 
 func TestMapWithCache(t *testing.T) {
 	callCount := 0
@@ -806,11 +826,14 @@ func TestOrderedFlatMap(t *testing.T) {
 		items[i] = i
 	}
 	p := kitsune.FromSlice(items)
-	results, err := kitsune.FlatMap(p, func(_ context.Context, v int) ([]int, error) {
+	results, err := kitsune.FlatMap(p, func(_ context.Context, v int, yield func(int) error) error {
 		if v%2 == 1 {
 			time.Sleep(time.Millisecond)
 		}
-		return []int{v * 10, v*10 + 1}, nil
+		if err := yield(v * 10); err != nil {
+			return err
+		}
+		return yield(v*10 + 1)
 	}, kitsune.Concurrency(4), kitsune.Ordered()).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1635,7 +1658,12 @@ func TestEmptyInput(t *testing.T) {
 	t.Run("FlatMap", func(t *testing.T) {
 		results, err := kitsune.FlatMap(
 			kitsune.FromSlice([]int{}),
-			func(_ context.Context, v int) ([]int, error) { return []int{v, v}, nil },
+			func(_ context.Context, v int, yield func(int) error) error {
+				if err := yield(v); err != nil {
+					return err
+				}
+				return yield(v)
+			},
 		).Collect(context.Background())
 		if err != nil || len(results) != 0 {
 			t.Fatalf("FlatMap: got %v, err %v", results, err)
@@ -2477,7 +2505,12 @@ func TestReduceAfterFlatMap(t *testing.T) {
 	// FlatMap [1,2,3] → [1,1,2,2,3,3], Reduce sum → 12
 	expanded := kitsune.FlatMap(
 		kitsune.FromSlice([]int{1, 2, 3}),
-		func(_ context.Context, v int) ([]int, error) { return []int{v, v}, nil },
+		func(_ context.Context, v int, yield func(int) error) error {
+			if err := yield(v); err != nil {
+				return err
+			}
+			return yield(v)
+		},
 	)
 	result, err := kitsune.Reduce(expanded, 0, func(acc, v int) int { return acc + v }).
 		Collect(context.Background())
@@ -2649,7 +2682,14 @@ func TestCountAfterFlatMap(t *testing.T) {
 	// FlatMap [1,2,3] → [1 item, 2 items, 3 items] → total 6
 	expanded := kitsune.FlatMap(
 		kitsune.FromSlice([]int{1, 2, 3}),
-		func(_ context.Context, v int) ([]int, error) { return make([]int, v), nil },
+		func(_ context.Context, v int, yield func(int) error) error {
+			for range v {
+				if err := yield(0); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 	)
 	n, err := expanded.Count(context.Background())
 	if err != nil || n != 6 {
@@ -3103,12 +3143,12 @@ func TestTimeoutMapFastFn(t *testing.T) {
 
 func TestTimeoutFlatMap(t *testing.T) {
 	input := kitsune.FromSlice([]int{1})
-	_, err := kitsune.FlatMap(input, func(ctx context.Context, v int) ([]int, error) {
+	_, err := kitsune.FlatMap(input, func(ctx context.Context, v int, yield func(int) error) error {
 		select {
 		case <-time.After(time.Second):
-			return []int{v}, nil
+			return yield(v)
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
 	}, kitsune.Timeout(20*time.Millisecond)).Collect(context.Background())
 	if err == nil {
@@ -3197,8 +3237,11 @@ func TestPairwiseSingleItem(t *testing.T) {
 
 func TestConcatMap(t *testing.T) {
 	results, err := kitsune.ConcatMap(kitsune.FromSlice([]int{1, 2, 3}),
-		func(_ context.Context, v int) ([]int, error) {
-			return []int{v, v * 10}, nil
+		func(_ context.Context, v int, yield func(int) error) error {
+			if err := yield(v); err != nil {
+				return err
+			}
+			return yield(v * 10)
 		}).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3214,11 +3257,11 @@ func TestConcatMapIgnoresConcurrency(t *testing.T) {
 	var mu sync.Mutex
 	var order []int
 	results, err := kitsune.ConcatMap(kitsune.FromSlice([]int{1, 2, 3, 4, 5}),
-		func(_ context.Context, v int) ([]int, error) {
+		func(_ context.Context, v int, yield func(int) error) error {
 			mu.Lock()
 			order = append(order, v)
 			mu.Unlock()
-			return []int{v}, nil
+			return yield(v)
 		}, kitsune.Concurrency(8)).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)

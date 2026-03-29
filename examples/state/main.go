@@ -39,19 +39,24 @@ func main() {
 
 	// Stage 1: expand each item into queries, recording the origin.
 	queries := kitsune.FlatMapWith(input, queryOrigin,
-		func(ctx context.Context, ref *kitsune.Ref[map[string]string], item Item) ([]Query, error) {
+		func(ctx context.Context, ref *kitsune.Ref[map[string]string], item Item, yield func(Query) error) error {
 			err := ref.Update(ctx, func(m map[string]string) (map[string]string, error) {
 				m[item.ID+"-q1"] = item.Name
 				m[item.ID+"-q2"] = item.Name
 				return m, nil
 			})
 			if err != nil {
-				return nil, err
+				return err
 			}
-			return []Query{
+			for _, q := range []Query{
 				{QueryID: item.ID + "-q1", ItemID: item.ID},
 				{QueryID: item.ID + "-q2", ItemID: item.ID},
-			}, nil
+			} {
+				if err := yield(q); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	)
 

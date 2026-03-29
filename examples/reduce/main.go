@@ -87,8 +87,13 @@ func main() {
 	tags, err := kitsune.Reduce(
 		kitsune.FlatMap(
 			kitsune.FromSlice(taggedOrders),
-			func(_ context.Context, s string) ([]string, error) {
-				return strings.Split(s, ","), nil
+			func(_ context.Context, s string, yield func(string) error) error {
+				for _, part := range strings.Split(s, ",") {
+					if err := yield(part); err != nil {
+						return err
+					}
+				}
+				return nil
 			},
 		),
 		make(map[string]struct{}),

@@ -72,11 +72,14 @@ Checked items are complete.
 
 ## Performance
 
-- [ ] **`[]any` allocation pressure in FlatMap** — every `FlatMap` result
-  allocates a `[]any` intermediate slice in addition to the user's `[]O` return.
-  A yield-callback variant (the user calls `yield(item)` instead of returning a
-  slice) would eliminate this allocation and is more natural for large fan-outs.
-  This is a deeper engine change.
+- [x] **`[]any` allocation pressure in FlatMap** — the old `FlatMap` signature
+  (`func(ctx, I) ([]O, error)`) allocated an intermediate `[]any` slice on every
+  call. `FlatMap` now takes a yield callback (`func(ctx, I, func(O) error) error`)
+  that emits items one at a time, eliminating the intermediate allocation entirely.
+  The engine fast-path (default error handler) yields directly to the outbox with
+  zero buffering. All internal operators (`Pairwise`, `Intersperse`, `SlidingWindow`,
+  `ChunkBy`, `ChunkWhile`, `Sort`, `SortBy`, `ConcatMap`, `FlatMapWith`) were
+  migrated to the new signature.
 
 - [ ] **JSON-only cache and store serialization** — `CacheBy`, `MapWith`, and all
   `Store`-backed `Ref` operations serialize through `encoding/json`. There is no

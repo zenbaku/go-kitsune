@@ -30,8 +30,17 @@ func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) 
 	// options like Concurrency, OnError, Buffer, and Ordered apply to fn execution
 	// rather than to batch collection.
 	batched := Batch(p, size, batchCollectOpts(opts)...)
-	return FlatMap(batched, func(ctx context.Context, batch []I) ([]O, error) {
-		return fn(ctx, batch)
+	return FlatMap(batched, func(ctx context.Context, batch []I, yield func(O) error) error {
+		results, err := fn(ctx, batch)
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			if err := yield(r); err != nil {
+				return err
+			}
+		}
+		return nil
 	}, opts...)
 }
 

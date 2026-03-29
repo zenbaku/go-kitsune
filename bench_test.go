@@ -46,8 +46,13 @@ func BenchmarkFlatMap(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		p := kitsune.FromSlice(items)
-		kitsune.FlatMap(p, func(_ context.Context, n int) ([]int, error) {
-			return []int{n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7, n + 8, n + 9}, nil
+		kitsune.FlatMap(p, func(_ context.Context, n int, yield func(int) error) error {
+			for i := range 10 {
+				if err := yield(n + i); err != nil {
+					return err
+				}
+			}
+			return nil
 		}).Drain().Run(context.Background())
 	}
 }

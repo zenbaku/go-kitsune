@@ -77,45 +77,40 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 	return &Pipeline[O]{g: p.g, node: id}
 }
 
+// FlatMap applies a 1:N transformation — each input produces zero or more
+// outputs by calling yield. Return an error to abort processing.
+// Use [Timeout] to bound per-item execution time.
+func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
+	cfg := buildStageConfig(opts)
+	if cfg.timeout > 0 {
+		d := cfg.timeout
+		inner := fn
+		fn = func(ctx context.Context, item I, yield func(O) error) error {
+			tCtx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(tCtx, item, yield)
+		}
+	}
+	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
+		return fn(ctx, in.(I), func(out O) error {
+			return yield(out)
+		})
+	}
+	n := newNode(engine.FlatMap, wrapped, p, opts)
+	id := p.g.AddNode(n)
+	return &Pipeline[O]{g: p.g, node: id}
+}
+
 // ConcatMap applies a 1:N transformation sequentially — each input is fully
 // expanded before the next is processed. This is equivalent to [FlatMap] with
 // [Concurrency](1) (which is the default), and is provided as a named alias
 // for users coming from reactive-streams terminology.
 //
 // For concurrent expansion use [FlatMap] with [Concurrency](n).
-func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I) ([]O, error), opts ...StageOption) *Pipeline[O] {
+func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	// Append Concurrency(1) last so it overrides any user-supplied Concurrency.
 	opts = append(opts, Concurrency(1))
 	return FlatMap(p, fn, opts...)
-}
-
-// FlatMap applies a 1:N transformation — each input produces zero or more outputs.
-// Use [Timeout] to bound per-item execution time.
-func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I) ([]O, error), opts ...StageOption) *Pipeline[O] {
-	cfg := buildStageConfig(opts)
-	if cfg.timeout > 0 {
-		d := cfg.timeout
-		inner := fn
-		fn = func(ctx context.Context, item I) ([]O, error) {
-			tCtx, cancel := context.WithTimeout(ctx, d)
-			defer cancel()
-			return inner(tCtx, item)
-		}
-	}
-	wrapped := func(ctx context.Context, in any) ([]any, error) {
-		results, err := fn(ctx, in.(I))
-		if err != nil {
-			return nil, err
-		}
-		out := make([]any, len(results))
-		for i, r := range results {
-			out[i] = r
-		}
-		return out, nil
-	}
-	n := newNode(engine.FlatMap, wrapped, p, opts)
-	id := p.g.AddNode(n)
-	return &Pipeline[O]{g: p.g, node: id}
 }
 
 // Batch collects items into slices of up to size elements.
@@ -145,13 +140,13 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 // Unbatch flattens a Pipeline of slices back into individual items.
 // It is the inverse of [Batch].
 func Unbatch[T any](p *Pipeline[[]T]) *Pipeline[T] {
-	wrapped := func(_ context.Context, in any) ([]any, error) {
-		slice := in.([]T)
-		out := make([]any, len(slice))
-		for i, v := range slice {
-			out[i] = v
+	wrapped := func(_ context.Context, in any, yield func(any) error) error {
+		for _, v := range in.([]T) {
+			if err := yield(v); err != nil {
+				return err
+			}
 		}
-		return out, nil
+		return nil
 	}
 	n := &engine.Node{
 		Kind:         engine.FlatMap,
@@ -321,14 +316,14 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
 	// data races if this function is ever refactored to accept user opts.
 	buf := make([]T, 0, size)
 	sinceEmit := 0
-	return FlatMap(p, func(_ context.Context, item T) ([][]T, error) {
+	return FlatMap(p, func(_ context.Context, item T, yield func([]T) error) error {
 		buf = append(buf, item)
 		sinceEmit++
 		if len(buf) < size {
-			return nil, nil // still filling the initial window
+			return nil // still filling the initial window
 		}
 		if sinceEmit < step {
-			return nil, nil // not yet time to slide
+			return nil // not yet time to slide
 		}
 		window := make([]T, size)
 		copy(window, buf[len(buf)-size:])
@@ -342,7 +337,7 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
 		} else {
 			buf = buf[:0]
 		}
-		return [][]T{window}, nil
+		return yield(window)
 	}, Concurrency(1))
 }
 
@@ -735,15 +730,15 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 func Pairwise[T any](p *Pipeline[T]) *Pipeline[Pair[T, T]] {
 	var prev T
 	hasPrev := false
-	return FlatMap(p, func(_ context.Context, item T) ([]Pair[T, T], error) {
+	return FlatMap(p, func(_ context.Context, item T, yield func(Pair[T, T]) error) error {
 		if !hasPrev {
 			prev = item
 			hasPrev = true
-			return nil, nil
+			return nil
 		}
 		pair := Pair[T, T]{First: prev, Second: item}
 		prev = item
-		return []Pair[T, T]{pair}, nil
+		return yield(pair)
 	})
 }
 
@@ -962,12 +957,15 @@ func WithIndex[T any](p *Pipeline[T]) *Pipeline[Pair[int, T]] {
 //	// → "a", ",", "b", ",", "c"
 func Intersperse[T any](p *Pipeline[T], sep T) *Pipeline[T] {
 	first := true
-	return FlatMap(p, func(_ context.Context, item T) ([]T, error) {
+	return FlatMap(p, func(_ context.Context, item T, yield func(T) error) error {
 		if first {
 			first = false
-			return []T{item}, nil
+			return yield(item)
 		}
-		return []T{sep, item}, nil
+		if err := yield(sep); err != nil {
+			return err
+		}
+		return yield(item)
 	})
 }
 
@@ -980,16 +978,19 @@ func Intersperse[T any](p *Pipeline[T], sep T) *Pipeline[T] {
 //	// → 10, 0, 20, 0, 30
 func MapIntersperse[T, O any](p *Pipeline[T], sep O, fn func(context.Context, T) (O, error)) *Pipeline[O] {
 	first := true
-	return FlatMap(p, func(ctx context.Context, item T) ([]O, error) {
+	return FlatMap(p, func(ctx context.Context, item T, yield func(O) error) error {
 		out, err := fn(ctx, item)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if first {
 			first = false
-			return []O{out}, nil
+			return yield(out)
 		}
-		return []O{sep, out}, nil
+		if err := yield(sep); err != nil {
+			return err
+		}
+		return yield(out)
 	})
 }
 

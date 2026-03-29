@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -149,8 +150,8 @@ func TestPostHTTPError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
-	httpErr, ok := err.(*khttp.HTTPError)
-	if !ok {
+	var httpErr *khttp.HTTPError
+	if !errors.As(err, &httpErr) {
 		t.Fatalf("expected HTTPError, got %T: %v", err, err)
 	}
 	if httpErr.StatusCode != 500 {

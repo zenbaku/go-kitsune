@@ -13,7 +13,7 @@ import (
 //
 // Sort buffers the entire stream in memory — use only on bounded (finite) pipelines.
 func Sort[T any](p *Pipeline[T], less func(a, b T) bool) *Pipeline[T] {
-	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T) ([]T, error) {
+	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T, yield func(T) error) error {
 		sorted := make([]T, len(items))
 		copy(sorted, items)
 		slices.SortFunc(sorted, func(a, b T) int {
@@ -25,7 +25,12 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool) *Pipeline[T] {
 			}
 			return 0
 		})
-		return sorted, nil
+		for _, item := range sorted {
+			if err := yield(item); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -38,7 +43,7 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool) *Pipeline[T] {
 //
 // SortBy buffers the entire stream in memory — use only on bounded (finite) pipelines.
 func SortBy[T any, K any](p *Pipeline[T], key func(T) K, less func(a, b K) bool) *Pipeline[T] {
-	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T) ([]T, error) {
+	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T, yield func(T) error) error {
 		sorted := make([]T, len(items))
 		copy(sorted, items)
 		slices.SortFunc(sorted, func(a, b T) int {
@@ -51,6 +56,11 @@ func SortBy[T any, K any](p *Pipeline[T], key func(T) K, less func(a, b K) bool)
 			}
 			return 0
 		})
-		return sorted, nil
+		for _, item := range sorted {
+			if err := yield(item); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

@@ -19,8 +19,13 @@ func main() {
 		"jumps over",
 		"the lazy dog",
 	})
-	words := kitsune.FlatMap(sentences, func(_ context.Context, s string) ([]string, error) {
-		return strings.Fields(s), nil
+	words := kitsune.FlatMap(sentences, func(_ context.Context, s string, yield func(string) error) error {
+		for _, w := range strings.Fields(s) {
+			if err := yield(w); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	result, _ := words.Collect(context.Background())
 	fmt.Println(result)
@@ -36,9 +41,14 @@ func main() {
 		{2, []string{"d", "e"}},
 		{3, []string{"f"}},
 	})
-	allItems := kitsune.FlatMap(pages, func(_ context.Context, p Page) ([]string, error) {
+	allItems := kitsune.FlatMap(pages, func(_ context.Context, p Page, yield func(string) error) error {
 		fmt.Printf("  expanding page %d (%d items)\n", p.Number, len(p.Items))
-		return p.Items, nil
+		for _, item := range p.Items {
+			if err := yield(item); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	items, _ := allItems.Collect(context.Background())
 	fmt.Println("All items:", items)
@@ -46,13 +56,13 @@ func main() {
 	// --- Generate permutations ---
 	fmt.Println("\n=== Generate pairs ===")
 	colors := kitsune.FromSlice([]string{"red", "blue"})
-	pairs := kitsune.FlatMap(colors, func(_ context.Context, color string) ([]string, error) {
-		sizes := []string{"S", "M", "L"}
-		out := make([]string, len(sizes))
-		for i, size := range sizes {
-			out[i] = color + "-" + size
+	pairs := kitsune.FlatMap(colors, func(_ context.Context, color string, yield func(string) error) error {
+		for _, size := range []string{"S", "M", "L"} {
+			if err := yield(color + "-" + size); err != nil {
+				return err
+			}
 		}
-		return out, nil
+		return nil
 	})
 	combos, _ := pairs.Collect(context.Background())
 	fmt.Println(combos)

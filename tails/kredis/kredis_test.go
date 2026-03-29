@@ -186,7 +186,7 @@ func TestRedisStoreE2E(t *testing.T) {
 
 	// Build origin map and expand each item into two queries.
 	queries := kitsune.FlatMapWith(items, origins,
-		func(ctx context.Context, ref *kitsune.Ref[map[string]string], item Item) ([]string, error) {
+		func(ctx context.Context, ref *kitsune.Ref[map[string]string], item Item, yield func(string) error) error {
 			q1, q2 := item.ID+"-q1", item.ID+"-q2"
 			err := ref.Update(ctx, func(m map[string]string) (map[string]string, error) {
 				m[q1] = item.Name
@@ -194,9 +194,12 @@ func TestRedisStoreE2E(t *testing.T) {
 				return m, nil
 			})
 			if err != nil {
-				return nil, err
+				return err
 			}
-			return []string{q1, q2}, nil
+			if err := yield(q1); err != nil {
+				return err
+			}
+			return yield(q2)
 		},
 	)
 

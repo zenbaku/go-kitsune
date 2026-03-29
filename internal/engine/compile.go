@@ -181,17 +181,17 @@ type BufferHook interface {
 
 // GraphNode is a snapshot of one pipeline stage passed to [GraphHook.OnGraph].
 type GraphNode struct {
-	ID          int           `json:"id"`
-	Name        string        `json:"name"`
-	Kind        string        `json:"kind"`
-	Inputs      []int         `json:"inputs"`
-	Concurrency int           `json:"concurrency,omitempty"`
-	Buffer      int           `json:"buffer,omitempty"`
-	Overflow    int           `json:"overflow,omitempty"`
-	BatchSize   int           `json:"batch_size,omitempty"`
-	Timeout     time.Duration `json:"timeout,omitempty"`
-	HasRetry    bool          `json:"has_retry,omitempty"`
-	HasSupervision bool       `json:"has_supervision,omitempty"`
+	ID             int           `json:"id"`
+	Name           string        `json:"name"`
+	Kind           string        `json:"kind"`
+	Inputs         []int         `json:"inputs"`
+	Concurrency    int           `json:"concurrency,omitempty"`
+	Buffer         int           `json:"buffer,omitempty"`
+	Overflow       int           `json:"overflow,omitempty"`
+	BatchSize      int           `json:"batch_size,omitempty"`
+	Timeout        time.Duration `json:"timeout,omitempty"`
+	HasRetry       bool          `json:"has_retry,omitempty"`
+	HasSupervision bool          `json:"has_supervision,omitempty"`
 }
 
 // CreateChannels allocates bounded channels for every non-sink output port.

@@ -23,12 +23,13 @@ func main() {
 	words := []string{"cat", "dog", "elk"}
 	letters, err := kitsune.ConcatMap(
 		kitsune.FromSlice(words),
-		func(_ context.Context, word string) ([]string, error) {
-			chars := make([]string, len(word))
-			for i, ch := range word {
-				chars[i] = string(ch)
+		func(_ context.Context, word string, yield func(string) error) error {
+			for _, ch := range word {
+				if err := yield(string(ch)); err != nil {
+					return err
+				}
 			}
-			return chars, nil
+			return nil
 		},
 	).Collect(context.Background())
 	if err != nil {
@@ -47,8 +48,13 @@ func main() {
 
 	seqs, err := kitsune.ConcatMap(
 		kitsune.FromSlice([]int{1, 2, 3}),
-		func(_ context.Context, n int) ([]int, error) {
-			return []int{n, n * 10, n * 100}, nil
+		func(_ context.Context, n int, yield func(int) error) error {
+			for _, v := range []int{n, n * 10, n * 100} {
+				if err := yield(v); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	).Collect(context.Background())
 	if err != nil {
@@ -70,8 +76,13 @@ func main() {
 	}
 	tokens, err := kitsune.ConcatMap(
 		kitsune.FromSlice(sentences),
-		func(_ context.Context, s string) ([]string, error) {
-			return strings.Fields(s), nil
+		func(_ context.Context, s string, yield func(string) error) error {
+			for _, tok := range strings.Fields(s) {
+				if err := yield(tok); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	).Collect(context.Background())
 	if err != nil {

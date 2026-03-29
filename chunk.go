@@ -14,26 +14,27 @@ import (
 // ChunkBy buffers the entire stream in memory before emitting — use only on
 // bounded (finite) pipelines.
 func ChunkBy[T any, K comparable](p *Pipeline[T], fn func(T) K) *Pipeline[[]T] {
-	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T) ([][]T, error) {
+	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T, yield func([]T) error) error {
 		if len(items) == 0 {
-			return nil, nil
+			return nil
 		}
-		var chunks [][]T
 		var cur []T
 		curKey := fn(items[0])
 		for _, item := range items {
 			k := fn(item)
 			if k != curKey {
-				chunks = append(chunks, cur)
+				if err := yield(cur); err != nil {
+					return err
+				}
 				cur = nil
 				curKey = k
 			}
 			cur = append(cur, item)
 		}
 		if len(cur) > 0 {
-			chunks = append(chunks, cur)
+			return yield(cur)
 		}
-		return chunks, nil
+		return nil
 	})
 }
 
@@ -48,23 +49,24 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], fn func(T) K) *Pipeline[[]T] {
 // ChunkWhile buffers the entire stream in memory before emitting — use only on
 // bounded (finite) pipelines.
 func ChunkWhile[T any](p *Pipeline[T], fn func(prev, next T) bool) *Pipeline[[]T] {
-	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T) ([][]T, error) {
+	return FlatMap(Batch(p, math.MaxInt), func(_ context.Context, items []T, yield func([]T) error) error {
 		if len(items) == 0 {
-			return nil, nil
+			return nil
 		}
-		var chunks [][]T
 		cur := []T{items[0]}
 		for i := 1; i < len(items); i++ {
 			if fn(items[i-1], items[i]) {
 				cur = append(cur, items[i])
 			} else {
-				chunks = append(chunks, cur)
+				if err := yield(cur); err != nil {
+					return err
+				}
 				cur = []T{items[i]}
 			}
 		}
 		if len(cur) > 0 {
-			chunks = append(chunks, cur)
+			return yield(cur)
 		}
-		return chunks, nil
+		return nil
 	})
 }
