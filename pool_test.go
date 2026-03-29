@@ -141,7 +141,7 @@ func TestMapPooled_ErrorReleasesObject(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-	_ = released // pool auto-releases on error internally
+	_ = released.Load() // pool auto-releases on error internally
 	kitsune.ReleaseAll(results)
 }
 
