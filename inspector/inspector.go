@@ -25,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 //go:embed ui.html

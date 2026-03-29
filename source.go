@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 // From creates a Pipeline that reads from an existing channel.

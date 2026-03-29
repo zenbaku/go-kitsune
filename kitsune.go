@@ -14,7 +14,7 @@ package kitsune
 import (
 	"context"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 // ---------------------------------------------------------------------------

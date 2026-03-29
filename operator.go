@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 // ---------------------------------------------------------------------------
@@ -38,14 +38,11 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		keyFn := cc.keyFn.(func(I) string)
 		explicitCache := cc.cache
 		explicitTTL := cc.ttl
-		n.CacheWrapFn = func(defaultCache any, defaultTTL time.Duration) any {
-			c, _ := func() (Cache, bool) {
-				if explicitCache != nil {
-					return explicitCache, true
-				}
-				dc, ok := defaultCache.(Cache)
-				return dc, ok
-			}()
+		n.CacheWrapFn = func(defaultCache Cache, defaultTTL time.Duration) any {
+			c := explicitCache
+			if c == nil {
+				c = defaultCache
+			}
 			ttl := explicitTTL
 			if ttl == 0 {
 				ttl = defaultTTL

@@ -14,11 +14,11 @@ import (
 // RunConfig holds runtime options for a pipeline execution.
 type RunConfig struct {
 	Hook         Hook
-	Store        any           // type-erased kitsune.Store; nil means memory-only
+	Store        Store         // nil means memory-only
 	DrainTimeout time.Duration // 0 = no drain (default); >0 = graceful drain on context cancel
 
-	// Default cache for Map stages that use Cache(...) without an explicit backend.
-	DefaultCache    any           // type-erased kitsune.Cache; nil = no cache
+	// Default cache for Map stages that use CacheBy without an explicit backend.
+	DefaultCache    Cache         // nil = no cache
 	DefaultCacheTTL time.Duration // 0 = no expiry
 
 	// SampleRate is the item interval at which [SampleHook.OnItemSample] is called.

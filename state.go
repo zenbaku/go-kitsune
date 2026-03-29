@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 // ---------------------------------------------------------------------------
@@ -143,10 +143,10 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 // MapWith applies a 1:1 transform with access to typed pipeline state.
 func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) (O, error), opts ...StageOption) *Pipeline[O] {
 	g := p.g
-	g.RegisterKey(key.name, func(store any) any {
+	g.RegisterKey(key.name, func(store Store) any {
 		ref := &Ref[S]{value: key.initial, key: key.name}
-		if s, ok := store.(Store); ok && s != nil {
-			ref.store = s
+		if store != nil {
+			ref.store = store
 		}
 		return ref
 	})
@@ -163,10 +163,10 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 // FlatMapWith applies a 1:N transform with access to typed pipeline state.
 func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	g := p.g
-	g.RegisterKey(key.name, func(store any) any {
+	g.RegisterKey(key.name, func(store Store) any {
 		ref := &Ref[S]{value: key.initial, key: key.name}
-		if s, ok := store.(Store); ok && s != nil {
-			ref.store = s
+		if store != nil {
+			ref.store = store
 		}
 		return ref
 	})
@@ -192,11 +192,7 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 //
 // Users own connection lifecycle — create, configure, and close the
 // backing client. Kitsune will never open or close connections.
-type Store interface {
-	Get(ctx context.Context, key string) ([]byte, bool, error)
-	Set(ctx context.Context, key string, value []byte) error
-	Delete(ctx context.Context, key string) error
-}
+type Store = engine.Store
 
 // MemoryStore returns an in-process, mutex-protected state store.
 // Useful for testing or when pipeline state does not need to survive restarts.
@@ -234,13 +230,10 @@ func (s *memoryStore) Delete(_ context.Context, key string) error {
 // Cache — key-value cache with TTL
 // ---------------------------------------------------------------------------
 
-// Cache supports key-value caching with TTL. Use it with the [Cache] stage
+// Cache supports key-value caching with TTL. Use it with the [CacheBy] stage
 // option on [Map] to skip redundant calls on repeated keys.
 // External implementations (Redis, Memcached) can implement this interface.
-type Cache interface {
-	Get(ctx context.Context, key string) ([]byte, bool, error)
-	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
-}
+type Cache = engine.Cache
 
 // MemoryCache returns an in-process cache with a maximum number of entries.
 // When full, the oldest entry is evicted. TTL is respected on reads.

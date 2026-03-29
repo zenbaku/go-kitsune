@@ -1,0 +1,57 @@
+version: "3"
+
+vars:
+  PKG: github.com/jonathan/go-kitsune/engine
+
+tasks:
+  default:
+    desc: fmt, vet, and test the engine package
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: test
+
+  fmt:
+    desc: Format engine source files
+    cmds:
+      - go fmt ./
+
+  vet:
+    desc: Run go vet on the engine package
+    cmds:
+      - go vet ./
+
+  test:
+    desc: Run engine tests
+    cmds:
+      - go test -count=1 -timeout 30s ./
+
+  test:verbose:
+    desc: Run engine tests with verbose output
+    cmds:
+      - go test -v -count=1 -timeout 30s ./
+
+  test:race:
+    desc: Run engine tests with the race detector
+    cmds:
+      - go test -race -count=1 -timeout 60s ./
+
+  test:cover:
+    desc: Run engine tests and print per-function coverage
+    cmds:
+      - go test -coverprofile=coverage.out -count=1 -timeout 30s ./
+      - go tool cover -func=coverage.out
+      - rm -f coverage.out
+
+  test:cover:html:
+    desc: Open an HTML coverage report in the browser
+    cmds:
+      - go test -coverprofile=coverage.out -count=1 -timeout 30s ./
+      - go tool cover -html=coverage.out -o coverage.html
+      - open coverage.html
+      - rm -f coverage.out
+
+  bench:
+    desc: Run engine benchmarks
+    cmds:
+      - go test -bench=. -benchmem -run='^$' -count=3 -timeout 120s ./

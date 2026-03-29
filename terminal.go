@@ -6,7 +6,7 @@ import (
 	"math/rand/v2"
 	"sync/atomic"
 
-	"github.com/jonathan/go-kitsune/internal/engine"
+	"github.com/jonathan/go-kitsune/engine"
 )
 
 // Numeric is satisfied by all integer and floating-point numeric types.

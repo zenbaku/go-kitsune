@@ -25,6 +25,23 @@ func (NoopHook) OnStageStart(context.Context, string)                 {}
 func (NoopHook) OnItem(context.Context, string, time.Duration, error) {}
 func (NoopHook) OnStageDone(context.Context, string, int64, int64)    {}
 
+// Store is the backend interface for pipeline state persistence.
+// Implementations must be safe for concurrent use.
+// The default in-memory implementation is available via [kitsune.MemoryStore].
+type Store interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key string, value []byte) error
+	Delete(ctx context.Context, key string) error
+}
+
+// Cache supports key-value caching with TTL.
+// Implementations must be safe for concurrent use.
+// The default in-memory implementation is available via [kitsune.MemoryCache].
+type Cache interface {
+	Get(ctx context.Context, key string) ([]byte, bool, error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+}
+
 // ErrorHandler decides what to do when a stage function returns an error.
 type ErrorHandler interface {
 	Handle(err error, attempt int) ErrorAction
