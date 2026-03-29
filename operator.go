@@ -316,6 +316,9 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
 	if step > size {
 		panic("kitsune: SlidingWindow requires step <= size")
 	}
+	// buf and sinceEmit are captured mutable state. Concurrency(1) is passed
+	// explicitly to the inner FlatMap to enforce sequential execution, preventing
+	// data races if this function is ever refactored to accept user opts.
 	buf := make([]T, 0, size)
 	sinceEmit := 0
 	return FlatMap(p, func(_ context.Context, item T) ([][]T, error) {
@@ -340,7 +343,7 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
 			buf = buf[:0]
 		}
 		return [][]T{window}, nil
-	})
+	}, Concurrency(1))
 }
 
 // ---------------------------------------------------------------------------
@@ -348,35 +351,39 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int) *Pipeline[[]T] {
 // ---------------------------------------------------------------------------
 
 // Dedupe drops items whose key has already been seen.
-// If no [DedupSet] is provided, an in-process [MemoryDedupSet] is used.
-// Pass a Redis-backed or other distributed set for cross-process deduplication.
+// Use [WithDedupSet] to supply a custom backend (e.g. Redis-backed) for
+// cross-process deduplication; defaults to an in-process [MemoryDedupSet].
 //
-//	p.Dedupe(func(e Event) string { return e.ID })            // in-process default
-//	p.Dedupe(func(e Event) string { return e.ID }, redisDedupSet) // distributed
-func (p *Pipeline[T]) Dedupe(key func(T) string, set ...DedupSet) *Pipeline[T] {
-	var s DedupSet
-	if len(set) > 0 {
-		s = set[0]
-	} else {
+//	p.Dedupe(func(e Event) string { return e.ID })                                // in-process default
+//	p.Dedupe(func(e Event) string { return e.ID }, kitsune.WithDedupSet(redisDedupSet)) // distributed
+func (p *Pipeline[T]) Dedupe(key func(T) string, opts ...StageOption) *Pipeline[T] {
+	cfg := buildStageConfig(opts)
+	s := cfg.dedupSet
+	if s == nil {
 		s = MemoryDedupSet()
 	}
-	wrapped := func(in any) bool {
-		item := in.(T)
+	// Implemented as a Map so the pipeline context is available to the DedupSet
+	// (e.g. for Redis-backed sets) and errors from Contains/Add halt the pipeline
+	// instead of being silently dropped. engine.ErrSkipped is the sentinel that
+	// causes the Map runner to discard the item without invoking the error handler.
+	// Concurrency(1) is appended last to enforce sequential seen-key tracking.
+	return Map(p, func(ctx context.Context, item T) (T, error) {
 		k := key(item)
-		seen, err := s.Contains(context.Background(), k)
-		if err != nil || seen {
-			return false
+		seen, err := s.Contains(ctx, k)
+		if err != nil {
+			var zero T
+			return zero, err
 		}
-		_ = s.Add(context.Background(), k)
-		return true
-	}
-	id := p.g.AddNode(&engine.Node{
-		Kind:   engine.Filter,
-		Fn:     wrapped,
-		Inputs: []engine.InputRef{{Node: p.node, Port: p.port}},
-		Buffer: engine.DefaultBuffer,
-	})
-	return &Pipeline[T]{g: p.g, node: id}
+		if seen {
+			var zero T
+			return zero, engine.ErrSkipped
+		}
+		if err := s.Add(ctx, k); err != nil {
+			var zero T
+			return zero, err
+		}
+		return item, nil
+	}, append(opts, Concurrency(1))...)
 }
 
 // ---------------------------------------------------------------------------
@@ -403,12 +410,15 @@ func (p *Pipeline[T]) Dedupe(key func(T) string, set ...DedupSet) *Pipeline[T] {
 // Scan is inherently sequential — each output depends on the previous
 // accumulator, so it always runs as a single worker regardless of any
 // [Concurrency] option applied downstream.
-func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S) *Pipeline[S] {
+func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOption) *Pipeline[S] {
+	// state is captured mutable state. Concurrency(1) is appended last to
+	// enforce sequential execution: each output depends on the previous accumulator,
+	// so concurrent workers would both race on state and produce incorrect results.
 	state := initial
 	return Map(p, func(_ context.Context, item T) (S, error) {
 		state = fn(state, item)
 		return state, nil
-	})
+	}, append(opts, Concurrency(1))...)
 }
 
 // GroupBy collects all items into a map keyed by the result of key, then
@@ -781,6 +791,94 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 }
 
 // ---------------------------------------------------------------------------
+// DeadLetter / DeadLetterSink
+// ---------------------------------------------------------------------------
+
+// DeadLetter applies a transformation with optional retry and routes results
+// by outcome: successful outputs go to the first (ok) pipeline; items that
+// fail permanently (after retries are exhausted) go to the second (dead-letter)
+// pipeline as [ErrItem] values containing the original input and final error.
+//
+// Use [OnError] with [Retry] in opts to retry transient failures before routing
+// to the dead-letter pipeline:
+//
+//	ok, dlq := kitsune.DeadLetter(p, fetchUser,
+//	    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(10*time.Millisecond, time.Second))),
+//	)
+//	// ok:  *Pipeline[User]        — successful lookups
+//	// dlq: *Pipeline[ErrItem[ID]] — permanently failed items
+//
+// Both output pipelines must be consumed (same rule as [Partition]).
+func DeadLetter[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) (*Pipeline[O], *Pipeline[ErrItem[I]]) {
+	cfg := buildStageConfig(opts)
+	handler := cfg.errorHandler
+
+	// retrying wraps fn with the retry loop from opts. On permanent failure the
+	// error propagates to MapResult, which routes it to the dead-letter port.
+	retrying := func(ctx context.Context, item I) (O, error) {
+		adapted := func(ctx context.Context, in any) (any, error) {
+			out, err := fn(ctx, in.(I))
+			return out, err
+		}
+		result, err, _ := engine.ProcessItem(ctx, adapted, item, handler)
+		if err != nil {
+			var zero O
+			return zero, err
+		}
+		return result.(O), nil
+	}
+
+	// MapResult does not use an error handler — all errors route to port 1.
+	// Strip OnError from the opts forwarded to MapResult so it has no effect on
+	// the node configuration; the retry was already applied inside retrying.
+	return MapResult(p, retrying, deadLetterPassOpts(opts)...)
+}
+
+// DeadLetterSink attaches a terminal sink with optional retry and routes
+// permanently-failed items to the returned dead-letter pipeline.
+// The second return value is a [Runner] that drives the whole graph.
+//
+//	dlq, runner := kitsune.DeadLetterSink(p, writeToDB,
+//	    kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(50*time.Millisecond))),
+//	)
+//	// dlq:    *Pipeline[ErrItem[T]] — failed items for inspection / re-queuing
+//	// runner: *Runner — drive execution with runner.Run(ctx)
+//
+// Both dlq and runner share the same graph; dlq must be consumed before calling
+// runner.Run (e.g. via dlq.ForEach or dlq.Collect within the same Run call).
+func DeadLetterSink[I any](p *Pipeline[I], fn func(context.Context, I) error, opts ...StageOption) (*Pipeline[ErrItem[I]], *Runner) {
+	cfg := buildStageConfig(opts)
+	handler := cfg.errorHandler
+
+	adapted := func(ctx context.Context, item I) (struct{}, error) {
+		inner := func(ctx context.Context, in any) (any, error) {
+			return struct{}{}, fn(ctx, in.(I))
+		}
+		_, err, _ := engine.ProcessItem(ctx, inner, item, handler)
+		return struct{}{}, err
+	}
+
+	ok, dlq := MapResult(p, adapted, deadLetterPassOpts(opts)...)
+	return dlq, ok.Drain()
+}
+
+// deadLetterPassOpts filters out OnError options because [MapResult] routes all
+// errors to its dead-letter port; passing an error handler there would be ignored
+// and misleading.
+func deadLetterPassOpts(opts []StageOption) []StageOption {
+	pass := make([]StageOption, 0, len(opts))
+	for _, o := range opts {
+		var c stageConfig
+		o(&c)
+		if c.errorHandler != nil {
+			continue
+		}
+		pass = append(pass, o)
+	}
+	return pass
+}
+
+// ---------------------------------------------------------------------------
 // WithLatestFrom
 // ---------------------------------------------------------------------------
 
@@ -968,6 +1066,9 @@ func MapEvery[T any](p *Pipeline[T], nth int, fn func(context.Context, T) (T, er
 //	kitsune.ConsecutiveDedup(kitsune.FromSlice([]int{1,1,2,3,3,3,2}))
 //	// → 1, 2, 3, 2
 func ConsecutiveDedup[T comparable](p *Pipeline[T]) *Pipeline[T] {
+	// prev and hasPrev are captured mutable state. Safety is guaranteed by the
+	// engine: Filter nodes are always dispatched through a single goroutine
+	// (runFilter has no concurrency path), so no synchronization is needed.
 	var prev T
 	hasPrev := false
 	return p.Filter(func(item T) bool {
@@ -986,6 +1087,8 @@ func ConsecutiveDedup[T comparable](p *Pipeline[T]) *Pipeline[T] {
 //
 //	kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type })
 func ConsecutiveDedupBy[T any, K comparable](p *Pipeline[T], fn func(T) K) *Pipeline[T] {
+	// prevKey and hasPrev are captured mutable state. Safety is guaranteed by the
+	// engine: Filter nodes are always single-goroutine — see ConsecutiveDedup.
 	var prevKey K
 	hasPrev := false
 	return p.Filter(func(item T) bool {

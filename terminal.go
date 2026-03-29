@@ -58,7 +58,7 @@ func (p *Pipeline[T]) Collect(ctx context.Context, opts ...RunOption) ([]T, erro
 	runner := p.ForEach(func(_ context.Context, item T) error {
 		results = append(results, item)
 		return nil
-	})
+	}, Concurrency(1))
 	if err := runner.Run(ctx, opts...); err != nil {
 		return nil, err
 	}
@@ -147,23 +147,36 @@ func Sum[T Numeric](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, 
 // Min / Max / MinMax
 // ---------------------------------------------------------------------------
 
+// optional holds a value that may or may not be present.
+type optional[T any] struct {
+	value T
+	valid bool
+}
+
+// byAcc is the accumulator for MinBy/MaxBy: tracks both the winning item and
+// its extracted key so the key function is called exactly once per item.
+type byAcc[T, K any] struct {
+	item  T
+	key   K
+	valid bool
+}
+
 // Min runs the pipeline and returns the smallest item according to less.
 // The second return value is false if the pipeline produced no items.
 //
 //	v, ok, err := kitsune.Min(ctx, p, func(a, b int) bool { return a < b })
 func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error) {
-	items, err := p.Collect(ctx, opts...)
-	if err != nil || len(items) == 0 {
+	results, err := Reduce(p, optional[T]{}, func(acc optional[T], item T) optional[T] {
+		if !acc.valid || less(item, acc.value) {
+			return optional[T]{value: item, valid: true}
+		}
+		return acc
+	}).Collect(ctx, opts...)
+	if err != nil || len(results) == 0 || !results[0].valid {
 		var zero T
 		return zero, false, err
 	}
-	m := items[0]
-	for _, item := range items[1:] {
-		if less(item, m) {
-			m = item
-		}
-	}
-	return m, true, nil
+	return results[0].value, true, nil
 }
 
 // Max runs the pipeline and returns the largest item according to less.
@@ -171,18 +184,17 @@ func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opt
 //
 //	v, ok, err := kitsune.Max(ctx, p, func(a, b int) bool { return a < b })
 func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error) {
-	items, err := p.Collect(ctx, opts...)
-	if err != nil || len(items) == 0 {
+	results, err := Reduce(p, optional[T]{}, func(acc optional[T], item T) optional[T] {
+		if !acc.valid || less(acc.value, item) {
+			return optional[T]{value: item, valid: true}
+		}
+		return acc
+	}).Collect(ctx, opts...)
+	if err != nil || len(results) == 0 || !results[0].valid {
 		var zero T
 		return zero, false, err
 	}
-	m := items[0]
-	for _, item := range items[1:] {
-		if less(m, item) {
-			m = item
-		}
-	}
-	return m, true, nil
+	return results[0].value, true, nil
 }
 
 // MinMax runs the pipeline and returns both the smallest and largest items in a
@@ -192,20 +204,23 @@ func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opt
 //	pair, ok, err := kitsune.MinMax(ctx, p, func(a, b int) bool { return a < b })
 //	// pair.First == min, pair.Second == max
 func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (Pair[T, T], bool, error) {
-	items, err := p.Collect(ctx, opts...)
-	if err != nil || len(items) == 0 {
+	type minMaxAcc struct {
+		mn, mx optional[T]
+	}
+	results, err := Reduce(p, minMaxAcc{}, func(acc minMaxAcc, item T) minMaxAcc {
+		if !acc.mn.valid || less(item, acc.mn.value) {
+			acc.mn = optional[T]{value: item, valid: true}
+		}
+		if !acc.mx.valid || less(acc.mx.value, item) {
+			acc.mx = optional[T]{value: item, valid: true}
+		}
+		return acc
+	}).Collect(ctx, opts...)
+	if err != nil || len(results) == 0 || !results[0].mn.valid {
 		return Pair[T, T]{}, false, err
 	}
-	mn, mx := items[0], items[0]
-	for _, item := range items[1:] {
-		if less(item, mn) {
-			mn = item
-		}
-		if less(mx, item) {
-			mx = item
-		}
-	}
-	return Pair[T, T]{First: mn, Second: mx}, true, nil
+	r := results[0]
+	return Pair[T, T]{First: r.mn.value, Second: r.mx.value}, true, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -219,21 +234,18 @@ func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, 
 //	    func(a, b int) bool { return a < b },
 //	)
 func MinBy[T any, K any](ctx context.Context, p *Pipeline[T], key func(T) K, less func(a, b K) bool, opts ...RunOption) (T, bool, error) {
-	items, err := p.Collect(ctx, opts...)
-	if err != nil || len(items) == 0 {
+	results, err := Reduce(p, byAcc[T, K]{}, func(acc byAcc[T, K], item T) byAcc[T, K] {
+		k := key(item)
+		if !acc.valid || less(k, acc.key) {
+			return byAcc[T, K]{item: item, key: k, valid: true}
+		}
+		return acc
+	}).Collect(ctx, opts...)
+	if err != nil || len(results) == 0 || !results[0].valid {
 		var zero T
 		return zero, false, err
 	}
-	m := items[0]
-	mk := key(m)
-	for _, item := range items[1:] {
-		k := key(item)
-		if less(k, mk) {
-			m = item
-			mk = k
-		}
-	}
-	return m, true, nil
+	return results[0].item, true, nil
 }
 
 // MaxBy runs the pipeline and returns the item whose key is largest.
@@ -243,21 +255,18 @@ func MinBy[T any, K any](ctx context.Context, p *Pipeline[T], key func(T) K, les
 //	    func(a, b int) bool { return a < b },
 //	)
 func MaxBy[T any, K any](ctx context.Context, p *Pipeline[T], key func(T) K, less func(a, b K) bool, opts ...RunOption) (T, bool, error) {
-	items, err := p.Collect(ctx, opts...)
-	if err != nil || len(items) == 0 {
+	results, err := Reduce(p, byAcc[T, K]{}, func(acc byAcc[T, K], item T) byAcc[T, K] {
+		k := key(item)
+		if !acc.valid || less(acc.key, k) {
+			return byAcc[T, K]{item: item, key: k, valid: true}
+		}
+		return acc
+	}).Collect(ctx, opts...)
+	if err != nil || len(results) == 0 || !results[0].valid {
 		var zero T
 		return zero, false, err
 	}
-	m := items[0]
-	mk := key(m)
-	for _, item := range items[1:] {
-		k := key(item)
-		if less(mk, k) {
-			m = item
-			mk = k
-		}
-	}
-	return m, true, nil
+	return results[0].item, true, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +296,7 @@ func Frequencies[T comparable](ctx context.Context, p *Pipeline[T], opts ...RunO
 	runner := p.ForEach(func(_ context.Context, item T) error {
 		m[item]++
 		return nil
-	})
+	}, Concurrency(1))
 	if err := runner.Run(ctx, opts...); err != nil {
 		return nil, err
 	}
@@ -304,7 +313,7 @@ func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], key
 	runner := p.ForEach(func(_ context.Context, item T) error {
 		m[key(item)]++
 		return nil
-	})
+	}, Concurrency(1))
 	if err := runner.Run(ctx, opts...); err != nil {
 		return nil, err
 	}
@@ -338,7 +347,7 @@ func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], seed S, fn func(
 			return errReduceWhileDone
 		}
 		return nil
-	})
+	}, Concurrency(1))
 	err := runner.Run(ctx, opts...)
 	if errors.Is(err, errReduceWhileDone) {
 		return acc, nil

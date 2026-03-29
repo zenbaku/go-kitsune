@@ -58,6 +58,8 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 | `Map` + `CacheBy(keyFn, opts…)` | `Map` with TTL-based cache; skips `fn` on cache hit |
 | `MapRecover[I,O](p, fn, recover, opts…)` | `Map` that calls `recover(ctx, item, err)` instead of failing on error |
 | `MapResult[I,O](p, fn, opts…)` | Map that routes success to `ok *Pipeline[O]` and errors to `failed *Pipeline[ErrItem[I]]`; no halt or retry |
+| `DeadLetter[I,O](p, fn, opts…)` | Like `MapResult` but with retry embedded; exhausted failures route to `*Pipeline[ErrItem[I]]` |
+| `DeadLetterSink[I](p, fn, opts…)` | Like `DeadLetter` for terminal sinks; returns `(*Pipeline[ErrItem[I]], *Runner)` |
 | `MapEvery[T](p, nth, fn)` | Apply `fn` to every nth item (0-indexed); all other items pass through unchanged |
 | `WithIndex[T](p)` | Pair each item with its 0-based stream position; emits `Pair[int, T]` |
 | `Intersperse[T](p, sep T)` | Insert `sep` between consecutive items |
@@ -137,7 +139,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|
 | `Distinct[T comparable](p)` | Drop duplicate items; keeps first occurrence of each value |
 | `DistinctBy[T](p, key func(T) string)` | Drop duplicates by derived key; in-memory, unbounded |
-| `p.Dedupe(key, set …DedupSet)` | Drop items whose key is in `set`; defaults to in-process `MemoryDedupSet` |
+| `p.Dedupe(key, opts…)` | Drop items whose key is already seen; defaults to in-process `MemoryDedupSet`; pass `WithDedupSet(s)` for a custom backend |
 | `ConsecutiveDedup[T comparable](p)` | Drop consecutive duplicate values; non-adjacent duplicates are kept |
 | `ConsecutiveDedupBy[T,K](p, fn)` | Drop consecutive items with the same derived key |
 
@@ -145,7 +147,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 
 | Function | Description |
 |---|---|
-| `Scan[T,S](p, initial S, fn func(S,T) S)` | Running accumulator; emits updated state after every item |
+| `Scan[T,S](p, initial S, fn func(S,T) S, opts…)` | Running accumulator; emits updated state after every item; always sequential |
 | `Reduce[T,S](p, seed S, fn func(S,T) S)` | Fold entire stream into one value; emits once when input closes (emits `seed` on empty stream) |
 | `ReduceWhile[T,S](ctx, p, seed S, fn)` | Like `Reduce` but `fn` returns `(newAcc, continue)`; pipeline stops (and `newAcc` is returned) when `continue` is false |
 | `GroupBy[T,K](p, key func(T) K)` | Collect all items into a `map[K][]T` and emit once (bounded streams only) |
@@ -379,11 +381,14 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 |---|---|
 | `Lift[I,O](fn)` | Wrap a context-free `func(I)(O,error)` for use with `Map`/`FlatMap` |
 | `Pair[A,B]` | Output type of `Zip` and `WithLatestFrom`: `{First A; Second B}` |
-| `ErrItem[I]` | Output type of `MapResult` failed branch: `{Item I; Err error}` |
+| `ErrItem[I]` | Output type of `MapResult`/`DeadLetter` failed branch: `{Item I; Err error}` |
+| `StageError` | Error type returned by `Runner.Run`; carries `Stage`, `Attempt`, and `Cause` fields; unwrappable with `errors.As` |
+| `WithDedupSet(s)` | Stage option: custom `DedupSet` backend for `Dedupe` (e.g. Redis-backed) |
 | `MergeRunners(runners…)` | Combine forked terminal branches into a single `Runner` |
 | `WithStore(s)` | Run option: set the state backend (default: `MemoryStore`) |
 | `WithDrain(timeout)` | Run option: graceful shutdown — drain in-flight items before exiting |
 | `WithCache(cache, ttl)` | Run option: default cache backend and TTL for all `Map`+`CacheBy` stages |
+| `WithSampleRate(n)` | Run option: `OnItemSample` fires every nth item (default 10); pass ≤0 to disable |
 
 ## Quick start
 
@@ -510,7 +515,7 @@ resilient := kitsune.Map(records, riskyTransform,
 ```go
 // Dedupe is a method — defaults to MemoryDedupSet; pass a Redis-backed set for distributed pipelines.
 deduped := input.Dedupe(func(e Event) string { return e.ID })
-deduped := input.Dedupe(func(e Event) string { return e.ID }, redisDedupSet)
+deduped := input.Dedupe(func(e Event) string { return e.ID }, kitsune.WithDedupSet(redisDedupSet))
 
 // CacheBy is a StageOption on Map — use runner-level defaults or override per-stage.
 cached := kitsune.Map(items, expensiveLookup,
@@ -769,6 +774,7 @@ examples/streams        — Unfold, Iterate, Repeatedly, Cycle, Concat: generati
 examples/transform      — Reject, WithIndex, Intersperse, TakeEvery, DropEvery, MapEvery, ConsecutiveDedup
 examples/reshape        — ChunkBy, ChunkWhile, Sort, SortBy, Unzip: structural stream transforms
 examples/aggregate      — Sum, Min, Max, MinMax, MinBy, MaxBy, Find, Frequencies, ReduceWhile, TakeRandom
+examples/deadletter     — DeadLetter, DeadLetterSink: retry-embedded routing of exhausted failures
 ```
 
 Run any example: `go run ./examples/basic`
@@ -782,6 +788,31 @@ examples/sqlite     — ksqlite query source, batch insert sink
 examples/http       — HTTP pagination source with retry
 examples/prometheus — kprometheus hook: per-stage counters, histograms, drops, restarts
 examples/websocket  — kwebsocket: Read source and Write sink over an in-process server
+```
+
+## Testing helpers
+
+The `kitsune/testkit` package provides assertion helpers for pipeline tests:
+
+```go
+import "github.com/jonathan/go-kitsune/testkit"
+
+// Collect items, failing the test on error.
+got := testkit.MustCollect(t, p)
+
+// Collect and assert exact ordered output.
+testkit.CollectAndExpect(t, p, []int{1, 2, 3})
+
+// Collect and assert same elements in any order.
+testkit.CollectAndExpectUnordered(t, p, []int{3, 1, 2})
+
+// Record every lifecycle event for assertion.
+hook := &testkit.RecordingHook{}
+runner.Run(ctx, kitsune.WithHook(hook))
+fmt.Println(hook.Items())    // per-item events
+fmt.Println(hook.Errors())   // failed items
+fmt.Println(hook.Restarts()) // supervision restarts
+fmt.Println(hook.Graph())    // pipeline topology
 ```
 
 ## Docs

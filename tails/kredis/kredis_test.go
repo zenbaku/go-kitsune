@@ -105,7 +105,7 @@ func TestRedisDedupSet(t *testing.T) {
 
 	input := kitsune.FromSlice([]string{"x", "y", "x", "z", "y", "x"})
 	deduped := input.Dedupe(func(s string) string { return s },
-		kredis.NewDedupSet(client, "kdedup:test"))
+		kitsune.WithDedupSet(kredis.NewDedupSet(client, "kdedup:test")))
 
 	results, err := deduped.Collect(context.Background())
 	if err != nil {

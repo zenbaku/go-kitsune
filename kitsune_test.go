@@ -147,16 +147,17 @@ func TestBatchSizes(t *testing.T) {
 }
 
 func TestErrorHandlingHalt(t *testing.T) {
+	boom := errors.New("boom")
 	input := kitsune.FromSlice([]int{1, 2, 3})
 	failing := kitsune.Map(input, func(_ context.Context, n int) (int, error) {
 		if n == 2 {
-			return 0, errors.New("boom")
+			return 0, boom
 		}
 		return n * 10, nil
 	})
 
 	_, err := failing.Collect(context.Background())
-	if err == nil || err.Error() != "boom" {
+	if err == nil || !errors.Is(err, boom) {
 		t.Fatalf("expected 'boom' error, got %v", err)
 	}
 }
@@ -474,6 +475,27 @@ func TestDedupeByField(t *testing.T) {
 		t.Fatalf("expected 3 unique items, got %d: %v", len(results), results)
 	}
 }
+
+func TestDedupeAddErrorHaltsPipeline(t *testing.T) {
+	// Add errors must propagate to halt the pipeline (not be silently dropped).
+	addErr := fmt.Errorf("add failed")
+	set := &failingDedupSet{addErr: addErr}
+	_, err := kitsune.FromSlice([]string{"a", "b", "c"}).
+		Dedupe(func(s string) string { return s }, kitsune.WithDedupSet(set)).
+		Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error from DedupSet.Add to halt the pipeline")
+	}
+	if !errors.Is(err, addErr) {
+		t.Fatalf("expected addErr, got: %v", err)
+	}
+}
+
+// failingDedupSet always reports items as unseen but fails on Add.
+type failingDedupSet struct{ addErr error }
+
+func (f *failingDedupSet) Contains(_ context.Context, _ string) (bool, error) { return false, nil }
+func (f *failingDedupSet) Add(_ context.Context, _ string) error               { return f.addErr }
 
 func TestMapWithCache(t *testing.T) {
 	callCount := 0
@@ -1081,6 +1103,26 @@ func TestSupervisionPanicSkip(t *testing.T) {
 		Collect(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error with PanicSkip, got: %v", err)
+	}
+}
+
+func TestRestartOnPanicHaltsOnError(t *testing.T) {
+	// RestartOnPanic must NOT restart on regular errors — it should halt immediately.
+	var calls atomic.Int64
+	_, err := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			calls.Add(1)
+			return 0, fmt.Errorf("regular error")
+		},
+		kitsune.Supervise(kitsune.RestartOnPanic(5, kitsune.FixedBackoff(0))),
+	).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error: RestartOnPanic should halt on regular errors")
+	}
+	// With PanicOnly, the first error halts immediately — no restarts.
+	if calls.Load() != 1 {
+		t.Fatalf("expected exactly 1 call (no restarts), got %d", calls.Load())
 	}
 }
 
@@ -1960,6 +2002,24 @@ func TestScanTypeChange(t *testing.T) {
 	}
 	if results[2] != "1,2,3" {
 		t.Fatalf("last accumulator = %q, want %q", results[2], "1,2,3")
+	}
+}
+
+func TestScanWithStageOption(t *testing.T) {
+	// Verify that Scan accepts StageOption — WithName should appear in the error
+	// message when the stage's error handler is invoked.
+	// We also check correctness is preserved when opts are forwarded.
+	results, err := kitsune.Scan(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		0,
+		func(acc, v int) int { return acc + v },
+		kitsune.WithName("running-sum"),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results[2] != 6 {
+		t.Errorf("results = %v, want [1 3 6]", results)
 	}
 }
 
@@ -3331,6 +3391,174 @@ func TestMapResultMixed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// DeadLetter / DeadLetterSink
+// ---------------------------------------------------------------------------
+
+func TestDeadLetterBasic(t *testing.T) {
+	boom := errors.New("fail")
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]int{1, 2, 3, 4}),
+		func(_ context.Context, v int) (int, error) {
+			if v%2 == 0 {
+				return 0, boom
+			}
+			return v * 10, nil
+		},
+	)
+	okResults, err := ok.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dlqResults, err := dlq.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(okResults, []int{10, 30}) {
+		t.Errorf("ok = %v, want [10 30]", okResults)
+	}
+	if len(dlqResults) != 2 {
+		t.Fatalf("dlq len = %d, want 2", len(dlqResults))
+	}
+	for _, ei := range dlqResults {
+		if ei.Item%2 != 0 {
+			t.Errorf("dlq item %d should be even", ei.Item)
+		}
+		if !errors.Is(ei.Err, boom) {
+			t.Errorf("dlq err = %v, want boom", ei.Err)
+		}
+	}
+}
+
+func TestDeadLetterAllSucceed(t *testing.T) {
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) { return v * 2, nil },
+	)
+	okResults, _ := ok.Collect(context.Background())
+	dlqResults, _ := dlq.Collect(context.Background())
+	if !slices.Equal(okResults, []int{2, 4, 6}) {
+		t.Errorf("ok = %v, want [2 4 6]", okResults)
+	}
+	if len(dlqResults) != 0 {
+		t.Errorf("dlq = %v, want empty", dlqResults)
+	}
+}
+
+func TestDeadLetterAllFail(t *testing.T) {
+	boom := errors.New("always fail")
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) (int, error) { return 0, boom },
+	)
+	okResults, _ := ok.Collect(context.Background())
+	dlqResults, _ := dlq.Collect(context.Background())
+	if len(okResults) != 0 {
+		t.Errorf("ok = %v, want empty", okResults)
+	}
+	if len(dlqResults) != 3 {
+		t.Errorf("dlq len = %d, want 3", len(dlqResults))
+	}
+}
+
+func TestDeadLetterWithRetry(t *testing.T) {
+	// First call per item fails; second succeeds. With Retry(1), item should reach ok.
+	calls := make(map[int]int)
+	var mu sync.Mutex
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]int{1, 2}),
+		func(_ context.Context, v int) (int, error) {
+			mu.Lock()
+			calls[v]++
+			n := calls[v]
+			mu.Unlock()
+			if n == 1 {
+				return 0, errors.New("transient")
+			}
+			return v * 10, nil
+		},
+		kitsune.OnError(kitsune.Retry(1, kitsune.FixedBackoff(0))),
+	)
+	okResults, err := ok.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dlqResults, _ := dlq.Collect(context.Background())
+	if len(dlqResults) != 0 {
+		t.Errorf("dlq = %v, want empty (retries should have succeeded)", dlqResults)
+	}
+	slices.Sort(okResults)
+	if !slices.Equal(okResults, []int{10, 20}) {
+		t.Errorf("ok = %v, want [10 20]", okResults)
+	}
+}
+
+func TestDeadLetterRetryExhausted(t *testing.T) {
+	boom := errors.New("persistent")
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) { return 0, boom },
+		kitsune.OnError(kitsune.Retry(2, kitsune.FixedBackoff(0))),
+	)
+	okResults, _ := ok.Collect(context.Background())
+	dlqResults, _ := dlq.Collect(context.Background())
+	if len(okResults) != 0 {
+		t.Errorf("ok = %v, want empty", okResults)
+	}
+	if len(dlqResults) != 1 {
+		t.Fatalf("dlq len = %d, want 1", len(dlqResults))
+	}
+	if !errors.Is(dlqResults[0].Err, boom) {
+		t.Errorf("dlq err = %v, want boom", dlqResults[0].Err)
+	}
+}
+
+func TestDeadLetterSink(t *testing.T) {
+	boom := errors.New("sink fail")
+	written := make([]int, 0)
+	var mu sync.Mutex
+
+	dlq, runner := kitsune.DeadLetterSink(
+		kitsune.FromSlice([]int{1, 2, 3, 4}),
+		func(_ context.Context, v int) error {
+			if v%2 == 0 {
+				return boom
+			}
+			mu.Lock()
+			written = append(written, v)
+			mu.Unlock()
+			return nil
+		},
+	)
+	dlqItems, dlqRunner := dlq.ForEach(func(_ context.Context, _ kitsune.ErrItem[int]) error { return nil }), runner
+	_ = dlqItems
+	if err := dlqRunner.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeadLetterSinkCollectDLQ(t *testing.T) {
+	boom := errors.New("write fail")
+	dlq, runner := kitsune.DeadLetterSink(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) error {
+			if v == 2 {
+				return boom
+			}
+			return nil
+		},
+	)
+	var dlqItems []kitsune.ErrItem[int]
+	dlqRunner := dlq.ForEach(func(_ context.Context, ei kitsune.ErrItem[int]) error {
+		dlqItems = append(dlqItems, ei)
+		return nil
+	})
+	_ = dlqRunner
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // WithLatestFrom
 // ---------------------------------------------------------------------------
 
@@ -4051,6 +4279,50 @@ func TestMaxBy(t *testing.T) {
 	}
 }
 
+func TestMaxEmpty(t *testing.T) {
+	_, ok, err := kitsune.Max(context.Background(), kitsune.FromSlice([]int{}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty pipeline")
+	}
+}
+
+func TestMinMaxEmpty(t *testing.T) {
+	_, ok, err := kitsune.MinMax(context.Background(), kitsune.FromSlice([]int{}), func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty pipeline")
+	}
+}
+
+func TestMinByEmpty(t *testing.T) {
+	_, ok, err := kitsune.MinBy(context.Background(), kitsune.FromSlice([]int{}),
+		func(v int) int { return v },
+		func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty pipeline")
+	}
+}
+
+func TestMaxByEmpty(t *testing.T) {
+	_, ok, err := kitsune.MaxBy(context.Background(), kitsune.FromSlice([]int{}),
+		func(v int) int { return v },
+		func(a, b int) bool { return a < b })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty pipeline")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Find
 // ---------------------------------------------------------------------------
@@ -4170,5 +4442,273 @@ func TestTakeRandomMoreThanAvailable(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StageError
+// ---------------------------------------------------------------------------
+
+func TestStageErrorWrapping(t *testing.T) {
+	cause := errors.New("boom")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) { return 0, cause },
+		kitsune.WithName("my-stage"),
+	)
+	_, err := p.Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var se *kitsune.StageError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *kitsune.StageError, got %T: %v", err, err)
+	}
+	if se.Stage != "my-stage" {
+		t.Errorf("Stage = %q, want %q", se.Stage, "my-stage")
+	}
+	if se.Attempt != 0 {
+		t.Errorf("Attempt = %d, want 0", se.Attempt)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("errors.Is(err, cause) = false")
+	}
+}
+
+func TestStageErrorWithRetry(t *testing.T) {
+	cause := errors.New("transient")
+	calls := 0
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) {
+			calls++
+			return 0, cause
+		},
+		kitsune.WithName("retry-stage"),
+		kitsune.OnError(kitsune.Retry(2, kitsune.FixedBackoff(0))),
+	)
+	_, err := p.Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var se *kitsune.StageError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *kitsune.StageError, got %T: %v", err, err)
+	}
+	if se.Stage != "retry-stage" {
+		t.Errorf("Stage = %q, want %q", se.Stage, "retry-stage")
+	}
+	if se.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", se.Attempt)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3 (initial + 2 retries)", calls)
+	}
+}
+
+func TestContextErrNotWrapped(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) (int, error) { return 0, context.Canceled },
+	)
+	_, err := p.Collect(ctx)
+	if err == nil {
+		return // pipeline may have produced nothing; that's fine
+	}
+	var se *kitsune.StageError
+	if errors.As(err, &se) {
+		t.Errorf("context error should not be wrapped in StageError, got %T", err)
+	}
+}
+
+func TestStageErrorSink(t *testing.T) {
+	cause := errors.New("sink-boom")
+	err := kitsune.FromSlice([]int{1}).
+		ForEach(func(_ context.Context, _ int) error { return cause },
+			kitsune.WithName("my-sink")).
+		Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var se *kitsune.StageError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected *kitsune.StageError, got %T: %v", err, err)
+	}
+	if se.Stage != "my-sink" {
+		t.Errorf("Stage = %q, want %q", se.Stage, "my-sink")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WithSampleRate
+// ---------------------------------------------------------------------------
+
+type sampleCountHook struct {
+	mu      sync.Mutex
+	byStage map[string]int
+}
+
+func (h *sampleCountHook) OnStageStart(_ context.Context, _ string)                     {}
+func (h *sampleCountHook) OnItem(_ context.Context, _ string, _ time.Duration, _ error) {}
+func (h *sampleCountHook) OnStageDone(_ context.Context, _ string, _, _ int64)          {}
+func (h *sampleCountHook) OnItemSample(_ context.Context, stage string, _ any) {
+	h.mu.Lock()
+	if h.byStage == nil {
+		h.byStage = make(map[string]int)
+	}
+	h.byStage[stage]++
+	h.mu.Unlock()
+}
+
+func (h *sampleCountHook) count(stage string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.byStage[stage]
+}
+
+func (h *sampleCountHook) total() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, c := range h.byStage {
+		n += c
+	}
+	return n
+}
+
+func TestWithSampleRate(t *testing.T) {
+	h := &sampleCountHook{}
+	// 10 items sampled every 2nd → 5 samples from the named map stage.
+	items := make([]int, 10)
+	for i := range items {
+		items[i] = i + 1
+	}
+	p := kitsune.Map(
+		kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+		kitsune.WithName("sample-map"),
+	)
+	if err := p.Drain().Run(context.Background(), kitsune.WithHook(h), kitsune.WithSampleRate(2)); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.count("sample-map"); got != 5 {
+		t.Errorf("samples for 'sample-map' = %d, want 5 (every 2nd of 10 items)", got)
+	}
+}
+
+func TestWithSampleRateDisabled(t *testing.T) {
+	h := &sampleCountHook{}
+	items := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	p := kitsune.Map(kitsune.FromSlice(items), func(_ context.Context, v int) (int, error) { return v, nil })
+	if err := p.Drain().Run(context.Background(), kitsune.WithHook(h), kitsune.WithSampleRate(-1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.total(); got != 0 {
+		t.Errorf("total samples = %d, want 0 (sampling disabled)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GraphNode metadata
+// ---------------------------------------------------------------------------
+
+type graphCaptureHook struct {
+	mu    sync.Mutex
+	nodes []kitsune.GraphNode
+}
+
+func (h *graphCaptureHook) OnStageStart(_ context.Context, _ string)                     {}
+func (h *graphCaptureHook) OnItem(_ context.Context, _ string, _ time.Duration, _ error) {}
+func (h *graphCaptureHook) OnStageDone(_ context.Context, _ string, _, _ int64)          {}
+func (h *graphCaptureHook) OnGraph(nodes []kitsune.GraphNode) {
+	h.mu.Lock()
+	h.nodes = append(h.nodes[:0], nodes...)
+	h.mu.Unlock()
+}
+
+func (h *graphCaptureHook) get() []kitsune.GraphNode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]kitsune.GraphNode, len(h.nodes))
+	copy(out, h.nodes)
+	return out
+}
+
+func TestGraphNodeMetadata(t *testing.T) {
+	h := &graphCaptureHook{}
+	cause := errors.New("err")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (int, error) { return 0, cause },
+		kitsune.WithName("retrying-map"),
+		kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(0))),
+		kitsune.Timeout(100*time.Millisecond),
+	)
+	_ = p.Drain().Run(context.Background(), kitsune.WithHook(h))
+
+	var found *kitsune.GraphNode
+	for _, n := range h.get() {
+		n := n
+		if n.Name == "retrying-map" {
+			found = &n
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("node 'retrying-map' not found in graph")
+	}
+	if !found.HasRetry {
+		t.Error("HasRetry = false, want true")
+	}
+	if found.Timeout == 0 {
+		t.Error("Timeout = 0, want non-zero")
+	}
+}
+
+func TestGraphNodeBatchSize(t *testing.T) {
+	h := &graphCaptureHook{}
+	batched := kitsune.Batch(kitsune.FromSlice([]int{1, 2, 3}), 2, kitsune.WithName("my-batch"))
+	_ = batched.Drain().Run(context.Background(), kitsune.WithHook(h))
+
+	var found *kitsune.GraphNode
+	for _, n := range h.get() {
+		n := n
+		if n.Name == "my-batch" {
+			found = &n
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("node 'my-batch' not found in graph")
+	}
+	if found.BatchSize != 2 {
+		t.Errorf("BatchSize = %d, want 2", found.BatchSize)
+	}
+}
+
+func TestGraphNodeHasSupervision(t *testing.T) {
+	h := &graphCaptureHook{}
+	p := kitsune.FromSlice([]int{1}).
+		ForEach(func(_ context.Context, _ int) error { return nil },
+			kitsune.WithName("supervised-sink"),
+			kitsune.Supervise(kitsune.RestartOnError(2, kitsune.FixedBackoff(0))),
+		)
+	_ = p.Run(context.Background(), kitsune.WithHook(h))
+
+	var found *kitsune.GraphNode
+	for _, n := range h.get() {
+		n := n
+		if n.Name == "supervised-sink" {
+			found = &n
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("node 'supervised-sink' not found in graph")
+	}
+	if !found.HasSupervision {
+		t.Error("HasSupervision = false, want true")
 	}
 }

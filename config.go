@@ -30,6 +30,7 @@ type stageConfig struct {
 	supervision  engine.SupervisionPolicy
 	cacheConfig  *stageCacheConfig
 	timeout      time.Duration
+	dedupSet     DedupSet
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -45,6 +46,7 @@ type runConfig struct {
 	drainTimeout    time.Duration
 	defaultCache    Cache
 	defaultCacheTTL time.Duration
+	sampleRate      int // 0 = default (10); negative = disabled
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -76,6 +78,7 @@ func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOp
 	if cfg.timeout > 0 && kind != engine.Map && kind != engine.FlatMap {
 		panic("kitsune: Timeout is only supported on Map and FlatMap stages")
 	}
+	_, hasRetry := cfg.errorHandler.(*retryHandler)
 	return &engine.Node{
 		Kind:         kind,
 		Name:         cfg.name,
@@ -87,6 +90,8 @@ func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOp
 		Overflow:     cfg.overflow,
 		ErrorHandler: cfg.errorHandler,
 		Supervision:  cfg.supervision,
+		HasRetry:     hasRetry,
+		Timeout:      cfg.timeout.Nanoseconds(),
 	}
 }
 
@@ -135,6 +140,12 @@ func OnError(h ErrorHandler) StageOption {
 // Only meaningful when used with [Batch].
 func BatchTimeout(d time.Duration) StageOption {
 	return func(c *stageConfig) { c.batchTimeout = d }
+}
+
+// WithDedupSet specifies the [DedupSet] backend for a [Dedupe] stage.
+// Defaults to an in-process [MemoryDedupSet] when not set.
+func WithDedupSet(s DedupSet) StageOption {
+	return func(c *stageConfig) { c.dedupSet = s }
 }
 
 // Timeout sets a per-item deadline for [Map] and [FlatMap] stages.
@@ -193,6 +204,11 @@ type SupervisionPolicy struct {
 	// OnPanic controls what happens when the stage goroutine panics.
 	// Default (zero value): [PanicPropagate].
 	OnPanic PanicAction
+	// PanicOnly limits the restart budget to panics only.
+	// When true, regular errors halt the pipeline immediately without consuming
+	// any restart budget. Only meaningful when [OnPanic] is [PanicRestart].
+	// Set automatically by [RestartOnPanic]; not needed with [RestartAlways].
+	PanicOnly bool
 }
 
 // PanicAction configures what happens when a stage goroutine panics.
@@ -218,7 +234,7 @@ func RestartOnError(maxRestarts int, b Backoff) SupervisionPolicy {
 // maxRestarts times when it panics (panic is treated as a restartable error).
 // Normal errors still halt the pipeline.
 func RestartOnPanic(maxRestarts int, b Backoff) SupervisionPolicy {
-	return SupervisionPolicy{MaxRestarts: maxRestarts, Backoff: b, OnPanic: PanicRestart}
+	return SupervisionPolicy{MaxRestarts: maxRestarts, Backoff: b, OnPanic: PanicRestart, PanicOnly: true}
 }
 
 // RestartAlways returns a [SupervisionPolicy] that restarts the stage on both
@@ -236,6 +252,7 @@ func Supervise(policy SupervisionPolicy) StageOption {
 			Window:      policy.Window,
 			Backoff:     policy.Backoff,
 			OnPanic:     engine.PanicAction(policy.OnPanic),
+			PanicOnly:   policy.PanicOnly,
 		}
 	}
 }
@@ -320,6 +337,16 @@ func WithCache(cache Cache, ttl time.Duration) RunOption {
 		c.defaultCache = cache
 		c.defaultCacheTTL = ttl
 	}
+}
+
+// WithSampleRate sets how often [SampleHook.OnItemSample] is called for each
+// stage. A rate of n means every n-th successfully processed item triggers a
+// sample call. The default is 10. Pass a negative value to disable sampling.
+//
+//	runner.Run(ctx, kitsune.WithSampleRate(100)) // sample every 100th item
+//	runner.Run(ctx, kitsune.WithSampleRate(-1))  // disable sampling
+func WithSampleRate(n int) RunOption {
+	return func(c *runConfig) { c.sampleRate = n }
 }
 
 // ---------------------------------------------------------------------------

@@ -129,15 +129,34 @@ results := kitsune.Map(queries, callAPI,
 )
 ```
 
-For more advanced routing — send failures to a dead-letter queue instead of discarding them — use `MapResult`:
+For more advanced routing — send failures to a dead-letter queue instead of discarding them — use `DeadLetter`:
 
 ```go
-ok, failed := kitsune.MapResult(items, transform)
-// ok     is *Pipeline[Output]
-// failed is *Pipeline[ErrItem[Input]] — contains both the original item and the error
+// DeadLetter embeds retry; exhausted items route to the second pipeline.
+ok, dlq := kitsune.DeadLetter(items, transform,
+    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
+)
+// ok  is *Pipeline[Output]
+// dlq is *Pipeline[ErrItem[Input]] — items that exhausted all retries
+
+// For terminal operations use DeadLetterSink:
+dlq, runner := kitsune.DeadLetterSink(items, sinkFn,
+    kitsune.OnError(kitsune.Retry(2, kitsune.FixedBackoff(0))),
+)
 ```
 
-See [`examples/errors`](../examples/errors) and [`examples/mapresult`](../examples/mapresult).
+When `Runner.Run` returns an error, it is wrapped in a `kitsune.StageError` carrying the stage name, attempt count, and original cause:
+
+```go
+if err := runner.Run(ctx); err != nil {
+    var se *kitsune.StageError
+    if errors.As(err, &se) {
+        fmt.Printf("stage %q failed on attempt %d: %v\n", se.Stage, se.Attempt, se.Cause)
+    }
+}
+```
+
+See [`examples/errors`](../examples/errors), [`examples/mapresult`](../examples/mapresult), and [`examples/deadletter`](../examples/deadletter).
 
 ---
 
@@ -190,6 +209,22 @@ func TestParseLine(t *testing.T) {
 
 `FromSlice` + `Collect` is the core test pattern: no goroutines to manage, no ports to open, fully deterministic output.
 
+The `kitsune/testkit` package wraps this pattern with assertion helpers:
+
+```go
+import "github.com/jonathan/go-kitsune/testkit"
+
+testkit.CollectAndExpect(t, p, []int{2, 4, 6})
+testkit.CollectAndExpectUnordered(t, p, []int{6, 2, 4})
+got := testkit.MustCollect(t, p) // fails the test on error
+
+// Inspect lifecycle events:
+hook := &testkit.RecordingHook{}
+runner.Run(ctx, kitsune.WithHook(hook))
+hook.Errors()   // items that produced errors
+hook.Restarts() // supervision restart events
+```
+
 For reusable pipeline fragments, define them as `Stage[I,O]` values and test each independently:
 
 ```go
@@ -232,7 +267,8 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 | `filter` | Filter, Tap, Take, Drain |
 | `batch` | Batch, Unbatch, BatchTimeout |
 | `concurrent` | Concurrency, Ordered, LogHook |
-| `errors` | Skip, Retry, RetryThen |
+| `errors` | Skip, Retry, RetryThen, StageError |
+| `deadletter` | DeadLetter, DeadLetterSink — retry-embedded dead-letter routing |
 | `fanout` | Partition, MergeRunners |
 | `stages` | Stage[I,O], Then, swappable sources |
 | `channel` | NewChannel, RunAsync |

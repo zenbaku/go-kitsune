@@ -149,6 +149,18 @@ err := runner.Run(ctx, kitsune.WithHook(kitsune.LogHook(slog.Default())))
 ```
 `LogHook` logs stage start and done events with item counts to the provided `slog.Logger`. Useful for tracing where items are being lost or where a stage is slow.
 
+**Control per-item sampling rate:**
+
+`SampleHook.OnItemSample` fires once every 10 items by default. Adjust with `WithSampleRate`:
+```go
+runner.Run(ctx,
+    kitsune.WithHook(myHook),
+    kitsune.WithSampleRate(100), // sample every 100th item
+    // kitsune.WithSampleRate(-1), // disable sampling entirely
+)
+```
+Lower rates reduce hook overhead in high-throughput pipelines.
+
 **CPU and memory profiling:**
 ```bash
 go test -bench=. -cpuprofile cpu.out -memprofile mem.out

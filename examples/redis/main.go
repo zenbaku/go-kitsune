@@ -55,7 +55,7 @@ func main() {
 	fmt.Println("\n=== Redis-backed dedup ===")
 	items := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
 	deduped := items.Dedupe(func(s string) string { return s },
-		kredis.NewDedupSet(rdb, "kex:dedup"),
+		kitsune.WithDedupSet(kredis.NewDedupSet(rdb, "kex:dedup")),
 	)
 	unique, _ := deduped.Collect(ctx)
 	fmt.Println("Unique:", unique)

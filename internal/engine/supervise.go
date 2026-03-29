@@ -35,6 +35,9 @@ func supervise(ctx context.Context, policy SupervisionPolicy, hook Hook, name st
 			case PanicRestart:
 				err = fmt.Errorf("kitsune: stage %q panicked: %v", name, panicVal)
 			}
+		} else if policy.PanicOnly {
+			// PanicOnly: restart budget applies only to panics; regular errors halt.
+			return err
 		}
 
 		// Respect context cancellation.

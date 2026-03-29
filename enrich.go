@@ -25,10 +25,26 @@ const defaultLookupBatchSize = 100
 //	    kitsune.Concurrency(3),
 //	)
 func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) ([]O, error), opts ...StageOption) *Pipeline[O] {
-	batched := Batch(p, size, opts...)
+	// opts are split: only BatchTimeout is forwarded to Batch (where it controls
+	// partial-batch flushing); all opts go to FlatMap (where fn runs), so that
+	// options like Concurrency, OnError, Buffer, and Ordered apply to fn execution
+	// rather than to batch collection.
+	batched := Batch(p, size, batchCollectOpts(opts)...)
 	return FlatMap(batched, func(ctx context.Context, batch []I) ([]O, error) {
 		return fn(ctx, batch)
 	}, opts...)
+}
+
+// batchCollectOpts extracts the subset of StageOptions that are meaningful for
+// the Batch collection stage: currently only BatchTimeout. All other options
+// (Concurrency, OnError, Buffer, etc.) apply to the FlatMap processing stage.
+// If new Batch-specific options are added in the future, include them here.
+func batchCollectOpts(opts []StageOption) []StageOption {
+	cfg := buildStageConfig(opts)
+	if cfg.batchTimeout == 0 {
+		return nil
+	}
+	return []StageOption{BatchTimeout(cfg.batchTimeout)}
 }
 
 // ---------------------------------------------------------------------------

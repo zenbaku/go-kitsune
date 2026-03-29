@@ -77,6 +77,10 @@ type Node struct {
 	Overflow     int // 0=Block (default), 1=DropNewest, 2=DropOldest
 	ErrorHandler ErrorHandler
 	Supervision  SupervisionPolicy
+	HasRetry     bool // true when an error handler with retry semantics is attached
+
+	// Per-item timeout (nanoseconds; 0 = none). Set by the kitsune.Timeout StageOption.
+	Timeout int64
 
 	// Batch-specific.
 	BatchSize    int

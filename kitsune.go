@@ -74,6 +74,16 @@ type BufferHook = engine.BufferHook
 // BufferStatus reports the current fill level of one stage's output channel.
 type BufferStatus = engine.BufferStatus
 
+// StageError is returned by [Runner.Run] when a user-supplied stage function
+// fails. It carries the originating stage name, the zero-based attempt index
+// (>0 after retries), and the underlying cause.
+//
+//	var se *kitsune.StageError
+//	if errors.As(err, &se) {
+//	    log.Printf("stage %q failed on attempt %d: %v", se.Stage, se.Attempt, se.Cause)
+//	}
+type StageError = engine.StageError
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -88,6 +98,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		DrainTimeout:    cfg.drainTimeout,
 		DefaultCache:    cfg.defaultCache,
 		DefaultCacheTTL: cfg.defaultCacheTTL,
+		SampleRate:      cfg.sampleRate,
 	})
 }
 

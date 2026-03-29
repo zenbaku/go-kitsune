@@ -2,6 +2,7 @@ package kitsune_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -676,4 +677,97 @@ func ExampleWithLatestFrom() {
 	// The exact pairs depend on scheduling, but each Second is an even multiple of First.
 	fmt.Println(len(results) >= 0) // always true — just verify it runs
 	// Output: true
+}
+
+func ExampleDeadLetter() {
+	// DeadLetter routes permanently-failed items to a separate pipeline.
+	ok, dlq := kitsune.DeadLetter(
+		kitsune.FromSlice([]string{"1", "bad", "3"}),
+		func(_ context.Context, s string) (int, error) {
+			return strconv.Atoi(s)
+		},
+	)
+	nums, _ := ok.Collect(context.Background())
+	failed, _ := dlq.Collect(context.Background())
+	fmt.Println("ok:", nums)
+	fmt.Println("dlq:", len(failed), "items")
+	// Output:
+	// ok: [1 3]
+	// dlq: 1 items
+}
+
+func ExampleDeadLetterSink() {
+	var written []int
+	var dlqItems []kitsune.ErrItem[int]
+	dlq, runner := kitsune.DeadLetterSink(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) error {
+			if v == 2 {
+				return errors.New("fail")
+			}
+			written = append(written, v)
+			return nil
+		},
+	)
+	_ = dlq.ForEach(func(_ context.Context, ei kitsune.ErrItem[int]) error {
+		dlqItems = append(dlqItems, ei)
+		return nil
+	})
+	_ = runner.Run(context.Background())
+	fmt.Println("written:", written)
+	fmt.Println("dlq len:", len(dlqItems))
+	// Output:
+	// written: [1 3]
+	// dlq len: 1
+}
+
+func ExampleStageError() {
+	cause := errors.New("something broke")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) { return 0, cause },
+		kitsune.WithName("my-stage"),
+	)
+	_, err := p.Collect(context.Background())
+
+	var se *kitsune.StageError
+	if errors.As(err, &se) {
+		fmt.Println("stage:", se.Stage)
+		fmt.Println("cause:", se.Cause)
+	}
+	// Output:
+	// stage: my-stage
+	// cause: something broke
+}
+
+func ExampleWithSampleRate() {
+	// WithSampleRate controls how often OnItemSample is called.
+	// Pass -1 to disable sampling entirely.
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	results, err := p.Collect(context.Background(), kitsune.WithSampleRate(-1))
+	fmt.Println(results, err)
+	// Output: [1 2 3 4 5] <nil>
+}
+
+func ExamplePipeline_Dedupe_withDedupSet() {
+	// Use a custom DedupSet backend via WithDedupSet.
+	set := kitsune.MemoryDedupSet()
+	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b"})
+	results, _ := p.Dedupe(func(s string) string { return s },
+		kitsune.WithDedupSet(set),
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [a b c]
+}
+
+func ExampleScan_withName() {
+	// Scan accepts StageOption — here we name the stage for observability.
+	results, _ := kitsune.Scan(
+		kitsune.FromSlice([]int{1, 2, 3, 4}),
+		0,
+		func(sum, v int) int { return sum + v },
+		kitsune.WithName("running-sum"),
+	).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 3 6 10]
 }

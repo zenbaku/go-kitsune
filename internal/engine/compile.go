@@ -49,6 +49,22 @@ func (DefaultHandler) Backoff() func(attempt int) time.Duration { return nil }
 // ErrSkipped is an internal sentinel indicating an item was dropped.
 var ErrSkipped = errors.New("kitsune: item skipped")
 
+// StageError wraps an error with the originating stage name and attempt number.
+type StageError struct {
+	Stage   string
+	Attempt int
+	Cause   error
+}
+
+func (e *StageError) Error() string {
+	if e.Attempt > 0 {
+		return fmt.Sprintf("stage %q: attempt %d: %v", e.Stage, e.Attempt, e.Cause)
+	}
+	return fmt.Sprintf("stage %q: %v", e.Stage, e.Cause)
+}
+
+func (e *StageError) Unwrap() error { return e.Cause }
+
 // ---------------------------------------------------------------------------
 // Graph validation
 // ---------------------------------------------------------------------------
@@ -103,6 +119,7 @@ type SupervisionPolicy struct {
 	Window      time.Duration           // reset counter after quiet period; 0 = never reset
 	Backoff     func(int) time.Duration // delay between restarts (nil = no delay)
 	OnPanic     PanicAction
+	PanicOnly   bool // when true, only restart on panics; regular errors halt immediately
 }
 
 // HasSupervision reports whether any supervision is active.
@@ -164,13 +181,17 @@ type BufferHook interface {
 
 // GraphNode is a snapshot of one pipeline stage passed to [GraphHook.OnGraph].
 type GraphNode struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	Inputs      []int  `json:"inputs"`
-	Concurrency int    `json:"concurrency,omitempty"`
-	Buffer      int    `json:"buffer,omitempty"`
-	Overflow    int    `json:"overflow,omitempty"`
+	ID          int           `json:"id"`
+	Name        string        `json:"name"`
+	Kind        string        `json:"kind"`
+	Inputs      []int         `json:"inputs"`
+	Concurrency int           `json:"concurrency,omitempty"`
+	Buffer      int           `json:"buffer,omitempty"`
+	Overflow    int           `json:"overflow,omitempty"`
+	BatchSize   int           `json:"batch_size,omitempty"`
+	Timeout     time.Duration `json:"timeout,omitempty"`
+	HasRetry    bool          `json:"has_retry,omitempty"`
+	HasSupervision bool       `json:"has_supervision,omitempty"`
 }
 
 // CreateChannels allocates bounded channels for every non-sink output port.

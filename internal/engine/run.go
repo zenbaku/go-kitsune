@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,10 @@ type RunConfig struct {
 	// Default cache for Map stages that use Cache(...) without an explicit backend.
 	DefaultCache    any           // type-erased kitsune.Cache; nil = no cache
 	DefaultCacheTTL time.Duration // 0 = no expiry
+
+	// SampleRate is the item interval at which [SampleHook.OnItemSample] is called.
+	// 0 means use the default (10). Set to a negative value to disable sampling.
+	SampleRate int
 }
 
 // Run validates the graph, wires channels, and executes all stages.
@@ -157,6 +162,14 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 		inCh = inChs[0]
 	}
 
+	// Resolve effective sample rate: 0 → default 10, negative → disabled (0 stored as -1).
+	sampleRate := int64(10)
+	if cfg.SampleRate > 0 {
+		sampleRate = int64(cfg.SampleRate)
+	} else if cfg.SampleRate < 0 {
+		sampleRate = 0 // 0 means "never" in the check below
+	}
+
 	// outCloser closes all output channels when this node finishes.
 	// Centralised here so supervision can restart a stage without closing
 	// its output channel prematurely.
@@ -168,11 +181,11 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 	switch n.Kind {
 	case Source:
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runSource(ctx, n, outbox, hook, done) }
+		inner = func() error { return runSource(ctx, n, outbox, hook, done, sampleRate) }
 	case Map:
 		mn := resolveCacheWrap(n, cfg)
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runMap(ctx, mn, inCh, outbox, hook) }
+		inner = func() error { return runMap(ctx, mn, inCh, outbox, hook, sampleRate) }
 	case FlatMap:
 		mn := resolveCacheWrap(n, cfg)
 		outCloser = func() { close(outCh) }
@@ -214,7 +227,7 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 		inner = func() error { return runMerge(ctx, inChs, outbox, hook, name) }
 	case Sink:
 		outCloser = func() {} // sinks have no output channel
-		inner = func() error { return runSink(ctx, n, inCh, hook) }
+		inner = func() error { return runSink(ctx, n, inCh, hook, sampleRate) }
 	case TakeWhile:
 		outCloser = func() { close(outCh) }
 		inner = func() error { return runTakeWhile(ctx, n, inCh, outbox, signalDone, hook, name) }
@@ -240,7 +253,7 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 		okOutbox := outboxes[ChannelKey{n.ID, 0}]
 		errOutbox := outboxes[ChannelKey{n.ID, 1}]
 		outCloser = func() { close(okCh); close(errCh) }
-		inner = func() error { return runMapResult(ctx, n, inCh, okOutbox, errOutbox, hook, name) }
+		inner = func() error { return runMapResult(ctx, n, inCh, okOutbox, errOutbox, hook, name, sampleRate) }
 	case WithLatestFromNode:
 		outCloser = func() { close(outCh) }
 		var inCh2 chan any
@@ -264,37 +277,54 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 // ---------------------------------------------------------------------------
 
 // ProcessItem invokes fn with retry/skip/halt logic.
-func ProcessItem(ctx context.Context, fn func(context.Context, any) (any, error), item any, h ErrorHandler) (any, error) {
+// The third return value is the final attempt index (0-based); callers use it
+// to populate [StageError] via [wrapStageErr].
+func ProcessItem(ctx context.Context, fn func(context.Context, any) (any, error), item any, h ErrorHandler) (any, error, int) {
 	for attempt := 0; ; attempt++ {
 		result, err := fn(ctx, item)
 		if err == nil {
-			return result, nil
+			return result, nil, attempt
 		}
 		switch h.Handle(err, attempt) {
 		case ActionSkip:
-			return nil, ErrSkipped
+			return nil, ErrSkipped, attempt
 		case ActionRetry:
 			bo := h.Backoff()
 			if bo == nil {
-				return nil, err
+				return nil, err, attempt
 			}
 			select {
 			case <-time.After(bo(attempt)):
 				continue
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, ctx.Err(), attempt
 			}
 		default:
-			return nil, err
+			return nil, err, attempt
 		}
 	}
+}
+
+// wrapStageErr wraps err in a [StageError] unless it is nil, [ErrSkipped],
+// [context.Canceled], or [context.DeadlineExceeded] — errors that either carry
+// no stage context or are infrastructure signals rather than user-function failures.
+func wrapStageErr(name string, err error, attempt int) error {
+	if err == nil || err == ErrSkipped || err == context.Canceled || err == context.DeadlineExceeded {
+		return err
+	}
+	// Don't double-wrap.
+	var se *StageError
+	if errors.As(err, &se) {
+		return err
+	}
+	return &StageError{Stage: name, Attempt: attempt, Cause: err}
 }
 
 // ---------------------------------------------------------------------------
 // Source
 // ---------------------------------------------------------------------------
 
-func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-chan struct{}) error {
+func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-chan struct{}, sampleRate int64) error {
 	name := nodeName(n, "source")
 
 	// Create a source-scoped context that also fires when the drain-done signal
@@ -330,7 +360,7 @@ func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-ch
 		}
 		count++
 		hook.OnItem(srcCtx, name, 0, nil)
-		if count%10 == 0 {
+		if sampleRate > 0 && count%sampleRate == 0 {
 			if sh, ok := hook.(SampleHook); ok {
 				sh.OnItemSample(srcCtx, name, item)
 			}
@@ -353,21 +383,21 @@ func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-ch
 // Map (1:1)
 // ---------------------------------------------------------------------------
 
-func runMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook) error {
+func runMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, sampleRate int64) error {
 	fn := n.Fn.(func(context.Context, any) (any, error))
 	handler := nodeErrorHandler(n)
 	name := nodeName(n, "map")
 
 	if n.Concurrency <= 1 {
-		return runMapSingle(ctx, fn, inCh, outbox, handler, name, hook)
+		return runMapSingle(ctx, fn, inCh, outbox, handler, name, hook, sampleRate)
 	}
 	if n.Ordered {
 		return runMapConcurrentOrdered(ctx, fn, inCh, outbox, n.Concurrency, handler, name, hook)
 	}
-	return runMapConcurrent(ctx, fn, inCh, outbox, n.Concurrency, handler, name, hook)
+	return runMapConcurrent(ctx, fn, inCh, outbox, n.Concurrency, handler, name, hook, sampleRate)
 }
 
-func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook) error {
+func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook, sampleRate int64) error {
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
@@ -379,7 +409,8 @@ func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error
 				return nil
 			}
 			start := time.Now()
-			result, err := ProcessItem(ctx, fn, item, handler)
+			result, err, attempt := ProcessItem(ctx, fn, item, handler)
+			err = wrapStageErr(name, err, attempt)
 			dur := time.Since(start)
 
 			if err == ErrSkipped {
@@ -393,7 +424,7 @@ func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error
 			}
 			processed++
 			hook.OnItem(ctx, name, dur, nil)
-			if processed%10 == 0 {
+			if sampleRate > 0 && processed%sampleRate == 0 {
 				if sh, ok := hook.(SampleHook); ok {
 					sh.OnItemSample(ctx, name, result)
 				}
@@ -408,7 +439,7 @@ func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error
 	}
 }
 
-func runMapConcurrent(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook) error {
+func runMapConcurrent(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, concurrency int, handler ErrorHandler, name string, hook Hook, sampleRate int64) error {
 	innerCtx, innerCancel := context.WithCancel(ctx)
 	defer innerCancel()
 
@@ -432,7 +463,8 @@ func runMapConcurrent(ctx context.Context, fn func(context.Context, any) (any, e
 						return
 					}
 					start := time.Now()
-					result, err := ProcessItem(innerCtx, fn, item, handler)
+					result, err, attempt := ProcessItem(innerCtx, fn, item, handler)
+					err = wrapStageErr(name, err, attempt)
 					dur := time.Since(start)
 
 					if err == ErrSkipped {
@@ -448,7 +480,7 @@ func runMapConcurrent(ctx context.Context, fn func(context.Context, any) (any, e
 					}
 					p := processed.Add(1)
 					hook.OnItem(innerCtx, name, dur, nil)
-					if p%10 == 0 {
+					if sampleRate > 0 && p%sampleRate == 0 {
 						if sh, ok := hook.(SampleHook); ok {
 							sh.OnItemSample(innerCtx, name, result)
 						}
@@ -503,7 +535,9 @@ func runMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) 
 			defer wg.Done()
 			for s := range jobs {
 				start := time.Now()
-				s.result, s.err = ProcessItem(innerCtx, fn, s.item, handler)
+				var attempt int
+				s.result, s.err, attempt = ProcessItem(innerCtx, fn, s.item, handler)
+				s.err = wrapStageErr(name, s.err, attempt)
 				hook.OnItem(innerCtx, name, time.Since(start), s.err)
 				close(s.done)
 			}
@@ -598,7 +632,8 @@ func runFlatMapSingle(ctx context.Context, fn func(context.Context, any) ([]any,
 				return nil
 			}
 			start := time.Now()
-			resultAny, err := ProcessItem(ctx, adapted, item, handler)
+			resultAny, err, attempt := ProcessItem(ctx, adapted, item, handler)
+			err = wrapStageErr(name, err, attempt)
 			dur := time.Since(start)
 
 			if err == ErrSkipped {
@@ -649,7 +684,8 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any) ([]
 						return
 					}
 					start := time.Now()
-					resultAny, err := ProcessItem(innerCtx, adapted, item, handler)
+					resultAny, err, attempt := ProcessItem(innerCtx, adapted, item, handler)
+					err = wrapStageErr(name, err, attempt)
 					dur := time.Since(start)
 
 					if err == ErrSkipped {
@@ -709,12 +745,11 @@ func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, a
 			defer wg.Done()
 			for s := range jobs {
 				start := time.Now()
-				resultAny, err := ProcessItem(innerCtx, adapted, s.item, handler)
-				hook.OnItem(innerCtx, name, time.Since(start), err)
-				if err == nil {
+				resultAny, err, attempt := ProcessItem(innerCtx, adapted, s.item, handler)
+				s.err = wrapStageErr(name, err, attempt)
+				hook.OnItem(innerCtx, name, time.Since(start), s.err)
+				if s.err == nil {
 					s.results = resultAny.([]any)
-				} else {
-					s.err = err
 				}
 				close(s.done)
 			}
@@ -1107,7 +1142,7 @@ func runMerge(ctx context.Context, inChs []chan any, outbox Outbox, hook Hook, n
 // Sink (terminal)
 // ---------------------------------------------------------------------------
 
-func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook) error {
+func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook, sampleRate int64) error {
 	fn := n.Fn.(func(context.Context, any) error)
 	handler := nodeErrorHandler(n)
 	name := nodeName(n, "sink")
@@ -1125,7 +1160,8 @@ func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook) error {
 					return nil
 				}
 				start := time.Now()
-				_, err := ProcessItem(ctx, adapted, item, handler)
+				_, err, attempt := ProcessItem(ctx, adapted, item, handler)
+				err = wrapStageErr(name, err, attempt)
 				dur := time.Since(start)
 
 				if err == ErrSkipped {
@@ -1139,7 +1175,7 @@ func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook) error {
 				}
 				processed++
 				hook.OnItem(ctx, name, dur, nil)
-				if processed%10 == 0 {
+				if sampleRate > 0 && processed%sampleRate == 0 {
 					if sh, ok := hook.(SampleHook); ok {
 						sh.OnItemSample(ctx, name, item)
 					}
@@ -1172,7 +1208,8 @@ func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook) error {
 						return
 					}
 					start := time.Now()
-					_, err := ProcessItem(innerCtx, adapted, item, handler)
+					_, err, attempt := ProcessItem(innerCtx, adapted, item, handler)
+					err = wrapStageErr(name, err, attempt)
 					dur := time.Since(start)
 
 					if err == ErrSkipped {
@@ -1221,13 +1258,17 @@ func buildGraphNodes(g *Graph) []GraphNode {
 			buf = DefaultBuffer
 		}
 		nodes[i] = GraphNode{
-			ID:          n.ID,
-			Name:        name,
-			Kind:        kindName(n.Kind),
-			Inputs:      inputs,
-			Concurrency: n.Concurrency,
-			Buffer:      buf,
-			Overflow:    n.Overflow,
+			ID:             n.ID,
+			Name:           name,
+			Kind:           kindName(n.Kind),
+			Inputs:         inputs,
+			Concurrency:    n.Concurrency,
+			Buffer:         buf,
+			Overflow:       n.Overflow,
+			BatchSize:      n.BatchSize,
+			Timeout:        time.Duration(n.Timeout),
+			HasRetry:       n.HasRetry,
+			HasSupervision: n.Supervision.MaxRestarts > 0,
 		}
 	}
 	return nodes
@@ -1431,7 +1472,7 @@ func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 // runMapResult executes a Map-like transformation but routes successful results
 // to okOutbox (port 0) and failed results to errOutbox (port 1).
 // It does not use ErrorHandler — every error is always routed.
-func runMapResult(ctx context.Context, n *Node, inCh chan any, okOutbox, errOutbox Outbox, hook Hook, name string) error {
+func runMapResult(ctx context.Context, n *Node, inCh chan any, okOutbox, errOutbox Outbox, hook Hook, name string, sampleRate int64) error {
 	fn := n.Fn.(func(context.Context, any) (any, error))
 	wrapErr := n.MapResultErrWrap
 	hook.OnStageStart(ctx, name)
@@ -1457,8 +1498,10 @@ func runMapResult(ctx context.Context, n *Node, inCh chan any, okOutbox, errOutb
 			}
 			processed++
 			hook.OnItem(ctx, name, dur, nil)
-			if sh, ok := hook.(SampleHook); ok && processed%10 == 0 {
-				sh.OnItemSample(ctx, name, result)
+			if sampleRate > 0 && processed%sampleRate == 0 {
+				if sh, ok := hook.(SampleHook); ok {
+					sh.OnItemSample(ctx, name, result)
+				}
 			}
 			if sendErr := okOutbox.Send(ctx, result); sendErr != nil {
 				return sendErr
