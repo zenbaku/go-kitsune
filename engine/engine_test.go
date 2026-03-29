@@ -601,11 +601,11 @@ func TestRun_GracefulDrain(t *testing.T) {
 
 func TestGraph_InitRefs_MemoryOnly(t *testing.T) {
 	g := New()
-	g.RegisterKey("counter", func(store Store) any {
+	g.RegisterKey("counter", func(store Store, codec Codec) any {
 		return &struct{ n int }{}
 	})
 
-	g.InitRefs(nil)
+	g.InitRefs(nil, JSONCodec{})
 
 	ref := g.GetRef("counter")
 	if ref == nil {
@@ -617,12 +617,12 @@ func TestGraph_InitRefs_WithStore(t *testing.T) {
 	store := &stubStore{}
 	var gotStore Store
 	g := New()
-	g.RegisterKey("k", func(s Store) any {
+	g.RegisterKey("k", func(s Store, codec Codec) any {
 		gotStore = s
 		return struct{}{}
 	})
 
-	g.InitRefs(store)
+	g.InitRefs(store, JSONCodec{})
 
 	if gotStore != store {
 		t.Error("factory did not receive the configured store")
@@ -632,10 +632,10 @@ func TestGraph_InitRefs_WithStore(t *testing.T) {
 func TestGraph_RegisterKey_FirstWins(t *testing.T) {
 	var calls int
 	g := New()
-	g.RegisterKey("k", func(Store) any { calls++; return "first" })
-	g.RegisterKey("k", func(Store) any { calls++; return "second" })
+	g.RegisterKey("k", func(Store, Codec) any { calls++; return "first" })
+	g.RegisterKey("k", func(Store, Codec) any { calls++; return "second" })
 
-	g.InitRefs(nil)
+	g.InitRefs(nil, JSONCodec{})
 
 	if v := g.GetRef("k"); v != "first" {
 		t.Errorf("expected first factory to win, got %v", v)

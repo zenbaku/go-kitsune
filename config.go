@@ -47,6 +47,7 @@ type runConfig struct {
 	defaultCache    Cache
 	defaultCacheTTL time.Duration
 	sampleRate      int // 0 = default (10); negative = disabled
+	codec           Codec
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -347,6 +348,15 @@ func WithCache(cache Cache, ttl time.Duration) RunOption {
 //	runner.Run(ctx, kitsune.WithSampleRate(-1))  // disable sampling
 func WithSampleRate(n int) RunOption {
 	return func(c *runConfig) { c.sampleRate = n }
+}
+
+// WithCodec sets the serialisation codec used by [Store]-backed state ([MapWith],
+// [FlatMapWith]) and [CacheBy] stages. The default is JSON. Use this to
+// substitute a binary format such as encoding/gob, protobuf, or msgpack:
+//
+//	runner.Run(ctx, kitsune.WithCodec(myGobCodec))
+func WithCodec(c Codec) RunOption {
+	return func(cfg *runConfig) { cfg.codec = c }
 }
 
 // ---------------------------------------------------------------------------

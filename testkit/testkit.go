@@ -20,6 +20,36 @@ import (
 	kitsune "github.com/jonathan/go-kitsune"
 )
 
+// MustRun runs the runner and calls t.Fatal if it returns an error.
+func MustRun(t testing.TB, r *kitsune.Runner, opts ...kitsune.RunOption) {
+	t.Helper()
+	if err := r.Run(context.Background(), opts...); err != nil {
+		t.Fatalf("testkit.MustRun: pipeline error: %v", err)
+	}
+}
+
+// MustRunWithHook runs the runner with an automatically wired [RecordingHook]
+// and calls t.Fatal on error. The hook is prepended to opts, so a caller-
+// supplied [kitsune.WithHook] in opts would override it; pass the recording
+// hook via the return value instead.
+func MustRunWithHook(t testing.TB, r *kitsune.Runner, opts ...kitsune.RunOption) *RecordingHook {
+	t.Helper()
+	hook := &RecordingHook{}
+	allOpts := append([]kitsune.RunOption{kitsune.WithHook(hook)}, opts...)
+	MustRun(t, r, allOpts...)
+	return hook
+}
+
+// MustCollectWithHook runs the pipeline with an automatically wired
+// [RecordingHook], collects all items, and calls t.Fatal on error.
+func MustCollectWithHook[T any](t testing.TB, p *kitsune.Pipeline[T], opts ...kitsune.RunOption) ([]T, *RecordingHook) {
+	t.Helper()
+	hook := &RecordingHook{}
+	allOpts := append([]kitsune.RunOption{kitsune.WithHook(hook)}, opts...)
+	items := MustCollect(t, p, allOpts...)
+	return items, hook
+}
+
 // MustCollect runs the pipeline and returns all collected items.
 // It calls t.Fatal if the pipeline returns an error.
 func MustCollect[T any](t testing.TB, p *kitsune.Pipeline[T], opts ...kitsune.RunOption) []T {

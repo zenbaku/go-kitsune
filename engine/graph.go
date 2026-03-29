@@ -14,14 +14,14 @@ type Graph struct {
 	Nodes []*Node
 
 	// State management.
-	KeyInits map[string]func(store Store) any // key name → factory that creates *Ref
-	Refs     map[string]any                   // populated at Run time
+	KeyInits map[string]func(store Store, codec Codec) any // key name → factory that creates *Ref
+	Refs     map[string]any                                // populated at Run time
 }
 
 // New returns an empty graph.
 func New() *Graph {
 	return &Graph{
-		KeyInits: make(map[string]func(store Store) any),
+		KeyInits: make(map[string]func(store Store, codec Codec) any),
 	}
 }
 
@@ -35,7 +35,7 @@ func (g *Graph) AddNode(n *Node) int {
 }
 
 // RegisterKey records a state key factory. Only the first registration wins.
-func (g *Graph) RegisterKey(name string, factory func(store Store) any) {
+func (g *Graph) RegisterKey(name string, factory func(store Store, codec Codec) any) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if _, ok := g.KeyInits[name]; !ok {
@@ -51,13 +51,13 @@ func (g *Graph) GetRef(name string) any {
 }
 
 // InitRefs creates all registered Refs from their factories.
-// store is nil for memory-only mode.
-func (g *Graph) InitRefs(store Store) {
+// store is nil for memory-only mode. codec must be non-nil (use JSONCodec{} as default).
+func (g *Graph) InitRefs(store Store, codec Codec) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.Refs = make(map[string]any, len(g.KeyInits))
 	for name, factory := range g.KeyInits {
-		g.Refs[name] = factory(store)
+		g.Refs[name] = factory(store, codec)
 	}
 }
 
@@ -103,10 +103,10 @@ type Node struct {
 
 	// Cache-specific.
 	// CacheWrapFn, if set, is called at Run time to produce a cache-wrapped Fn.
-	// It receives the run-level default cache and TTL, and returns a replacement Fn.
-	// The factory closes over any per-stage overrides and falls back to the
-	// run-level defaults when they are nil/zero.
-	CacheWrapFn func(defaultCache Cache, defaultTTL time.Duration) any
+	// It receives the run-level default cache, TTL, and codec, and returns a
+	// replacement Fn. The factory closes over any per-stage overrides and falls
+	// back to the run-level defaults when they are nil/zero.
+	CacheWrapFn func(defaultCache Cache, defaultTTL time.Duration, codec Codec) any
 
 	// MapResult-specific.
 	// MapResultErrWrap converts an (input, error) pair into the type-erased ErrItem

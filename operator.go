@@ -2,8 +2,9 @@ package kitsune
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/jonathan/go-kitsune/engine"
@@ -38,7 +39,7 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		keyFn := cc.keyFn.(func(I) string)
 		explicitCache := cc.cache
 		explicitTTL := cc.ttl
-		n.CacheWrapFn = func(defaultCache Cache, defaultTTL time.Duration) any {
+		n.CacheWrapFn = func(defaultCache Cache, defaultTTL time.Duration, codec engine.Codec) any {
 			c := explicitCache
 			if c == nil {
 				c = defaultCache
@@ -55,7 +56,7 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 				k := keyFn(item)
 				if data, ok, err := c.Get(ctx, k); err == nil && ok {
 					var cached O
-					if err := json.Unmarshal(data, &cached); err == nil {
+					if err := codec.Unmarshal(data, &cached); err == nil {
 						return cached, nil
 					}
 				}
@@ -63,7 +64,7 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 				if err != nil {
 					return nil, err
 				}
-				if data, err := json.Marshal(result); err == nil {
+				if data, err := codec.Marshal(result); err == nil {
 					_ = c.Set(ctx, k, data, ttl)
 				}
 				return result, nil
@@ -275,6 +276,87 @@ func Merge[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 		Buffer: engine.DefaultBuffer,
 	})
 	return &Pipeline[T]{g: g, node: id}
+}
+
+// MergeIndependent combines multiple pipelines of the same type into one,
+// even when they originate from separate pipeline graphs. Each input pipeline
+// runs concurrently; items are forwarded to the output as they arrive.
+// The merged stream closes once all input pipelines have completed.
+//
+// If all inputs already share the same graph, MergeIndependent delegates to
+// [Merge]. If any input pipeline has an error, the first error is returned
+// and all remaining pipelines are cancelled.
+//
+// Panics if no pipelines are provided.
+func MergeIndependent[T any](ps ...*Pipeline[T]) *Pipeline[T] {
+	if len(ps) == 0 {
+		panic("kitsune: MergeIndependent requires at least one pipeline")
+	}
+	if len(ps) == 1 {
+		return ps[0]
+	}
+	// Fast path: all same graph — use the engine-native Merge.
+	allSame := true
+	for _, p := range ps[1:] {
+		if p.g != ps[0].g {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return Merge(ps...)
+	}
+
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		ch := make(chan T, engine.DefaultBuffer)
+		innerCtx, innerCancel := context.WithCancel(ctx)
+		defer innerCancel()
+
+		var (
+			wg       sync.WaitGroup
+			errOnce  sync.Once
+			firstErr error
+		)
+
+		for _, p := range ps {
+			p := p
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := p.ForEach(func(_ context.Context, item T) error {
+					select {
+					case ch <- item:
+						return nil
+					case <-innerCtx.Done():
+						return innerCtx.Err()
+					}
+				}).Run(innerCtx)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					errOnce.Do(func() { firstErr = err })
+					innerCancel()
+				}
+			}()
+		}
+
+		// Close ch once all producers are done.
+		go func() {
+			wg.Wait()
+			close(ch)
+		}()
+
+		// Drain ch into yield sequentially (yield is not goroutine-safe).
+		for item := range ch {
+			if !yield(item) {
+				innerCancel()
+				// Drain remaining items to unblock any producer goroutines.
+				for range ch {
+				}
+				return nil
+			}
+		}
+
+		return firstErr
+	})
 }
 
 // ---------------------------------------------------------------------------

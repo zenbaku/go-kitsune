@@ -74,6 +74,12 @@ type BufferHook = engine.BufferHook
 // BufferStatus reports the current fill level of one stage's output channel.
 type BufferStatus = engine.BufferStatus
 
+// Codec serialises and deserialises values for [Store]-backed state and [CacheBy]
+// stages. Implement this interface to substitute a binary format such as
+// encoding/gob, protobuf, or msgpack. Register with [WithCodec].
+// The default implementation uses encoding/json.
+type Codec = engine.Codec
+
 // StageError is returned by [Runner.Run] when a user-supplied stage function
 // fails. It carries the originating stage name, the zero-based attempt index
 // (>0 after retries), and the underlying cause.
@@ -99,6 +105,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		DefaultCache:    cfg.defaultCache,
 		DefaultCacheTTL: cfg.defaultCacheTTL,
 		SampleRate:      cfg.sampleRate,
+		Codec:           cfg.codec,
 	})
 }
 

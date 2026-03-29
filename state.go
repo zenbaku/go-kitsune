@@ -2,7 +2,6 @@ package kitsune
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
@@ -33,7 +32,8 @@ func NewKey[T any](name string, initial T) Key[T] {
 //
 // When no [Store] is configured (the default), Ref operates entirely in
 // memory with a mutex — zero serialization overhead. When a Store is
-// configured via [WithStore], Ref delegates to it using JSON serialization.
+// configured via [WithStore], Ref delegates to it using the run's [Codec]
+// (defaults to JSON; override with [WithCodec]).
 type Ref[T any] struct {
 	mu    sync.RWMutex
 	value T
@@ -41,6 +41,7 @@ type Ref[T any] struct {
 	// Store-backed path (nil for memory-only).
 	store Store
 	key   string
+	codec Codec
 }
 
 // Get returns the current state value.
@@ -92,7 +93,7 @@ func (r *Ref[T]) storeGet(ctx context.Context) (T, error) {
 		return r.value, nil // return initial value if not in store
 	}
 	var val T
-	if err := json.Unmarshal(data, &val); err != nil {
+	if err := r.codec.Unmarshal(data, &val); err != nil {
 		var zero T
 		return zero, err
 	}
@@ -102,7 +103,7 @@ func (r *Ref[T]) storeGet(ctx context.Context) (T, error) {
 func (r *Ref[T]) storeSet(ctx context.Context, value T) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	data, err := json.Marshal(value)
+	data, err := r.codec.Marshal(value)
 	if err != nil {
 		return err
 	}
@@ -119,7 +120,7 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 		return err
 	}
 	if ok {
-		if err := json.Unmarshal(data, &current); err != nil {
+		if err := r.codec.Unmarshal(data, &current); err != nil {
 			return err
 		}
 	}
@@ -129,7 +130,7 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 		return err
 	}
 	// Write back.
-	data, err = json.Marshal(newVal)
+	data, err = r.codec.Marshal(newVal)
 	if err != nil {
 		return err
 	}
@@ -143,10 +144,11 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 // MapWith applies a 1:1 transform with access to typed pipeline state.
 func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) (O, error), opts ...StageOption) *Pipeline[O] {
 	g := p.g
-	g.RegisterKey(key.name, func(store Store) any {
+	g.RegisterKey(key.name, func(store Store, codec Codec) any {
 		ref := &Ref[S]{value: key.initial, key: key.name}
 		if store != nil {
 			ref.store = store
+			ref.codec = codec
 		}
 		return ref
 	})
@@ -163,10 +165,11 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 // FlatMapWith applies a 1:N transform with access to typed pipeline state.
 func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	g := p.g
-	g.RegisterKey(key.name, func(store Store) any {
+	g.RegisterKey(key.name, func(store Store, codec Codec) any {
 		ref := &Ref[S]{value: key.initial, key: key.name}
 		if store != nil {
 			ref.store = store
+			ref.codec = codec
 		}
 		return ref
 	})

@@ -27,6 +27,56 @@ Kitsune is **not** a distributed stream processor — there is no Kafka consumer
 
 **New to Kitsune?** Start with the [Getting Started guide](doc/getting-started.md) — mental model, first pipeline, concurrency, error handling, and testing in ~10 minutes.
 
+For a comparison with other Go pipeline and streaming libraries (conc, go-streams, RxGo, Watermill, Benthos, Machinery), see the [Comparison Guide](doc/comparison.md).
+
+## Live inspector dashboard
+
+The `inspector` sub-package serves a real-time web dashboard. Add one line to any pipeline — no other changes needed.
+
+```
+go get github.com/jonathan/go-kitsune/inspector
+```
+
+```go
+insp := inspector.New()
+defer insp.Close()
+fmt.Println("Inspector:", insp.URL()) // open in browser
+
+err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
+```
+
+```
++--------------------------------------------------------------+
+|  Kitsune Inspector      [Stop] [Restart]  [●Light] [● SSE]  |
+|--------------------------------------------------------------|
+|  Uptime: 12s   Items: 24,601   Throughput: 3,241/s   4/4 ▶  |
+|--------------------------------------------------------------|
+|  [source] ──▶ [parse] ──▶ [validate] ──▶ [store]            |
+|                  │                                           |
+|                  └──▶ [deadletter]                           |
+|--------------------------------------------------------------|
+|  Stage     │ Items  │ Tput    │ Latency │ Errors │ Buffer   |
+|  source    │ 24601  │ 3241/s  │ 0.2ms   │   0    │ [====  ] |
+|  parse     │ 24558  │ 3200/s  │ 1.1ms   │   43   │ [=====  ]|
+|  validate  │ 18321  │ 2280/s  │ 0.8ms   │    0   │ [===    ]|
+|  store     │ 18321  │ 2100/s  │ 4.2ms   │    0   │ [=======]|
++--------------------------------------------------------------+
+```
+
+| Feature | Description |
+|---|---|
+| Pipeline DAG | Live SVG graph with BFS layout, animated edges, node status glow, zoom and pan |
+| KPI strip | Uptime, total items, throughput, active stage count |
+| Stage metrics table | Per-stage items, errors, drops, restarts, avg latency, sparkline, buffer fill bar |
+| Detail sidebar | Click any stage node: 8-metric grid, config details, recent item samples |
+| Event log | Color-coded lifecycle events (starts, completions, errors, restarts) |
+| Stop / Restart | UI buttons wired to `CancelCh`/`RestartCh` for run-loop control |
+| Dark / Light theme | Toggle via header button; preference saved in browser |
+
+Try it: `task inspector` or `go run ./examples/inspector`
+
+See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference including stop/restart wiring.
+
 ## Operator catalog
 
 **Free functions** (`Map`, `FlatMap`, `Batch`, …) change the element type as items flow through. **Methods** (`.Filter`, `.Take`, `.Skip`, …) preserve it. This split is a Go language constraint: methods cannot introduce new type parameters, so any operation that changes `Pipeline[A]` to `Pipeline[B]` must be a free function like `Map[A, B]`. The upside is that each intermediate variable documents what is flowing, and the compiler checks every type transition.
@@ -674,79 +724,6 @@ kitsune.ConsecutiveDedup(sensorReadings)           // comparable T
 kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type }) // by key
 ```
 
-## Live inspector
-
-The `inspector` sub-package serves a real-time web dashboard that shows your pipeline graph, per-stage throughput, latency, error and drop counts, and a live sample trail.
-
-```
-go get github.com/jonathan/go-kitsune/inspector
-```
-
-### Minimal usage
-
-```go
-import (
-    kitsune  "github.com/jonathan/go-kitsune"
-    "github.com/jonathan/go-kitsune/inspector"
-)
-
-func main() {
-    insp := inspector.New()
-    defer insp.Close()
-    fmt.Println("Inspector:", insp.URL()) // open in browser
-
-    // Build your pipeline as usual.
-    records := kitsune.FromSlice(rawRecords)
-    parsed  := kitsune.Map(records, parse,   kitsune.WithName("parse"))
-    valid   := kitsune.Map(parsed,  validate, kitsune.WithName("validate"), kitsune.Concurrency(4))
-
-    // Pass the inspector as a hook — no other changes needed.
-    err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
-}
-```
-
-Open the printed URL in a browser. The dashboard updates in real time; click any node to open the detail sidebar.
-
-### Stop and Restart controls
-
-The inspector exposes UI buttons for stopping and restarting the pipeline. Wire them to your context in a run loop:
-
-```go
-insp := inspector.New()
-defer insp.Close()
-fmt.Println("Inspector:", insp.URL())
-
-// Build pipeline once — Run can be called multiple times.
-// ...
-sink := merged.ForEach(store, kitsune.WithName("store"))
-
-for {
-    ctx, cancel := context.WithCancel(context.Background())
-    cancelCh, restartCh := insp.CancelCh(), insp.RestartCh()
-
-    // Both Stop and Restart cancel the current run.
-    go func() {
-        select {
-        case <-cancelCh:  cancel()
-        case <-restartCh: cancel()
-        case <-ctx.Done():
-        }
-    }()
-
-    sink.Run(ctx, kitsune.WithHook(insp))
-    cancel()
-
-    // Loop on Restart; break on Stop or any other exit.
-    select {
-    case <-restartCh:
-        continue
-    default:
-    }
-    break
-}
-```
-
-See [`examples/inspector`](examples/inspector) for a complete branching pipeline (Partition, Broadcast, Merge, supervision, overflow) with all inspector features enabled. See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference.
 
 ## Tails
 
@@ -868,7 +845,11 @@ See [`doc/internals.md`](doc/internals.md) for the internal architecture: DAG co
 
 See [`doc/tuning.md`](doc/tuning.md) for performance tuning guidance: buffer sizing, concurrency, batching, and memory trade-offs.
 
-See [`doc/benchmarks.md`](doc/benchmarks.md) for baseline throughput numbers (items/sec, allocs/op) on Apple M1.
+See [`doc/benchmarks.md`](doc/benchmarks.md) for baseline throughput numbers, backpressure comparisons, concurrency scaling, and latency percentiles on Apple M1.
+
+See [`doc/inspector.md`](doc/inspector.md) for the live web dashboard reference: pipeline DAG, per-stage metrics, sparklines, stop/restart controls, and dark/light theme.
+
+See [`doc/comparison.md`](doc/comparison.md) for a comparison with other Go pipeline and streaming libraries: goroutines+channels, sourcegraph/conc, go-streams, RxGo, Watermill, Benthos, and Machinery.
 
 ## License
 

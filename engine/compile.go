@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -41,6 +42,20 @@ type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
+
+// Codec serialises and deserialises values for [Store]-backed state and
+// [CacheBy] stages. The default implementation uses [encoding/json].
+// Register a custom codec at run time with [kitsune.WithCodec].
+type Codec interface {
+	Marshal(v any) ([]byte, error)
+	Unmarshal(data []byte, v any) error
+}
+
+// JSONCodec is the default [Codec] implementation backed by [encoding/json].
+type JSONCodec struct{}
+
+func (JSONCodec) Marshal(v any) ([]byte, error)      { return json.Marshal(v) }
+func (JSONCodec) Unmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
 
 // ErrorHandler decides what to do when a stage function returns an error.
 type ErrorHandler interface {

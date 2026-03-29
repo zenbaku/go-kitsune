@@ -81,22 +81,21 @@ Checked items are complete.
   `ChunkBy`, `ChunkWhile`, `Sort`, `SortBy`, `ConcatMap`, `FlatMapWith`) were
   migrated to the new signature.
 
-- [ ] **JSON-only cache and store serialization** — `CacheBy`, `MapWith`, and all
+- [x] **JSON-only cache and store serialization** — `CacheBy`, `MapWith`, and all
   `Store`-backed `Ref` operations serialize through `encoding/json`. There is no
-  binary-safe alternative. A pluggable `Codec` interface on `RunOption` would
-  let users substitute `encoding/gob`, `protobuf`, or `msgpack`.
+  binary-safe alternative. Added `Codec` interface and `WithCodec` `RunOption`;
+  a custom codec replaces `encoding/json` for both cache and store-backed `Ref`
+  serialization. `JSONCodec` remains the default for backward compatibility.
 
 ---
 
 ## Multi-graph and composition
 
-- [ ] **Independent pipeline merge** — `Merge` and `MergeRunners` both panic if
-  their inputs don't share the same graph. There is no way to merge two entirely
-  independent pipelines. There is no way to merge two entirely
-  independent pipelines (e.g., two separate `FromSlice` sources). A
-  `MergeIndependent` (or similar) variant would run two graphs concurrently and
-  fan their outputs into a single stream, covering the common "aggregate results
-  from two sources" pattern.
+- [x] **Independent pipeline merge** — `Merge` and `MergeRunners` both panic if
+  their inputs don't share the same graph. Added `MergeIndependent[T]` which
+  runs each input pipeline concurrently and fans items into a single stream.
+  Automatically delegates to `Merge` when all inputs share a graph. Errors from
+  any input cancel the others and propagate to the caller.
 
 ---
 

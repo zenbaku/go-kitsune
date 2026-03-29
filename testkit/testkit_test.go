@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
 	"github.com/jonathan/go-kitsune/testkit"
@@ -211,5 +212,162 @@ func TestRecordingHookGraph(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("graph does not contain 'stage-a'; got %v", graph)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// New helper tests
+// ---------------------------------------------------------------------------
+
+func TestMustRun(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	testkit.MustRun(t, p.Drain())
+}
+
+func TestMustRunWithHook(t *testing.T) {
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) { return v * 2, nil },
+		kitsune.WithName("mul"),
+	)
+	hook := testkit.MustRunWithHook(t, p.Drain())
+	testkit.AssertNoErrors(t, hook)
+	testkit.AssertStageProcessed(t, hook, "mul", 3)
+}
+
+func TestMustCollectWithHook(t *testing.T) {
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{10, 20}),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+		kitsune.WithName("pass"),
+	)
+	items, hook := testkit.MustCollectWithHook(t, p)
+	if len(items) != 2 {
+		t.Errorf("got %d items, want 2", len(items))
+	}
+	testkit.AssertNoErrors(t, hook)
+	testkit.AssertStageProcessed(t, hook, "pass", 2)
+}
+
+func TestAssertErrorCount(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, boom
+			}
+			return v, nil
+		},
+		kitsune.OnError(kitsune.Skip()),
+	)
+	_, hook := testkit.MustCollectWithHook(t, p)
+	testkit.AssertErrorCount(t, hook, 1)
+}
+
+func TestAssertDropCount(t *testing.T) {
+	hook := &testkit.RecordingHook{}
+	// Fast producer into very small buffer with DropNewest; run enough items to
+	// guarantee at least one drop.
+	items := make([]int, 100)
+	p := kitsune.Map(kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+		kitsune.Buffer(1),
+		kitsune.Overflow(kitsune.DropNewest),
+		kitsune.WithName("dropper"),
+	)
+	if err := p.ForEach(func(_ context.Context, _ int) error {
+		time.Sleep(time.Millisecond)
+		return nil
+	}).Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+		t.Fatal(err)
+	}
+	drops := hook.Drops()
+	// We can't assert an exact count because of scheduling non-determinism,
+	// but we can verify the assertion helper itself works for the observed count.
+	testkit.AssertDropCount(t, hook, len(drops)) // should always pass
+}
+
+func TestAssertRestartCount(t *testing.T) {
+	boom := errors.New("boom")
+	attempts := 0
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (int, error) {
+			attempts++
+			if attempts <= 1 {
+				return 0, boom
+			}
+			return v, nil
+		},
+		kitsune.WithName("flaky"),
+		kitsune.Supervise(kitsune.RestartOnError(2, kitsune.FixedBackoff(0))),
+	)
+	hook := testkit.MustRunWithHook(t, p.Drain())
+	testkit.AssertRestartCount(t, hook, 1)
+}
+
+func TestAssertStageErrors(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 1 {
+				return 0, boom
+			}
+			return v, nil
+		},
+		kitsune.WithName("errstage"),
+		kitsune.OnError(kitsune.Skip()),
+	)
+	hook := testkit.MustRunWithHook(t, p.Drain())
+	testkit.AssertStageErrors(t, hook, "errstage", 1)
+}
+
+func TestFailAt(t *testing.T) {
+	boom := errors.New("boom")
+	fn := testkit.FailAt[int](boom, 1, 3) // fail items at index 1 and 3
+	p := kitsune.Map(kitsune.FromSlice([]int{0, 1, 2, 3, 4}), fn,
+		kitsune.OnError(kitsune.Skip()))
+	got := testkit.MustCollect(t, p)
+	// Items at positions 1 and 3 are dropped; remaining: 0, 2, 4.
+	if len(got) != 3 {
+		t.Errorf("got %d items, want 3: %v", len(got), got)
+	}
+}
+
+func TestFailEvery(t *testing.T) {
+	boom := errors.New("boom")
+	fn := testkit.FailEvery[int](boom, 2) // fail every 2nd item (positions 0, 2, 4)
+	p := kitsune.Map(kitsune.FromSlice([]int{0, 1, 2, 3, 4}), fn,
+		kitsune.OnError(kitsune.Skip()))
+	got := testkit.MustCollect(t, p)
+	// Items at positions 0, 2, 4 dropped; remaining: 1, 3.
+	if len(got) != 2 {
+		t.Errorf("got %d items, want 2: %v", len(got), got)
+	}
+}
+
+func TestSlowMap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SlowMap timing test in short mode")
+	}
+	start := time.Now()
+	fn := testkit.SlowMap[int](10 * time.Millisecond)
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2}), fn)
+	testkit.MustCollect(t, p)
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Errorf("SlowMap(%v) × 2 items took only %v, expected ≥ 20ms", 10*time.Millisecond, elapsed)
+	}
+}
+
+func TestSlowSink(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SlowSink timing test in short mode")
+	}
+	start := time.Now()
+	testkit.MustRun(t, kitsune.FromSlice([]int{1, 2}).ForEach(testkit.SlowSink[int](10*time.Millisecond)))
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Errorf("SlowSink(%v) × 2 items took only %v, expected ≥ 20ms", 10*time.Millisecond, elapsed)
 	}
 }

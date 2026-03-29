@@ -24,6 +24,18 @@ type RunConfig struct {
 	// SampleRate is the item interval at which [SampleHook.OnItemSample] is called.
 	// 0 means use the default (10). Set to a negative value to disable sampling.
 	SampleRate int
+
+	// Codec serialises values for Store-backed state and CacheBy stages.
+	// nil defaults to JSONCodec.
+	Codec Codec
+}
+
+// effectiveCodec returns c if non-nil, otherwise the default JSONCodec.
+func effectiveCodec(c Codec) Codec {
+	if c == nil {
+		return JSONCodec{}
+	}
+	return c
 }
 
 // Run validates the graph, wires channels, and executes all stages.
@@ -32,7 +44,7 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 		return err
 	}
 
-	g.InitRefs(cfg.Store)
+	g.InitRefs(cfg.Store, effectiveCodec(cfg.Codec))
 
 	hook := cfg.Hook
 	if hook == nil {
@@ -1639,7 +1651,7 @@ func resolveCacheWrap(n *Node, cfg RunConfig) *Node {
 	if n.CacheWrapFn == nil {
 		return n
 	}
-	wrapped := n.CacheWrapFn(cfg.DefaultCache, cfg.DefaultCacheTTL)
+	wrapped := n.CacheWrapFn(cfg.DefaultCache, cfg.DefaultCacheTTL, effectiveCodec(cfg.Codec))
 	if wrapped == nil {
 		return n
 	}

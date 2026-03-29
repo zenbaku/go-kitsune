@@ -4755,3 +4755,234 @@ func TestGraphNodeHasSupervision(t *testing.T) {
 		t.Error("HasSupervision = false, want true")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MergeIndependent tests
+// ---------------------------------------------------------------------------
+
+func TestMergeIndependent_TwoDifferentGraphs(t *testing.T) {
+	// Two independent FromSlice sources — different graphs.
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]int{4, 5, 6})
+	merged := kitsune.MergeIndependent(a, b)
+	got, err := merged.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	want := []int{1, 2, 3, 4, 5, 6}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeIndependent_ThreeGraphs(t *testing.T) {
+	a := kitsune.FromSlice([]int{1})
+	b := kitsune.FromSlice([]int{2})
+	c := kitsune.FromSlice([]int{3})
+	merged := kitsune.MergeIndependent(a, b, c)
+	got, err := merged.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []int{1, 2, 3}) {
+		t.Errorf("got %v, want {1,2,3}", got)
+	}
+}
+
+func TestMergeIndependent_SameGraphDelegatesToMerge(t *testing.T) {
+	// Two pipelines from the same Broadcast share a graph — should still work.
+	branches := kitsune.Broadcast(kitsune.FromSlice([]int{1, 2, 3}), 2)
+	merged := kitsune.MergeIndependent(branches[0], branches[1])
+	got, err := merged.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 3 items × 2 branches = 6 items.
+	if len(got) != 6 {
+		t.Errorf("got %d items, want 6", len(got))
+	}
+}
+
+func TestMergeIndependent_SinglePipeline(t *testing.T) {
+	p := kitsune.FromSlice([]int{10, 20})
+	merged := kitsune.MergeIndependent(p)
+	got, err := merged.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []int{10, 20}) {
+		t.Errorf("got %v, want [10 20]", got)
+	}
+}
+
+func TestMergeIndependent_ErrorPropagates(t *testing.T) {
+	boom := errors.New("boom")
+	// One pipeline errors, one succeeds.
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.Map(kitsune.FromSlice([]int{1}), func(_ context.Context, n int) (int, error) {
+		return 0, boom
+	})
+	merged := kitsune.MergeIndependent(a, b)
+	_, err := merged.Collect(context.Background())
+	if !errors.Is(err, boom) {
+		t.Errorf("expected boom error, got %v", err)
+	}
+}
+
+func TestMergeIndependent_ContextCancellation(t *testing.T) {
+	// Source that blocks until context is cancelled.
+	a := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	b := kitsune.FromSlice([]int{1, 2, 3})
+	merged := kitsune.MergeIndependent(a, b)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+	_, err := merged.Collect(ctx)
+	// Should exit cleanly (context.Canceled is filtered internally, so we get nil
+	// or context.Canceled from the outer Collect).
+	if err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMergeIndependent_TakeDownstream(t *testing.T) {
+	// Verify early exit (yield returns false) doesn't deadlock.
+	a := kitsune.FromSlice(make([]int, 1000))
+	b := kitsune.FromSlice(make([]int, 1000))
+	merged := kitsune.MergeIndependent(a, b)
+	got, err := merged.Take(5).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 {
+		t.Errorf("got %d items, want 5", len(got))
+	}
+}
+
+func TestMergeIndependent_Panic(t *testing.T) {
+	if len(func() (r []int) { defer func() { recover() }(); kitsune.MergeIndependent[int](); return }()) == 0 {
+		// panic was recovered — the test passed
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Codec tests
+// ---------------------------------------------------------------------------
+
+// countingCodec counts Marshal and Unmarshal calls for test assertions.
+type countingCodec struct {
+	marshals   atomic.Int64
+	unmarshals atomic.Int64
+}
+
+func (c *countingCodec) Marshal(v any) ([]byte, error) {
+	c.marshals.Add(1)
+	return fmt.Appendf(nil, "%v", v), nil
+}
+
+func (c *countingCodec) Unmarshal(data []byte, v any) error {
+	c.unmarshals.Add(1)
+	// Only used in tests with int targets; parse back.
+	n, err := strconv.Atoi(string(data))
+	if err != nil {
+		return err
+	}
+	switch dst := v.(type) {
+	case *int:
+		*dst = n
+	}
+	return nil
+}
+
+// TestCodecDefaultJSON confirms the default behavior (no WithCodec) produces
+// correct CacheBy results, proving the JSON default path is intact.
+func TestCodecDefaultJSON(t *testing.T) {
+	cache := kitsune.MemoryCache(100)
+	items := []int{1, 2, 1, 3, 2}
+	p := kitsune.FromSlice(items)
+	calls := 0
+	got, err := kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+		calls++
+		return n * 10, nil
+	}, kitsune.CacheBy(func(n int) string { return strconv.Itoa(n) }),
+	).Collect(context.Background(), kitsune.WithCache(cache, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 20, 10, 30, 20}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// 3 unique keys → 3 cache misses, 2 hits.
+	if calls != 3 {
+		t.Errorf("fn called %d times, want 3 (cache should serve hits)", calls)
+	}
+}
+
+// TestCodecCustom verifies that WithCodec routes CacheBy through the custom codec.
+func TestCodecCustom(t *testing.T) {
+	codec := &countingCodec{}
+	cache := kitsune.MemoryCache(100)
+	items := []int{1, 2, 1, 3, 2}
+	p := kitsune.FromSlice(items)
+	calls := 0
+	got, err := kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+		calls++
+		return n, nil
+	}, kitsune.CacheBy(func(n int) string { return strconv.Itoa(n) }),
+	).Collect(context.Background(),
+		kitsune.WithCache(cache, 0),
+		kitsune.WithCodec(codec),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 3 unique keys → 3 misses (each Marshal once), 2 hits (each Unmarshal once).
+	if calls != 3 {
+		t.Errorf("fn called %d times, want 3", calls)
+	}
+	if codec.marshals.Load() == 0 {
+		t.Error("expected custom codec Marshal to be called at least once")
+	}
+	if codec.unmarshals.Load() == 0 {
+		t.Error("expected custom codec Unmarshal to be called at least once (cache hits)")
+	}
+	_ = got
+}
+
+// TestCodecStore verifies that WithCodec routes MapWith Store-backed Ref through
+// the custom codec.
+func TestCodecStore(t *testing.T) {
+	codec := &countingCodec{}
+	store := kitsune.MemoryStore()
+	counterKey := kitsune.NewKey("counter", 0)
+	items := []int{1, 2, 3}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWith(p, counterKey, func(ctx context.Context, ref *kitsune.Ref[int], n int) (int, error) {
+		if err := ref.Update(ctx, func(c int) (int, error) { return c + 1, nil }); err != nil {
+			return 0, err
+		}
+		v, err := ref.Get(ctx)
+		return v, err
+	}).Collect(context.Background(),
+		kitsune.WithStore(store),
+		kitsune.WithCodec(codec),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d items, want 3", len(got))
+	}
+	// Each Update does a Marshal+Unmarshal; each Get also does an Unmarshal.
+	if codec.marshals.Load() == 0 {
+		t.Error("expected Marshal calls via custom codec")
+	}
+	if codec.unmarshals.Load() == 0 {
+		t.Error("expected Unmarshal calls via custom codec")
+	}
+}

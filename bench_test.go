@@ -3,7 +3,9 @@ package kitsune_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"testing"
+	"time"
 
 	kitsune "github.com/jonathan/go-kitsune"
 )
@@ -134,4 +136,57 @@ func BenchmarkMapOrdered(b *testing.B) {
 			}, kitsune.Concurrency(8)).Drain().Run(context.Background())
 		}
 	})
+}
+
+// BenchmarkBackpressure measures throughput under a slow consumer for each
+// overflow strategy. The fast producer (FromSlice) feeds into a Map with a
+// small buffer; the ForEach sink yields the CPU each item to let the buffer fill.
+func BenchmarkBackpressure(b *testing.B) {
+	items := makeItems(10_000)
+	cases := []struct {
+		name string
+		opts []kitsune.StageOption
+	}{
+		{"Block", []kitsune.StageOption{kitsune.Buffer(4)}},
+		{"DropNewest", []kitsune.StageOption{kitsune.Buffer(4), kitsune.Overflow(kitsune.DropNewest)}},
+		{"DropOldest", []kitsune.StageOption{kitsune.Buffer(4), kitsune.Overflow(kitsune.DropOldest)}},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				p := kitsune.FromSlice(items)
+				kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+					return n, nil
+				}, tc.opts...).ForEach(func(_ context.Context, _ int) error {
+					runtime.Gosched() // yield to create mild backpressure
+					return nil
+				}).Run(context.Background())
+			}
+		})
+	}
+}
+
+// BenchmarkConcurrencyScaling shows how throughput scales with worker count for
+// I/O-simulated work (time.Sleep). On CPU-bound work concurrency offers no gain;
+// here each worker sleeps, so adding workers linearly reduces wall time.
+func BenchmarkConcurrencyScaling(b *testing.B) {
+	if testing.Short() {
+		b.Skip("skipping concurrency scaling benchmark in short mode")
+	}
+	items := makeItems(200) // smaller dataset: sleep dominates
+	for _, workers := range []int{1, 2, 4, 8} {
+		b.Run(fmt.Sprintf("workers_%d", workers), func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				p := kitsune.FromSlice(items)
+				kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+					time.Sleep(50 * time.Microsecond) // simulate I/O
+					return n * 2, nil
+				}, kitsune.Concurrency(workers)).Drain().Run(context.Background())
+			}
+		})
+	}
 }
