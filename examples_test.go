@@ -46,6 +46,7 @@ func TestExamples(t *testing.T) {
 		"mapresult",
 		"metrics",
 		"overflow",
+		"pause",
 		"pairwise",
 		"recover",
 		"reduce",

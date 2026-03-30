@@ -50,6 +50,7 @@ type runConfig struct {
 	defaultCacheTTL time.Duration
 	sampleRate      int // 0 = default (10); negative = disabled
 	codec           Codec
+	gate            *engine.Gate
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -359,6 +360,26 @@ func WithSampleRate(n int) RunOption {
 //	runner.Run(ctx, kitsune.WithCodec(myGobCodec))
 func WithCodec(c Codec) RunOption {
 	return func(cfg *runConfig) { cfg.codec = c }
+}
+
+// WithPauseGate attaches an externally-created [Gate] to the pipeline run,
+// enabling pause/resume control from another goroutine. Use this with
+// [Runner.Run] when you need to pause the pipeline without going through
+// [RunHandle]:
+//
+//	gate := kitsune.NewGate()
+//	go func() {
+//	    time.Sleep(5 * time.Second)
+//	    gate.Pause()
+//	    // ... maintenance window ...
+//	    gate.Resume()
+//	}()
+//	runner.Run(ctx, kitsune.WithPauseGate(gate))
+//
+// For [Runner.RunAsync], a gate is created automatically and exposed on the
+// returned [RunHandle] via [RunHandle.Pause] and [RunHandle.Resume].
+func WithPauseGate(g *Gate) RunOption {
+	return func(cfg *runConfig) { cfg.gate = g }
 }
 
 // ---------------------------------------------------------------------------

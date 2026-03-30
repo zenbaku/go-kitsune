@@ -67,6 +67,7 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 }
 #pipe-badge.running { background: var(--blue-lo); color: var(--blue); border-color: var(--blue-mid); }
 #pipe-badge.done    { background: var(--green-lo); color: var(--green); border-color: var(--green-mid); }
+#pipe-badge.paused  { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); border-color: var(--yellow); }
 .hdr-controls { display: flex; align-items: center; gap: 6px; }
 .btn {
   font-size: 11px; font-weight: 600; padding: 5px 11px; border-radius: 6px;
@@ -78,6 +79,8 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 .btn-stop:hover  { background: var(--red-lo); }
 .btn-restart { border-color: var(--blue-mid); color: var(--blue); }
 .btn-restart:hover { background: var(--blue-lo); }
+.btn-pause   { border-color: var(--yellow); color: var(--yellow); }
+.btn-pause:hover { background: color-mix(in srgb, var(--yellow) 12%, transparent); }
 .conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 #dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); flex-shrink: 0; transition: all .3s; }
 #dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
@@ -194,6 +197,7 @@ tr:hover td { background: rgba(127,127,127,.04); }
   </div>
   <div class="hdr-controls">
     <button class="btn btn-restart" id="btn-restart" title="Restart pipeline">↺ Restart</button>
+    <button class="btn btn-pause"   id="btn-pause"   title="Pause pipeline">⏸ Pause</button>
     <button class="btn btn-stop"    id="btn-stop"    title="Stop pipeline">■ Stop</button>
     <button class="btn" id="btn-theme" title="Toggle light/dark theme">☀</button>
   </div>
@@ -296,7 +300,7 @@ const NW = 148, NH = 48, HGAP = 60, VGAP = 18;
 const ROUTING = new Set(['partition','broadcast','merge','filter','tap','take','batch']);
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let graph = null, stats = {}, logEmpty = true, pipelineStartMs = null;
+let graph = null, stats = {}, logEmpty = true, pipelineStartMs = null, pipelinePaused = false;
 const sparkData  = new Map();   // name → number[]
 const edgeEls    = new Map();   // `${from}→${to}` → SVGPathElement
 const nodeRects  = new Map();   // id → SVGRectElement
@@ -327,9 +331,16 @@ document.getElementById('btn-stop').addEventListener('click', () =>
   ctrl('cancel'));
 document.getElementById('btn-restart').addEventListener('click', () =>
   ctrl('restart'));
+document.getElementById('btn-pause').addEventListener('click', () =>
+  ctrl(pipelinePaused ? 'resume' : 'pause'));
 function ctrl(action) {
   fetch('/control', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ action }) });
+}
+function updatePauseBtn() {
+  const btn = document.getElementById('btn-pause');
+  btn.textContent = pipelinePaused ? '▶ Resume' : '⏸ Pause';
+  btn.title = pipelinePaused ? 'Resume pipeline' : 'Pause pipeline';
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
@@ -340,6 +351,7 @@ es.addEventListener('graph',  e => { graph = JSON.parse(e.data); buildNodeIndex(
 es.addEventListener('stats',  e => { stats = JSON.parse(e.data); onStats(); });
 es.addEventListener('log',    e => addLog(JSON.parse(e.data)));
 es.addEventListener('sample', e => onSample(JSON.parse(e.data)));
+es.addEventListener('paused', e => { pipelinePaused = JSON.parse(e.data).paused; updatePauseBtn(); updateBadge(); });
 document.getElementById('addr').textContent = window.location.host;
 
 function buildNodeIndex() {
@@ -388,8 +400,13 @@ function updateBadge() {
   if (!vals.length) return;
   const anyRun = vals.some(s => s.status === 'running');
   const allDone = vals.every(s => s.status === 'done');
-  badge.className = anyRun ? 'running' : allDone ? 'done' : '';
-  badge.textContent = anyRun ? 'running' : allDone ? 'done' : 'idle';
+  if (pipelinePaused && anyRun) {
+    badge.className = 'paused';
+    badge.textContent = 'paused';
+  } else {
+    badge.className = anyRun ? 'running' : allDone ? 'done' : '';
+    badge.textContent = anyRun ? 'running' : allDone ? 'done' : 'idle';
+  }
 }
 
 setInterval(() => {

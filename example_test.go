@@ -871,3 +871,33 @@ func ExampleReleaseAll() {
 	kitsune.ReleaseAll(items)
 	// Output: 10 20
 }
+
+func ExampleRunHandle_Pause() {
+	h := kitsune.FromSlice([]int{1, 2, 3}).
+		Drain().
+		RunAsync(context.Background())
+
+	h.Pause()
+	fmt.Println("paused:", h.Paused())
+	h.Resume()
+	fmt.Println("paused:", h.Paused())
+	h.Wait() //nolint:errcheck
+	// Output:
+	// paused: true
+	// paused: false
+}
+
+func ExamplePipeline_Iter() {
+	seq, errFn := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).
+		Filter(func(n int) bool { return n%2 == 0 }).
+		Iter(context.Background())
+	for n := range seq {
+		fmt.Println(n)
+	}
+	if err := errFn(); err != nil {
+		panic(err)
+	}
+	// Output:
+	// 2
+	// 4
+}

@@ -74,6 +74,115 @@ func main() {
 
 ---
 
+## Consuming output with `Iter`
+
+`Collect` is the right terminal when you need the full result set — a test assertion, a bulk insert, or building a response. But sometimes you want to process items one-by-one as they arrive, without buffering the whole stream. That's what `Iter` is for.
+
+`Iter` returns two values: an `iter.Seq[T]` for use with `range`, and an error function to call once the loop finishes:
+
+```go
+seq, errFn := kitsune.Map(events, enrich, kitsune.Concurrency(20)).Iter(ctx)
+for event := range seq {
+    fmt.Println(event)
+}
+if err := errFn(); err != nil {
+    log.Fatal(err)
+}
+```
+
+The pipeline starts in the background as soon as `Iter` is called. Items flow from the pipeline into the `for range` loop through a buffered channel; the loop blocks when the pipeline hasn't produced anything yet, and the pipeline backs off when the consumer is too slow.
+
+**The error function must always be called** — it blocks until the pipeline finishes and reports any stage error. Think of it like `rows.Close()` or `resp.Body.Close()`: forgetting it leaks resources.
+
+### Breaking out early
+
+If you only need the first few results, `break` as usual. Kitsune detects the break, cancels the pipeline, and drains any in-flight items. The error function returns `nil` — the `context.Canceled` caused by the break is suppressed, since it was expected:
+
+```go
+seq, errFn := kitsune.FromIter(infiniteStream).Iter(ctx)
+var first []Event
+for e := range seq {
+    first = append(first, e)
+    if len(first) == 10 {
+        break // pipeline is cancelled; resources are freed
+    }
+}
+if err := errFn(); err != nil { // nil — break-induced cancellation is suppressed
+    log.Fatal(err)
+}
+```
+
+If the *caller's own context* is cancelled (timeout, shutdown signal), `errFn` returns `context.Canceled` as normal — only the break-path suppresses it.
+
+### When to use `Iter` vs `Collect`
+
+| | `Iter` | `Collect` |
+|---|---|---|
+| Output size | Unbounded or large | Bounded, fits in memory |
+| Processing | Item-by-item as they arrive | After all items are in hand |
+| Early exit | Natural with `break` | Use `.Take(n)` then `Collect` |
+| Composability | Works with `slices.Collect`, `maps.Collect`, any `iter.Seq[T]` consumer | Returns `[]T` directly |
+
+For the common case of "run the whole pipeline and give me a slice", `Collect` is more concise. Reach for `Iter` when streaming, when memory matters, or when you want to feed pipeline output directly into another `iter.Seq[T]`-based API.
+
+---
+
+## Pausing and resuming a pipeline
+
+Sometimes you need to temporarily stop a pipeline without cancelling it — for example, during a maintenance window, when a downstream system signals it's overloaded, or to implement rate-adaptive ingestion. `Pause` and `Resume` handle this without tearing down the pipeline or losing in-flight work.
+
+`RunAsync` automatically creates a `Gate` and exposes it on the returned `RunHandle`:
+
+```go
+h := pipeline.ForEach(store).RunAsync(ctx)
+
+// Later, from any goroutine:
+h.Pause()  // sources stop emitting; in-flight items continue draining
+h.Resume() // sources start again
+```
+
+While paused, sources block before sending each item into the pipeline. Downstream stages — Map, Filter, Batch, sinks — continue running and drain whatever is already in-flight. No items are dropped and no goroutines exit.
+
+### Checking pause state
+
+```go
+if h.Paused() {
+    log.Println("pipeline is paused")
+}
+```
+
+### External gate for synchronous Run
+
+`RunHandle` requires `RunAsync`. To pause a pipeline running under the blocking `Runner.Run`, create a `Gate` externally and attach it with `WithPauseGate`:
+
+```go
+gate := kitsune.NewGate()
+
+go func() {
+    time.Sleep(5 * time.Second)
+    gate.Pause()
+    performMaintenance()
+    gate.Resume()
+}()
+
+// Blocking run, pauseable from the goroutine above.
+if err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+    log.Fatal(err)
+}
+```
+
+### Cancellation while paused
+
+Cancelling the context while the pipeline is paused unblocks sources immediately and shuts the pipeline down cleanly. Pause does not interfere with shutdown.
+
+### When not to use pause
+
+Pause is a coarse control — it stops all sources simultaneously. For fine-grained flow control on a single stage, use `RateLimit` or the `Overflow(DropOldest)` buffer strategy instead. For stopping the pipeline entirely, cancel the context.
+
+See [`examples/pause`](../examples/pause) for a runnable version.
+
+---
+
 ## Adding concurrency
 
 Stage functions receive a `context.Context` as their first argument:

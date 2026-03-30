@@ -43,7 +43,8 @@ const (
 //
 // Use [CancelCh] to receive a stop signal from the UI's Stop button, and
 // [RestartCh] to receive a restart signal. Wire them to a context cancel or
-// a pipeline loop in user code.
+// a pipeline loop in user code. Use [PauseCh] and [ResumeCh] to wire the
+// UI's Pause/Resume button to a [kitsune.Gate].
 type Inspector struct {
 	mu      sync.Mutex
 	stages  map[string]*stageState
@@ -55,8 +56,10 @@ type Inspector struct {
 	bufferQuery func() []engine.BufferStatus // set by OnBuffers; nil until engine calls it
 
 	cancelCh     chan struct{} // swapped on restart; protected by mu
-	cancelClosed bool          // prevents double-close; protected by mu
+	cancelClosed bool         // prevents double-close; protected by mu
 	restartCh    chan struct{} // swapped on each restart; protected by mu
+	pauseCh      chan struct{} // swapped on each pause; protected by mu
+	resumeCh     chan struct{} // swapped on each resume; protected by mu
 
 	ticker *time.Ticker
 	done   chan struct{}
@@ -132,6 +135,8 @@ func NewAt(addr string) (*Inspector, error) {
 		done:      make(chan struct{}),
 		cancelCh:  make(chan struct{}),
 		restartCh: make(chan struct{}),
+		pauseCh:   make(chan struct{}),
+		resumeCh:  make(chan struct{}),
 		url:       "http://" + ln.Addr().String(),
 	}
 
@@ -176,6 +181,36 @@ func (i *Inspector) RestartCh() <-chan struct{} {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	return i.restartCh
+}
+
+// PauseCh returns a channel that is closed when the user clicks Pause in the UI.
+// Call again after each cycle to get a fresh channel. Typical usage:
+//
+//	gate := kitsune.NewGate()
+//	go func() {
+//	    for {
+//	        select {
+//	        case <-insp.PauseCh():  gate.Pause()
+//	        case <-insp.ResumeCh(): gate.Resume()
+//	        case <-ctx.Done():      return
+//	        }
+//	    }
+//	}()
+//	runner.Run(ctx, kitsune.WithHook(insp), kitsune.WithPauseGate(gate))
+func (i *Inspector) PauseCh() <-chan struct{} {
+	i.mu.Lock()
+	ch := i.pauseCh
+	i.mu.Unlock()
+	return ch
+}
+
+// ResumeCh returns a channel that is closed when the user clicks Resume in the UI.
+// Call again after each cycle to get a fresh channel. See [PauseCh] for usage.
+func (i *Inspector) ResumeCh() <-chan struct{} {
+	i.mu.Lock()
+	ch := i.resumeCh
+	i.mu.Unlock()
+	return ch
 }
 
 // Close sends a final stats update, stops the ticker, and shuts down the HTTP server.
@@ -329,6 +364,24 @@ func (i *Inspector) handleControl(w http.ResponseWriter, r *http.Request) {
 		i.cancelClosed = false
 		i.mu.Unlock()
 		close(oldRestart)
+	case "pause":
+		i.mu.Lock()
+		old := i.pauseCh
+		i.pauseCh = make(chan struct{})
+		i.mu.Unlock()
+		close(old)
+		if data, err := json.Marshal(map[string]bool{"paused": true}); err == nil {
+			i.broadcast(sseMsg{"paused", data})
+		}
+	case "resume":
+		i.mu.Lock()
+		old := i.resumeCh
+		i.resumeCh = make(chan struct{})
+		i.mu.Unlock()
+		close(old)
+		if data, err := json.Marshal(map[string]bool{"paused": false}); err == nil {
+			i.broadcast(sseMsg{"paused", data})
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

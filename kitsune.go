@@ -91,6 +91,14 @@ type Codec = engine.Codec
 //	}
 type StageError = engine.StageError
 
+// Gate controls pause/resume of source stages in a running pipeline.
+// Create with [NewGate] and pass to [WithPauseGate] for use with [Runner.Run],
+// or obtain one automatically from [RunHandle] when using [Runner.RunAsync].
+type Gate = engine.Gate
+
+// NewGate returns a new [Gate] in the open (unpaused) state.
+func NewGate() *Gate { return engine.NewGate() }
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -107,6 +115,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		DefaultCacheTTL: cfg.defaultCacheTTL,
 		SampleRate:      cfg.sampleRate,
 		Codec:           cfg.codec,
+		Gate:            cfg.gate,
 	})
 }
 
@@ -118,10 +127,11 @@ var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runne
 var ErrGraphMismatch = errors.New("kitsune: MergeRunners requires all runners to share the same pipeline graph")
 
 // RunHandle is returned by [Runner.RunAsync]. It provides multiple ways to
-// observe the pipeline's completion.
+// observe the pipeline's completion and to pause/resume source stages.
 type RunHandle struct {
 	errCh <-chan error
 	done  chan struct{}
+	gate  *Gate
 }
 
 // Wait blocks until the pipeline completes and returns its error (or nil).
@@ -141,22 +151,42 @@ func (h *RunHandle) Err() <-chan error {
 	return h.errCh
 }
 
+// Pause stops sources from emitting new items. In-flight items continue
+// draining through downstream stages. Safe to call multiple times.
+// Has no effect after the pipeline has completed.
+func (h *RunHandle) Pause() { h.gate.Pause() }
+
+// Resume allows sources to emit items again after a [RunHandle.Pause].
+// Safe to call multiple times. Has no effect if the pipeline is not paused.
+func (h *RunHandle) Resume() { h.gate.Resume() }
+
+// Paused reports whether the pipeline is currently paused.
+func (h *RunHandle) Paused() bool { return h.gate.Paused() }
+
 // RunAsync starts the pipeline in a background goroutine and returns a
-// [RunHandle] for observing completion. It is the non-blocking counterpart
-// to [Runner.Run].
+// [RunHandle] for observing completion and controlling execution.
+// A [Gate] is created automatically and exposed via [RunHandle.Pause] and
+// [RunHandle.Resume]. Pass [WithPauseGate] to supply your own gate instead.
 //
 //	h := runner.RunAsync(ctx)
 //	if err := h.Wait(); err != nil {
 //	    log.Fatal(err)
 //	}
 func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
+	// Use an externally-supplied gate if one was provided; otherwise create one.
+	cfg := buildRunConfig(opts)
+	gate := cfg.gate
+	if gate == nil {
+		gate = engine.NewGate()
+		opts = append(opts, WithPauseGate(gate))
+	}
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
 		errCh <- r.Run(ctx, opts...)
 		close(done)
 	}()
-	return &RunHandle{errCh: errCh, done: done}
+	return &RunHandle{errCh: errCh, done: done, gate: gate}
 }
 
 // MergeRunners combines multiple runners that share the same pipeline graph

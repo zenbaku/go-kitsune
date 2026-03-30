@@ -28,6 +28,11 @@ type RunConfig struct {
 	// Codec serialises values for Store-backed state and CacheBy stages.
 	// nil defaults to JSONCodec.
 	Codec Codec
+
+	// Gate, when non-nil, enables pause/resume of source stages.
+	// Sources block in their yield callback while the gate is paused.
+	// Downstream stages continue draining in-flight items naturally.
+	Gate *Gate
 }
 
 // effectiveCodec returns c if non-nil, otherwise the default JSONCodec.
@@ -193,7 +198,7 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 	switch n.Kind {
 	case Source:
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runSource(ctx, n, outbox, hook, done, sampleRate) }
+		inner = func() error { return runSource(ctx, n, outbox, hook, done, sampleRate, cfg.Gate) }
 	case Map:
 		mn := resolveCacheWrap(n, cfg)
 		outCloser = func() { close(outCh) }
@@ -336,7 +341,7 @@ func wrapStageErr(name string, err error, attempt int) error {
 // Source
 // ---------------------------------------------------------------------------
 
-func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-chan struct{}, sampleRate int64) error {
+func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-chan struct{}, sampleRate int64, gate *Gate) error {
 	name := nodeName(n, "source")
 
 	// Create a source-scoped context that also fires when the drain-done signal
@@ -366,6 +371,11 @@ func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-ch
 		case <-srcCtx.Done():
 			return false
 		default:
+		}
+		if gate != nil {
+			if err := gate.Wait(srcCtx); err != nil {
+				return false
+			}
 		}
 		if err := outbox.Send(srcCtx, item); err != nil {
 			return false

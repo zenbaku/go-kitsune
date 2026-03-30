@@ -639,6 +639,292 @@ func TestFromIterWithTake(t *testing.T) {
 	}
 }
 
+func TestRunAsync_PauseResume(t *testing.T) {
+	// Use NewChannel so we control item injection precisely.
+	ch := kitsune.NewChannel[int](16)
+	var (
+		mu  sync.Mutex
+		got []int
+	)
+	h := kitsune.Map(ch.Source(), func(_ context.Context, n int) (int, error) { return n, nil }).
+		ForEach(func(_ context.Context, n int) error {
+			mu.Lock()
+			got = append(got, n)
+			mu.Unlock()
+			return nil
+		}).RunAsync(context.Background())
+
+	// Send a few items and let them flow.
+	ch.Send(context.Background(), 1) //nolint:errcheck
+	ch.Send(context.Background(), 2) //nolint:errcheck
+	ch.Send(context.Background(), 3) //nolint:errcheck
+	time.Sleep(50 * time.Millisecond)
+
+	// Pause and record how many items arrived so far.
+	h.Pause()
+	if !h.Paused() {
+		t.Fatal("expected Paused() == true")
+	}
+	mu.Lock()
+	countAtPause := len(got)
+	mu.Unlock()
+
+	// Items pushed while paused should not reach the sink.
+	ch.Send(context.Background(), 4) //nolint:errcheck
+	ch.Send(context.Background(), 5) //nolint:errcheck
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	countWhilePaused := len(got)
+	mu.Unlock()
+	if countWhilePaused > countAtPause {
+		t.Fatalf("items flowed while paused: had %d at pause, %d after", countAtPause, countWhilePaused)
+	}
+
+	// Resume and let buffered items drain.
+	h.Resume()
+	if h.Paused() {
+		t.Fatal("expected Paused() == false after Resume")
+	}
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	countAfterResume := len(got)
+	mu.Unlock()
+	if countAfterResume <= countAtPause {
+		t.Fatalf("expected more items after resume, got %d (was %d at pause)", countAfterResume, countAtPause)
+	}
+}
+
+func TestRunAsync_PauseContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Infinite source.
+	counter := func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+
+	h := kitsune.FromIter(counter).Drain().RunAsync(ctx)
+
+	h.Pause()
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancelling the context while paused should unblock and exit cleanly.
+	cancel()
+	select {
+	case <-h.Done():
+		// clean exit
+	case <-time.After(2 * time.Second):
+		t.Fatal("pipeline did not exit after context cancel while paused")
+	}
+	// nil or context.Canceled are both acceptable.
+	if err := h.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunAsync_PausedState(t *testing.T) {
+	gate := kitsune.NewGate()
+	if gate.Paused() {
+		t.Fatal("new gate should not be paused")
+	}
+	gate.Pause()
+	if !gate.Paused() {
+		t.Fatal("gate should be paused")
+	}
+	gate.Resume()
+	if gate.Paused() {
+		t.Fatal("gate should be open after Resume")
+	}
+}
+
+func TestWithPauseGate(t *testing.T) {
+	gate := kitsune.NewGate()
+	gate.Pause()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Infinite source that sends 1 per tick.
+	var count atomic.Int64
+	counter := func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.FromIter(counter).
+			ForEach(func(_ context.Context, _ int) error {
+				count.Add(1)
+				return nil
+			}).Run(ctx, kitsune.WithPauseGate(gate))
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	if count.Load() > 0 {
+		t.Fatal("items should not flow while gate is paused from the start")
+	}
+
+	gate.Resume()
+	time.Sleep(30 * time.Millisecond)
+	if count.Load() == 0 {
+		t.Fatal("items should flow after gate resumed")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pipeline did not exit after context cancel")
+	}
+}
+
+func TestIter(t *testing.T) {
+	seq, errFn := kitsune.FromSlice([]int{1, 2, 3}).Iter(context.Background())
+	var got []int
+	for item := range seq {
+		got = append(got, item)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []int{1, 2, 3}) {
+		t.Fatalf("unexpected: %v", got)
+	}
+}
+
+func TestIterEmpty(t *testing.T) {
+	seq, errFn := kitsune.FromSlice([]int{}).Iter(context.Background())
+	var got []int
+	for item := range seq {
+		got = append(got, item)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestIterBreak(t *testing.T) {
+	items := make([]int, 1000)
+	for i := range items {
+		items[i] = i
+	}
+	seq, errFn := kitsune.FromSlice(items).Iter(context.Background())
+	var got []int
+	for item := range seq {
+		got = append(got, item)
+		if len(got) == 2 {
+			break
+		}
+	}
+	if err := errFn(); err != nil {
+		t.Fatalf("expected nil after break, got: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(got))
+	}
+}
+
+func TestIterContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Infinite source.
+	counter := func(yield func(int) bool) {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+
+	seq, errFn := kitsune.FromIter(counter).Iter(ctx)
+	var count int
+	for range seq {
+		count++
+		if count == 3 {
+			cancel()
+		}
+	}
+
+	err := errFn()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestIterPipelineError(t *testing.T) {
+	wantErr := errors.New("stage failure")
+	seq, errFn := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (int, error) {
+			if n == 2 {
+				return 0, wantErr
+			}
+			return n, nil
+		},
+	).Iter(context.Background())
+	for range seq {
+	}
+	err := errFn()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected %v, got: %v", wantErr, err)
+	}
+}
+
+func TestIterWithMap(t *testing.T) {
+	seq, errFn := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("%d", n), nil },
+	).Iter(context.Background())
+	var got []string
+	for s := range seq {
+		got = append(got, s)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"1", "2", "3"}) {
+		t.Fatalf("unexpected: %v", got)
+	}
+}
+
+func TestIterWithFilter(t *testing.T) {
+	seq, errFn := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).
+		Filter(func(n int) bool { return n%2 == 0 }).
+		Iter(context.Background())
+	var got []int
+	for item := range seq {
+		got = append(got, item)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []int{2, 4}) {
+		t.Fatalf("unexpected: %v", got)
+	}
+}
+
+func TestIterErrFnIdempotent(t *testing.T) {
+	seq, errFn := kitsune.FromSlice([]int{1, 2, 3}).Iter(context.Background())
+	for range seq {
+	}
+	for i := 0; i < 3; i++ {
+		if err := errFn(); err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+	}
+}
+
 func TestWindow(t *testing.T) {
 	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
 		for i := 0; i < 3; i++ {

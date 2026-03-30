@@ -5,7 +5,7 @@
 //   - A branching topology: Partition → two paths → Merge
 //   - Broadcast fan-out within one branch
 //   - Supervision restarts and DropOldest overflow visible in the dashboard
-//   - Stop and Restart controls from the UI
+//   - Stop, Restart, and Pause/Resume controls from the UI
 //
 // Run with:
 //
@@ -146,6 +146,8 @@ func main() {
 	}, kitsune.WithName("sink"))
 
 	// ── Run loop: restart resumes here, stop exits ─────────────────────────
+	gate := kitsune.NewGate()
+
 	for {
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -163,9 +165,24 @@ func main() {
 			}
 		}()
 
-		if err := sink.Run(ctx, kitsune.WithHook(insp)); err != nil && !errors.Is(err, context.Canceled) {
+		// Wire UI Pause/Resume buttons to the gate.
+		go func() {
+			for {
+				select {
+				case <-insp.PauseCh():
+					gate.Pause()
+				case <-insp.ResumeCh():
+					gate.Resume()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		if err := sink.Run(ctx, kitsune.WithHook(insp), kitsune.WithPauseGate(gate)); err != nil && !errors.Is(err, context.Canceled) {
 			fmt.Printf("pipeline error: %v\n", err)
 		}
+		gate.Resume() // ensure gate is open for the next run
 		cancel()
 
 		// Restart if Restart was clicked; exit if Stop was clicked or Ctrl-C.

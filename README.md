@@ -233,6 +233,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `.ForEach(fn, opts…)` | `*Runner` | Process each item; call `.Run(ctx)` to execute |
 | `.Drain()` | `*Runner` | Consume and discard all items |
 | `runner.RunAsync(ctx, opts…)` | `*RunHandle` | Start pipeline in background; call `.Wait()`, select on `.Done()`, or read `.Err()` |
+| `.Iter(ctx, opts…)` | `(iter.Seq[T], func() error)` | Return a pull-based iterator (range-over-func); call the error function after the loop |
 | `.Collect(ctx, opts…)` | `([]T, error)` | Run and materialize all items into a slice |
 | `.First(ctx, opts…)` | `(T, bool, error)` | Run and return the first item; `false` if stream is empty |
 | `.Last(ctx, opts…)` | `(T, bool, error)` | Run and return the final item; `false` if stream is empty |
@@ -280,6 +281,11 @@ h.Wait()       // block until pipeline drains; returns error if one occurred
 | `RunHandle.Wait()` | Block until the pipeline finishes; returns nil or an error |
 | `RunHandle.Done()` | `<-chan struct{}` closed when the pipeline finishes |
 | `RunHandle.Err()` | `<-chan error` that receives exactly one value (nil or error) |
+| `RunHandle.Pause()` | Stop sources from emitting; in-flight items continue draining. Idempotent |
+| `RunHandle.Resume()` | Allow sources to emit again after a pause. Idempotent |
+| `RunHandle.Paused()` | Report whether the pipeline is currently paused |
+| `NewGate()` | Create a standalone `Gate` in the open (unpaused) state |
+| `WithPauseGate(g)` | Run option: attach an external `Gate` for pause/resume via `Runner.Run` |
 
 ### Stage[I, O] + Then
 
@@ -491,6 +497,7 @@ kitsune.ReleaseAll(results) // return every object to the pool when done
 | `WithDrain(timeout)` | Run option: graceful shutdown — drain in-flight items before exiting |
 | `WithCache(cache, ttl)` | Run option: default cache backend and TTL for all `Map`+`CacheBy` stages |
 | `WithSampleRate(n)` | Run option: `OnItemSample` fires every nth item (default 10); pass ≤0 to disable |
+| `WithCodec(c)` | Run option: custom serialisation codec for `Store`-backed state and `CacheBy` (default: JSON) |
 
 ## Quick start
 
