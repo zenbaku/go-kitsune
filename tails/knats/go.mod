@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/knats
+module github.com/zenbaku/go-kitsune/tails/knats
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	github.com/nats-io/nats.go v1.39.1
 )
 
@@ -18,4 +18,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

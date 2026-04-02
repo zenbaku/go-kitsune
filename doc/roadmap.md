@@ -95,43 +95,74 @@ Checked items are complete.
   structs (including their `done` channels), and `clear`+reslice batch-buffer
   reuse in `runBatch`. Fast paths use `for range` on receive (no per-item
   ctx.Done select) plus a single send-side `select`; cancellation is detected
-  via `ctx.Err()` after the loop exits. Net result: 3-stage comparison benchmark
-  improved from ~1.69 M/s to ~2.85 M/s (overhead vs raw goroutines: 3.5x → 2.1x).
+  via `ctx.Err()` after the loop exits.
+
+- [x] **Receive-side micro-batching** — fast-path dispatchers drain up to 15
+  additional items non-blocking after each blocking channel receive, processing
+  them as a local `[16]any` buffer. This trades 16 expensive goroutine-handoff
+  receives for 1 expensive + 15 cheap non-blocking checks, cutting per-item
+  channel overhead by ~14×. Gated on `!n.Supervision.HasSupervision()` so that
+  pre-fetched items are never silently lost on supervision restart.
+  Net result: MapLinear improved from 5,066 µs → 2,855 µs; 3-stage comparison
+  improved from ~1.69 M/s to ~2.96 M/s (overhead vs raw goroutines: 3.5x → 2.1x).
+
+- [x] **Stage fusion** — consecutive fusible stages (Map, Filter, Sink at
+  `Concurrency(1)` with default config and `NoopHook`) are detected at run time
+  and collapsed into a single goroutine with direct function calls, eliminating
+  all inter-stage channel hops between them. A fusible chain of length ≥ 2 reads
+  from the head's real input channel, calls each stage function inline with the
+  same receiveBatchSize drain, writes to the tail's output channel (or calls the
+  sink directly), and closes all bypassed channels on exit. FlatMap is excluded
+  from fusion (its 1:N expansion already has a zero-alloc fast path via yield
+  closure; fusing it would require per-item closure allocation). Net result:
+  3-stage comparison improved from ~2.96 M/s to ~5.31 M/s (overhead vs raw
+  goroutines: 2.1x → +17%); MapLinear improved from 2,855 µs → 1,845 µs.
 
 - [x] **Concurrent fast paths** — extended the fast-path pattern to
   `runMapConcurrent` and `runFlatMapConcurrent` (unordered). When
   `DefaultHandler + NoopHook` hold, worker goroutines skip per-item timing,
   hook dispatch, `ProcessItem`/`wrapStageErr`, and atomic counter updates.
   The inner-context `Done` arm is retained (needed for prompt worker exit when
-  a sibling worker errors). Result: `MapConcurrent` 6,129 → 4,604 µs (−25%),
-  `MapOrdered/unordered` 7,563 → 5,521 µs (−27%).
+  a sibling worker errors). Result: `MapConcurrent` 6,129 → 4,534 µs (−26%),
+  `MapOrdered/unordered` 7,563 → 5,909 µs (−22%).
 
-- [ ] **Chunked inter-stage transport** — stages currently exchange items one `any`
-  at a time via `chan any`. Each channel op costs a mutex lock/unlock plus a
-  potential goroutine handoff. Switching to `chan []any` with pooled fixed-size
-  slices (e.g. 16–32 items) would reduce channel ops by ~16× at the cost of a
-  small per-batch latency increase. Plausibly brings overhead from ~3.1× to under
-  2× without touching the public API. Requires changes to `runSource`, all fast
-  paths, and the channel allocation in `buildGraph`.
+- [x] **Chunked inter-stage transport** — achieved via two complementary
+  approaches rather than `chan []any`. (1) Receive-side micro-batching: each
+  fast-path dispatcher drains up to 15 non-blocking items after one blocking
+  receive, amortising goroutine-handoff cost without changing the channel type or
+  public API. (2) Stage fusion: consecutive fusible stages collapse into one
+  goroutine, eliminating channel hops entirely rather than batching across them.
+  Together these brought 3-stage overhead from ~3.1× to +17% vs raw goroutines.
+  The `chan []any` approach would have been sufficient for goal (1) but fusion
+  subsumes it for goal (2) at lower latency cost.
+
+- [x] **Drain protocol (send-side select elimination)** — replaced
+  `select { case ch <- v: case <-ctx.Done(): }` with plain `ch <- v` in all
+  fast-path stage runners and the fused chain runner. Safety is maintained by a
+  drain goroutine (`go func() { for range inCh {} }()`) deferred at stage exit —
+  which unblocks any upstream blocked on a plain send. `nodeRunner` also defers
+  drain goroutines for all non-Source stages, covering slow-path exits. A new
+  `runSourceFastPath` skips the per-item 3-case early-exit select, dispatched
+  when `NoopHook + blockingOutbox + no Gate`. Net result: 3-stage comparison
+  improved from 189 ms → 75.7 ms (~2.16× faster than raw goroutines, overhead
+  +17% → -54%); MapLinear improved from 1,845 µs → 768 µs.
 
 - [ ] **Generics at the engine layer (v2)** — the remaining 2 allocs/item are from
-  boxing values into `any` at stage boundaries. The `engine/typed` experiment
-  confirmed that on equal footing (both using `for range` receive), eliminating
-  boxing improves throughput by ~10% (350 ms → 317 ms at 1M items) and drops
-  allocs from 2,000,000 to ~29 per pipeline run. The remaining ~1.9x gap to raw
-  goroutines is the send-side `select` (shared by both engines). The v2 case
-  improves both GC pressure and throughput; the gain scales with pipeline
-  frequency. Requires a new module path; revisit once the API surface is stable.
+  boxing values into `any` at stage boundaries. After the drain protocol, Kitsune
+  (75.7 ms, 2M allocs) is 4.2× faster than `engine/typed` (317 ms, 43 allocs) at
+  1M items. The benefit of generics is GC pressure reduction (2M allocs/run →
+  ~setup only) rather than raw throughput. Requires a new module path; revisit
+  once the API surface is stable.
 
 ---
 
 ## Multi-graph and composition
 
-- [x] **Independent pipeline merge** — `Merge` and `MergeRunners` both panic if
-  their inputs don't share the same graph. Added `MergeIndependent[T]` which
-  runs each input pipeline concurrently and fans items into a single stream.
-  Automatically delegates to `Merge` when all inputs share a graph. Errors from
-  any input cancel the others and propagate to the caller.
+- [x] **Universal multi-stream operators** — `Merge`, `Zip`, `ZipWith`, and
+  `WithLatestFrom` all accept pipelines from independent graphs. Same-graph
+  inputs use the engine-native node (fast path); independent inputs fall back to
+  a `Generate`-based implementation that runs each pipeline concurrently.
+  `MergeIndependent` was removed — `Merge` subsumes it.
 
 ---
 
@@ -163,18 +194,18 @@ Checked items are complete.
 
 ## Ecosystem: tails
 
-- [ ] **Azure Service Bus tail (`kazsb`)** — source and sink for Azure Service
+- [x] **Azure Service Bus tail (`kazsb`)** — source and sink for Azure Service
   Bus queues and topics. Covers the most common Azure messaging pattern and
   fills the only major cloud provider gap in the tails ecosystem.
 
-- [ ] **Azure Event Hubs tail (`kazeh`)** — source for Azure Event Hubs
+- [x] **Azure Event Hubs tail (`kazeh`)** — source for Azure Event Hubs
   (consumer group–based). Complements `kkafka` for teams on Azure.
 
-- [ ] **Elasticsearch / OpenSearch tail (`kes`)** — bulk-index sink and
+- [x] **Elasticsearch / OpenSearch tail (`kes`)** — bulk-index sink and
   scroll/search source. A natural destination for enrichment pipelines and one
   of the most-requested sinks in data engineering workflows.
 
-- [ ] **Google Cloud Storage tail (`kgcs`)** — object source (list + read) and
+- [x] **Google Cloud Storage tail (`kgcs`)** — object source (list + read) and
   sink (upload). Fills the gap left by the existing `ks3` tail for GCP users.
 
 ---
@@ -226,7 +257,7 @@ Items that may be worth doing but require more design work or a concrete use cas
 
 ## Community & discoverability
 
-- [ ] **`CONTRIBUTING.md`** — document dev setup, how to run tests and
+- [x] **`CONTRIBUTING.md`** — document dev setup, how to run tests and
   examples, the PR workflow, and the commit message convention. Lowers the
   barrier for first-time contributors.
 

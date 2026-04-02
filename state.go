@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jonathan/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/engine"
 )
 
 // ---------------------------------------------------------------------------

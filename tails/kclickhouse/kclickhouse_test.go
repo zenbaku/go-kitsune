@@ -8,8 +8,8 @@ import (
 
 	clickhouse "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kclickhouse"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kclickhouse"
 )
 
 func skipIfNoClickHouse(t *testing.T) driver.Conn {

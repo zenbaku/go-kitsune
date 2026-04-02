@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func ExampleFromSlice() {

@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/examples/files
+module github.com/zenbaku/go-kitsune/examples/files
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
-	github.com/jonathan/go-kitsune/tails/kfile v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune/tails/kfile v0.0.0
 )
 
 require (
@@ -13,6 +13,6 @@ require (
 )
 
 replace (
-	github.com/jonathan/go-kitsune => ../..
-	github.com/jonathan/go-kitsune/tails/kfile => ../../tails/kfile
+	github.com/zenbaku/go-kitsune => ../..
+	github.com/zenbaku/go-kitsune/tails/kfile => ../../tails/kfile
 )

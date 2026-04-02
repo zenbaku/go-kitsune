@@ -402,7 +402,7 @@ go-kitsune/
 ```
 
 Package declaration: `package kitsune`
-Module path: `github.com/jonathan/go-kitsune`
+Module path: `github.com/zenbaku/go-kitsune`
 
 ---
 

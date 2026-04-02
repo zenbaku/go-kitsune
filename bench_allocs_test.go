@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // TestAllocBounds enforces per-pipeline allocation ceilings for the

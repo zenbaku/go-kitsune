@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kfile"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kfile"
 )
 
 type Person struct {

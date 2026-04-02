@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // slowLookup simulates an external API call that may take a variable amount of time.

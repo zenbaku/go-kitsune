@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jonathan/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/engine"
 )
 
 // ---------------------------------------------------------------------------
@@ -255,6 +255,16 @@ func Broadcast[T any](p *Pipeline[T], n int) []*Pipeline[T] {
 //
 // Merge panics if no pipelines are provided or if the pipelines do not
 // share the same graph.
+// Merge combines multiple pipelines of the same type into a single stream.
+// Items arrive in the order the underlying goroutines produce them.
+//
+// Pipelines may come from the same graph or from completely independent graphs —
+// both cases are handled automatically. When all inputs share a graph the
+// engine-native merge node is used; otherwise each pipeline runs concurrently
+// and items are forwarded as they arrive.
+//
+// If any input pipeline returns an error the first error is propagated and all
+// remaining pipelines are cancelled. Panics if no pipelines are provided.
 func Merge[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 	if len(ps) == 0 {
 		panic("kitsune: Merge requires at least one pipeline")
@@ -262,40 +272,8 @@ func Merge[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 	if len(ps) == 1 {
 		return ps[0]
 	}
-	g := ps[0].g
-	inputs := make([]engine.InputRef, len(ps))
-	for i, p := range ps {
-		if p.g != g {
-			panic("kitsune: Merge requires all pipelines to share the same pipeline graph")
-		}
-		inputs[i] = engine.InputRef{Node: p.node, Port: p.port}
-	}
-	id := g.AddNode(&engine.Node{
-		Kind:   engine.Merge,
-		Inputs: inputs,
-		Buffer: engine.DefaultBuffer,
-	})
-	return &Pipeline[T]{g: g, node: id}
-}
 
-// MergeIndependent combines multiple pipelines of the same type into one,
-// even when they originate from separate pipeline graphs. Each input pipeline
-// runs concurrently; items are forwarded to the output as they arrive.
-// The merged stream closes once all input pipelines have completed.
-//
-// If all inputs already share the same graph, MergeIndependent delegates to
-// [Merge]. If any input pipeline has an error, the first error is returned
-// and all remaining pipelines are cancelled.
-//
-// Panics if no pipelines are provided.
-func MergeIndependent[T any](ps ...*Pipeline[T]) *Pipeline[T] {
-	if len(ps) == 0 {
-		panic("kitsune: MergeIndependent requires at least one pipeline")
-	}
-	if len(ps) == 1 {
-		return ps[0]
-	}
-	// Fast path: all same graph — use the engine-native Merge.
+	// Fast path: all same graph — use the engine-native Merge node.
 	allSame := true
 	for _, p := range ps[1:] {
 		if p.g != ps[0].g {
@@ -304,9 +282,20 @@ func MergeIndependent[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 		}
 	}
 	if allSame {
-		return Merge(ps...)
+		g := ps[0].g
+		inputs := make([]engine.InputRef, len(ps))
+		for i, p := range ps {
+			inputs[i] = engine.InputRef{Node: p.node, Port: p.port}
+		}
+		id := g.AddNode(&engine.Node{
+			Kind:   engine.Merge,
+			Inputs: inputs,
+			Buffer: engine.DefaultBuffer,
+		})
+		return &Pipeline[T]{g: g, node: id}
 	}
 
+	// Independent graphs: run each pipeline concurrently and fan into one stream.
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		ch := make(chan T, engine.DefaultBuffer)
 		innerCtx, innerCancel := context.WithCancel(ctx)
@@ -344,11 +333,9 @@ func MergeIndependent[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 			close(ch)
 		}()
 
-		// Drain ch into yield sequentially (yield is not goroutine-safe).
 		for item := range ch {
 			if !yield(item) {
 				innerCancel()
-				// Drain remaining items to unblock any producer goroutines.
 				for range ch {
 				}
 				return nil
@@ -768,27 +755,108 @@ type Pair[A, B any] struct {
 // pipelines produce at very different rates, the faster one will accumulate
 // items in its buffer while Zip waits for the slower one. Size those buffers
 // accordingly using [Buffer].
+// Zip pairs items from two pipelines by position into [Pair] values.
+// The shorter stream determines the output length; the longer stream is
+// cancelled once the shorter closes.
+//
+// Pipelines may come from the same graph or from completely independent graphs.
 func Zip[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
-	if a.g != b.g {
-		panic("kitsune: Zip requires both pipelines to share the same pipeline graph")
+	if a.g == b.g {
+		convert := func(va, vb any) any {
+			return Pair[A, B]{First: va.(A), Second: vb.(B)}
+		}
+		id := a.g.AddNode(&engine.Node{
+			Kind:       engine.ZipNode,
+			Inputs:     []engine.InputRef{{Node: a.node, Port: a.port}, {Node: b.node, Port: b.port}},
+			Buffer:     engine.DefaultBuffer,
+			ZipConvert: convert,
+		})
+		return &Pipeline[Pair[A, B]]{g: a.g, node: id}
 	}
-	convert := func(va, vb any) any {
-		return Pair[A, B]{First: va.(A), Second: vb.(B)}
-	}
-	id := a.g.AddNode(&engine.Node{
-		Kind:       engine.ZipNode,
-		Inputs:     []engine.InputRef{{Node: a.node, Port: a.port}, {Node: b.node, Port: b.port}},
-		Buffer:     engine.DefaultBuffer,
-		ZipConvert: convert,
+
+	// Independent graphs: run both concurrently and pair by position.
+	return Generate(func(ctx context.Context, yield func(Pair[A, B]) bool) error {
+		chA := make(chan A, engine.DefaultBuffer)
+		chB := make(chan B, engine.DefaultBuffer)
+		innerCtx, innerCancel := context.WithCancel(ctx)
+
+		var (
+			wg       sync.WaitGroup
+			errOnce  sync.Once
+			firstErr error
+		)
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			err := a.ForEach(func(_ context.Context, item A) error {
+				select {
+				case chA <- item:
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
+				}
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+			close(chA)
+		}()
+		go func() {
+			defer wg.Done()
+			err := b.ForEach(func(_ context.Context, item B) error {
+				select {
+				case chB <- item:
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
+				}
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+			close(chB)
+		}()
+
+		// Pair items by position; stop when either side closes or yield returns false.
+		for {
+			va, okA := <-chA
+			if !okA {
+				innerCancel()
+				for range chB {
+				}
+				break
+			}
+			vb, okB := <-chB
+			if !okB {
+				innerCancel()
+				for range chA {
+				}
+				break
+			}
+			if !yield(Pair[A, B]{First: va, Second: vb}) {
+				innerCancel()
+				for range chA {
+				}
+				for range chB {
+				}
+				break
+			}
+		}
+
+		innerCancel()
+		wg.Wait()
+		return firstErr
 	})
-	return &Pipeline[Pair[A, B]]{g: a.g, node: id}
 }
 
-// ZipWith pairs items from two same-graph pipelines by position and combines
-// each pair immediately using fn, avoiding the intermediate [Pair] value.
+// ZipWith pairs items from two pipelines by position and combines each pair
+// immediately using fn, avoiding the intermediate [Pair] value.
 // It is equivalent to [Map] applied to [Zip] but expressed in a single call.
 //
-// Both pipelines must share the same graph. Panics otherwise.
+// Pipelines may come from the same graph or from completely independent graphs.
 //
 //	// Multiply paired values from two branches.
 //	kitsune.ZipWith(as, bs, func(_ context.Context, a, b int) (int, error) {
@@ -969,20 +1037,95 @@ func deadLetterPassOpts(opts []StageOption) []StageOption {
 //	// Enrich each click event with the current mouse position:
 //	kitsune.WithLatestFrom(clicks, positions)
 //	// → Pair{click, latestPosition} for each click after the first position
+// WithLatestFrom combines each primary item with the most recently seen value
+// from secondary. Primary items that arrive before secondary has emitted any
+// value are silently dropped.
+//
+// Pipelines may come from the same graph or from completely independent graphs.
 func WithLatestFrom[A, B any](primary *Pipeline[A], secondary *Pipeline[B]) *Pipeline[Pair[A, B]] {
-	if primary.g != secondary.g {
-		panic("kitsune: WithLatestFrom requires both pipelines to share the same pipeline graph")
+	if primary.g == secondary.g {
+		convert := func(va, vb any) any {
+			return Pair[A, B]{First: va.(A), Second: vb.(B)}
+		}
+		id := primary.g.AddNode(&engine.Node{
+			Kind:       engine.WithLatestFromNode,
+			Inputs:     []engine.InputRef{{Node: primary.node, Port: primary.port}, {Node: secondary.node, Port: secondary.port}},
+			Buffer:     engine.DefaultBuffer,
+			ZipConvert: convert,
+		})
+		return &Pipeline[Pair[A, B]]{g: primary.g, node: id}
 	}
-	convert := func(va, vb any) any {
-		return Pair[A, B]{First: va.(A), Second: vb.(B)}
-	}
-	id := primary.g.AddNode(&engine.Node{
-		Kind:       engine.WithLatestFromNode,
-		Inputs:     []engine.InputRef{{Node: primary.node, Port: primary.port}, {Node: secondary.node, Port: secondary.port}},
-		Buffer:     engine.DefaultBuffer,
-		ZipConvert: convert,
+
+	// Independent graphs: drain secondary into a mutex-protected latest value
+	// while forwarding primary items through a channel.
+	return Generate(func(ctx context.Context, yield func(Pair[A, B]) bool) error {
+		primCh := make(chan A, engine.DefaultBuffer)
+		innerCtx, innerCancel := context.WithCancel(ctx)
+
+		var (
+			mu       sync.Mutex
+			latest   B
+			hasValue bool
+			wg       sync.WaitGroup
+			errOnce  sync.Once
+			firstErr error
+		)
+
+		// Background: continuously update latest from secondary.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := secondary.ForEach(func(_ context.Context, item B) error {
+				mu.Lock()
+				latest = item
+				hasValue = true
+				mu.Unlock()
+				return nil
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+		}()
+
+		// Background: forward primary items through primCh.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := primary.ForEach(func(_ context.Context, item A) error {
+				select {
+				case primCh <- item:
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
+				}
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+			close(primCh)
+		}()
+
+		for item := range primCh {
+			mu.Lock()
+			hv, cur := hasValue, latest
+			mu.Unlock()
+			if !hv {
+				continue // drop until secondary has emitted
+			}
+			if !yield(Pair[A, B]{First: item, Second: cur}) {
+				innerCancel()
+				for range primCh {
+				}
+				break
+			}
+		}
+
+		innerCancel()
+		wg.Wait()
+		return firstErr
 	})
-	return &Pipeline[Pair[A, B]]{g: primary.g, node: id}
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/kmongo
+module github.com/zenbaku/go-kitsune/tails/kmongo
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	go.mongodb.org/mongo-driver/v2 v2.1.0
 )
 
@@ -20,4 +20,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

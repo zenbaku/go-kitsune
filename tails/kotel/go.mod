@@ -1,11 +1,11 @@
-module github.com/jonathan/go-kitsune/tails/kotel
+module github.com/zenbaku/go-kitsune/tails/kotel
 
 go 1.26.1
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0-00010101000000-000000000000
+	github.com/zenbaku/go-kitsune v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/metric v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/apache/pulsar-client-go/pulsar"
-	"github.com/jonathan/go-kitsune/tails/kpulsar"
+	"github.com/zenbaku/go-kitsune/tails/kpulsar"
 )
 
 func skipIfNoPulsar(t *testing.T) pulsar.Client {

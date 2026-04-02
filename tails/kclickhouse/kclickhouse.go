@@ -27,7 +27,7 @@ package kclickhouse
 import (
 	"context"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 

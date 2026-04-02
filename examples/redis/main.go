@@ -12,8 +12,8 @@ import (
 	"log"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kredis"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kredis"
 	"github.com/redis/go-redis/v9"
 )
 

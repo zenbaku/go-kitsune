@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // Simulate: items → generate queries → correlate results back to items.

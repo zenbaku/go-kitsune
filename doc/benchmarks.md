@@ -14,21 +14,23 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 
 | Benchmark | Dataset | ns/op | items/sec | B/op | allocs/op |
 |---|---|---:|---:|---:|---:|
-| `MapLinear` | 10,000 items, `Concurrency(1)` | 5,066 µs | ~2.0 M/s | 156 KB | 19,659 |
-| `MapConcurrent` | 10,000 items, `Concurrency(4)` | 4,604 µs | ~2.2 M/s | 157 KB | 19,685 |
-| `FlatMap` | 1,000 items → 10,000 outputs | 2,837 µs | ~3.5 M out/s | 325 KB | 11,272 |
-| `BatchUnbatch` | 10,000 items, `Batch(100)` + `Unbatch` | 4,228 µs | ~2.4 M/s | 599 KB | 20,041 |
-| `Filter` | 10,000 items, 50% pass | 3,153 µs | ~3.2 M/s | 79 KB | 9,786 |
-| `Dedupe` | 10,000 items, 50% unique | 4,232 µs | ~2.4 M/s | 653 KB | 29,048 |
-| `MapWithCache` | 10,000 items, 1,000 unique keys (~90% hit) | 7,508 µs | ~1.3 M/s | 1.9 MB | 53,462 |
-| `MapOrdered/ordered` | 10,000 items, `Concurrency(8)` + `Ordered()` | 8,764 µs | ~1.1 M/s | 1.9 MB | 39,697 |
-| `MapOrdered/unordered` | 10,000 items, `Concurrency(8)` | 5,521 µs | ~1.8 M/s | 163 KB | 19,689 |
+| `MapLinear` | 10,000 items, `Concurrency(1)` | 768 µs | ~13.0 M/s | 162 KB | 19,675 |
+| `MapConcurrent` | 10,000 items, `Concurrency(4)` | 4,395 µs | ~2.3 M/s | 163 KB | 19,693 |
+| `FlatMap` | 1,000 items → 10,000 outputs | 714 µs | ~14.0 M out/s | 111 KB | 10,297 |
+| `BatchUnbatch` | 10,000 items, `Batch(100)` + `Unbatch` | 1,319 µs | ~7.6 M/s | 257 KB | 19,870 |
+| `Filter` | 10,000 items, 50% pass | 659 µs | ~15.2 M/s | 82 KB | 9,801 |
+| `Dedupe` | 10,000 items, 50% unique | 2,001 µs | ~5.0 M/s | 709 KB | 33,812 |
+| `MapWithCache` | 10,000 items, 1,000 unique keys (~90% hit) | 4,060 µs | ~2.5 M/s | 1.9 MB | 53,491 |
+| `MapOrdered/ordered` | 10,000 items, `Concurrency(8)` + `Ordered()` | 8,706 µs | ~1.1 M/s | 164 KB | 19,705 |
+| `MapOrdered/unordered` | 10,000 items, `Concurrency(8)` | 4,870 µs | ~2.1 M/s | 163 KB | 19,697 |
 
 ---
 
 ## Notes
 
 **MapConcurrent is slower than MapLinear** for this synthetic workload because the transformation (`n * 2`) is CPU-trivial — goroutine coordination overhead dominates. `Concurrency(n)` pays off for I/O-bound stages (HTTP calls, database queries) where goroutines block waiting for external systems rather than competing for CPU. The concurrent fast path skips per-item timing, hook dispatch, and `ProcessItem` overhead in the worker loop (same conditions as the `Concurrency(1)` fast path: `DefaultHandler + NoopHook`).
+
+**MapLinear throughput improved 2.4×** (1,845 µs → 768 µs) since the fusion era. Stage fusion collapses Map→Drain into a single goroutine. Receive-side micro-batching amortises the Source→Map channel cost. The drain protocol removes the per-item 3-case `select` in the source fast path entirely — the source now does plain `outCh <- item`, with downstream drain goroutines unblocking it on pipeline exit.
 
 **FlatMap items/sec** is measured as output items (10,000) per ns/op, since the expansion ratio (1:10) is the primary cost driver.
 
@@ -48,11 +50,11 @@ Measured with a fast producer (10,000 items) feeding into a Map with `Buffer(4)`
 
 | Strategy | ns/op | items/sec | B/op | allocs/op |
 |---|---:|---:|---:|---:|
-| `Block` (default) | 7,269 µs | ~1.4 M/s | 161 KB | 19,549 |
-| `DropNewest` | 3,438 µs | ~2.9 M/s | 161 KB | 19,548 |
-| `DropOldest` | 3,881 µs | ~2.6 M/s | 161 KB | 19,548 |
+| `Block` (default) | 1,856 µs | ~5.4 M/s | 161 KB | 19,548 |
+| `DropNewest` | 2,700 µs | ~3.7 M/s | 161 KB | 19,556 |
+| `DropOldest` | 3,249 µs | ~3.1 M/s | 161 KB | 19,556 |
 
-**Block** is the slowest — the producer stalls whenever the buffer is full, serialising producer and consumer. **DropNewest** and **DropOldest** are ~2× faster because the producer never stalls, at the cost of silently discarding some items. Allocations are nearly identical across strategies since the item pipeline is the same; the difference is purely in producer wait time.
+**Block** is now faster than Drop strategies for this workload. With the drain protocol, the source's plain send unblocks immediately when the downstream drain goroutine drains the buffer — no producer stall on a full buffer. **DropNewest** and **DropOldest** involve additional logic to inspect the buffer before sending, making them slightly slower for CPU-trivial workloads where the buffer rarely fills. Allocations are nearly identical across strategies since the item pipeline is the same.
 
 ---
 
@@ -62,12 +64,12 @@ Measured with a 200-item pipeline and `time.Sleep(50µs)` per item inside Map to
 
 | Workers | ns/op | items/sec | B/op | allocs/op |
 |---|---:|---:|---:|---:|
-| 1 | 13,835 µs | ~14.5 k/s | 5 KB | 132 |
-| 2 | 6,871 µs | ~29.1 k/s | 6 KB | 142 |
-| 4 | 3,447 µs | ~58.0 k/s | 6 KB | 146 |
-| 8 | 1,691 µs | ~118.3 k/s | 7 KB | 154 |
+| 1 | 13,664 µs | ~14.6 k/s | 5 KB | 132 |
+| 2 | 6,857 µs | ~29.2 k/s | 6 KB | 149 |
+| 4 | 3,425 µs | ~58.4 k/s | 7 KB | 153 |
+| 8 | 1,705 µs | ~117.3 k/s | 8 KB | 161 |
 
-Throughput roughly doubles with each doubling of workers because the bottleneck is the simulated I/O wait, not the CPU. Allocation overhead per worker is minimal (~10 additional allocs per extra worker per pipeline run). Compare with `BenchmarkMapConcurrent` where the same concurrency setting shows no gain — the workload must actually block for concurrency to help.
+Throughput roughly doubles with each doubling of workers because the bottleneck is the simulated I/O wait, not the CPU. Allocation overhead per worker is minimal (~8 additional allocs per extra worker per pipeline run). Compare with `BenchmarkMapConcurrent` where the same concurrency setting shows no gain — the workload must actually block for concurrency to help.
 
 ---
 
@@ -103,28 +105,19 @@ using `chan T` instead of `chan any`, eliminating all per-item interface boxing.
 **Machine**: Apple M1, darwin/arm64, Go 1.26.1
 **Method**: `go test -bench=BenchmarkTyped -benchmem -count=5` in `bench/`, median of 5 runs
 
-Both engines now use `for range` on receive and a single send-side `select`, so the
-comparison is apples-to-apples.
-
 | Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
 |---|---:|---:|---:|---:|---:|
-| Raw goroutines | 167 ms | ~5.98 M/s | 1 KB | 13 | — |
-| **Typed (experimental)** | **317 ms** | **~3.15 M/s** | **2 KB** | **29** | **+90%** |
-| **Kitsune** | **350 ms** | **~2.85 M/s** | **15.3 MB** | **2,000,000** | **+110%** |
+| Raw goroutines | 163 ms | ~6.12 M/s | 1 KB | 12 | — |
+| **Kitsune** | **75.7 ms** | **~13.2 M/s** | **15.3 MB** | **2,000,000** | **-54%** |
+| **Typed (experimental)** | **317 ms** | **~3.15 M/s** | **2 KB** | **43** | **+94%** |
 
-**Boxing is eliminated in typed** — 29 allocs is pipeline setup only (goroutine stacks,
-channels, sync structures). Zero per-item allocations.
+**Kitsune is now 4.2× faster than the typed engine** and 2.16× faster than raw goroutines, despite 2M allocs/run vs 43, because:
+1. Stage fusion collapses Map → Filter → Drain into one goroutine (1 channel hop vs 3).
+2. The drain protocol removes the per-item 3-case `select` from the source — the source does plain `outCh <- item`. Downstream stages start a `for range inCh {}` drain goroutine on exit, unblocking the source without any per-item select overhead.
 
-**The typed engine is ~10% faster than Kitsune** (317 vs 350 ms). With both engines on
-equal footing (same `for range` receive pattern), the remaining gap is GC pressure from
-Kitsune's 2M allocs/run visibly affecting throughput at 1M items. The earlier measurement
-showing only a 7% gap was an artefact of typed still using a 2-case receive select.
+**Boxing is eliminated in typed** — 43 allocs is pipeline setup only (goroutine stacks, channels, sync structures). Zero per-item allocations.
 
-**The remaining ~1.9x gap to raw goroutines** (317 vs 167 ms) is the send-side `select`
-— both engines need it to prevent deadlock on early downstream exit. Raw goroutines use
-plain `ch <- v` with no cancellation guard. Closing this gap requires either removing
-the send-side `select` (unsafe without a different teardown protocol) or chunked transport
-(amortising one select over N items).
+**The remaining ~1.9x gap from typed to raw goroutines** (317 vs 163 ms) is the send-side `select` — the typed engine needs it to prevent deadlock on early downstream exit. The drain protocol used by Kitsune's `chan any` engine eliminates this overhead, but the typed engine has not been updated to use the same pattern.
 
 ---
 
@@ -138,18 +131,21 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 
 | Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
 |---|---:|---:|---:|---:|---:|
-| Raw goroutines | 167 ms | ~5.98 M/s | 1 KB | 13 | — |
-| `sourcegraph/conc` | 167 ms | ~6.00 M/s | 1 KB | 12 | +0% |
-| **Kitsune** | **350 ms** | **~2.85 M/s** | **15.3 MB** | **2,000,000** | **+110%** |
-| `reugn/go-streams` | 733 ms | ~1.36 M/s | 30.5 MB | 2,000,000 | +341% |
+| Raw goroutines | 163 ms | ~6.12 M/s | 1 KB | 12 | — |
+| `sourcegraph/conc` | 163 ms | ~6.13 M/s | 1 KB | 12 | +0% |
+| **Kitsune** | **75.7 ms** | **~13.2 M/s** | **15.3 MB** | **2,000,000** | **-54%** |
+| `reugn/go-streams` | 725 ms | ~1.38 M/s | 30.5 MB | 2,000,000 | +345% |
 
-**Raw goroutines and `sourcegraph/conc` are nearly identical** — conc is a structured-concurrency primitive (WaitGroup + panic propagation), not a pipeline library. Its overhead over raw goroutines is <1%.
+**Kitsune is 2.16× faster than raw goroutines** and 9.6× faster than `go-streams`. The gains stack:
+1. **Stage fusion** collapses Map→Filter→Drain into one goroutine, eliminating 2 of 3 channel hops.
+2. **Receive-side micro-batching** amortises the remaining Source→chain channel cost: one blocking receive + up to 15 non-blocking drains.
+3. **Drain protocol** removes the per-item 3-case `select` from the source: plain `outCh <- item` with a downstream drain goroutine providing the deadlock safety net.
 
-**Kitsune processes 2.85M items/sec at 1M items**, carrying a ~2.1x overhead vs raw goroutines. Fast paths for `Map`, `FlatMap`, `Filter`, and `Sink` at `Concurrency(1)` use `for range` on receive (no per-item ctx.Done select) plus a single send-side `select`. The remaining overhead is `any`-boxing at stage boundaries (2 allocs/item) and the send-side `select` needed to prevent deadlock on early downstream exit.
+**Raw goroutines use 3 goroutines with 3 channel hops and plain `ch <- v` sends.** Kitsune uses 1 goroutine hop (Source → fused chain) with a plain send, then direct function calls within the fused chain. The drain protocol's safety net costs one `goroutine + for range` per stage exit — amortised to zero over a run.
 
-**`reugn/go-streams`** is ~1.36M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
+**`reugn/go-streams`** is ~1.38M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
 
-**When does Kitsune overhead matter?** At 2.85M items/sec, each item costs ~350 ns of total pipeline time, of which ~183 ns is Kitsune overhead. The realistic benchmarks below quantify exactly when this matters.
+**When does Kitsune overhead matter?** At -54% overhead vs raw, Kitsune's fused fast path is strictly faster for CPU-trivial workloads. The remaining cost per item is `any`-boxing (~4 ns, 2 allocs/item) and the one blocking channel receive from Source to the fused chain.
 
 To reproduce:
 
@@ -177,13 +173,14 @@ work per item. Two additional tiers show how overhead scales with stage cost.
 ### Light CPU — SHA-256 per item (~300 ns work)
 
 Represents data transformation pipelines: hashing, encoding, schema validation.
-Stage cost (~300 ns) is in the same order of magnitude as Kitsune's per-item
-overhead (~180 ns), so the framework cost is visible but not dominant.
+Stage cost (~300 ns) is comparable to a single channel hop.
 
 | Implementation | ns/op | items/sec | vs raw |
 |---|---:|---:|---:|
-| Raw goroutines | 267 ms | ~3.75 M/s | — |
-| **Kitsune** | **405 ms** | **~2.47 M/s** | **+52%** |
+| Raw goroutines | 271 ms | ~3.69 M/s | — |
+| **Kitsune** | **152 ms** | **~6.59 M/s** | **-44%** |
+
+Kitsune is 44% **faster** than raw goroutines: fusion eliminates 2 goroutine handoffs per item, and the drain protocol eliminates the per-item select in the source. Even with SHA-256 stage work, eliminating goroutine handoffs is worth more.
 
 ### I/O bound — 1 µs sleep per item (~3 µs effective on M1)
 
@@ -193,21 +190,21 @@ both implementations sleep equally so the overhead ratio is still accurate.
 
 | Implementation | ns/op | items/sec | vs raw |
 |---|---:|---:|---:|
-| Raw goroutines | 31.3 ms | ~320 k/s | — |
-| **Kitsune** | **33.1 ms** | **~302 k/s** | **+6%** |
+| Raw goroutines | 31.8 ms | ~314 k/s | — |
+| **Kitsune** | **29.1 ms** | **~343 k/s** | **-8%** |
+
+Kitsune is 8% **faster** than raw goroutines for I/O-bound work.
 
 ### Overhead vs stage cost
 
 | Stage cost | Kitsune overhead | Representative workload |
 |---|---:|---|
-| ~5 ns (trivial) | +110% | CPU-trivial transforms |
-| ~300 ns (SHA-256) | +52% | Hashing, encoding, validation |
-| ~3 µs (I/O sleep) | +6% | Database queries, HTTP calls |
-| ~100 µs (network) | <1% | Cross-datacenter RPC |
+| ~5 ns (trivial) | -54% (faster) | CPU-trivial transforms |
+| ~300 ns (SHA-256) | -44% (faster) | Hashing, encoding, validation |
+| ~3 µs (I/O sleep) | -8% (faster) | Database queries, HTTP calls |
+| ~100 µs (network) | ~0% | Cross-datacenter RPC |
 
-**Framework overhead is negligible for any I/O-bound stage.** The ~180 ns/item
-Kitsune cost only matters when stage functions themselves run in under ~500 ns —
-which is rare in production pipelines that interact with external systems.
+**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, stage fusion, and receive-side micro-batching together eliminate more overhead than the `any`-boxing and errgroup machinery add. The only remaining cost vs hypothetical zero-overhead raw pipelines is `any`-boxing (2 allocs/item, ~4 ns) and the single blocking channel receive from Source to the fused chain.
 
 ---
 
@@ -220,7 +217,7 @@ These bounds are enforced by `TestAllocBounds` in `bench_allocs_test.go` and run
 | Operator | Config | allocs/run (10K items) | Ceiling | Allocs/item | Key sources |
 |---|---|---:|---:|---:|---|
 | `Map` | `Concurrency(1)`, `n*2` | ~19,675 | 21,000 | ~2 | `any` boxing of input + output |
-| `FlatMap` | 1K items → 10K outputs | ~10,288 | 11,000 | ~1/output | yield closure + `any` boxing per output |
+| `FlatMap` | 1K items → 10K outputs | ~10,297 | 11,000 | ~1/output | yield closure + `any` boxing per output |
 | `Batch` | `Batch(100)`, 100 flushes | ~10,003 | 10,500 | ~1 | `make([]T)` per flush; `[]any` buffer reused via `clear`+reslice |
 | `RateLimit` | wait mode, rate=1e9/s | ~19,556 | 21,000 | ~2 | Same as Map (reservation amortised at high rate) |
 | `CircuitBreaker` | closed state, all-success | ~19,683 | 21,000 | ~2 | Map boxing + 2× `ref.Update` closures (amortised) |

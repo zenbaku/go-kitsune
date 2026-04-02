@@ -8,8 +8,8 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kkafka"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kkafka"
 )
 
 // brokerAddr returns the test broker address from the environment,

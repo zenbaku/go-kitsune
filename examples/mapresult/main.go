@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strconv"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // parseRecord tries to convert a raw string record into a typed value.

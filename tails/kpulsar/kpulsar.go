@@ -40,7 +40,7 @@ package kpulsar
 import (
 	"context"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"github.com/apache/pulsar-client-go/pulsar"
 )
 

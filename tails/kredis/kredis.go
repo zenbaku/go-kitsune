@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"github.com/redis/go-redis/v9"
 )
 

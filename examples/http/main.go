@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/khttp"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/khttp"
 )
 
 type User struct {

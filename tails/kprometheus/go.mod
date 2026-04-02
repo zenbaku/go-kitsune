@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/kprometheus
+module github.com/zenbaku/go-kitsune/tails/kprometheus
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
 )
@@ -20,4 +20,4 @@ require (
 	google.golang.org/protobuf v1.36.5 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

@@ -38,7 +38,7 @@ Some tails (like `kredis`) provide multiple shapes — a source, a sink, and a `
 ### kkafka — Apache Kafka
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kkafka
+go get github.com/zenbaku/go-kitsune/tails/kkafka
 ```
 
 **Source** — consume messages from a topic:
@@ -81,7 +81,7 @@ See [`examples/` in the kkafka module](../tails/kkafka/) for a complete example.
 ### knats — NATS
 
 ```
-go get github.com/jonathan/go-kitsune/tails/knats
+go get github.com/zenbaku/go-kitsune/tails/knats
 ```
 
 Provides NATS core subscribe/publish sources and sinks, and JetStream consume/publish variants.
@@ -91,7 +91,7 @@ Provides NATS core subscribe/publish sources and sinks, and JetStream consume/pu
 ### kpubsub — Google Cloud Pub/Sub
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kpubsub
+go get github.com/zenbaku/go-kitsune/tails/kpubsub
 ```
 
 Pub/Sub subscribe source and publish sink. You own the `*pubsub.Client`.
@@ -101,7 +101,7 @@ Pub/Sub subscribe source and publish sink. You own the `*pubsub.Client`.
 ### ksqs — AWS SQS
 
 ```
-go get github.com/jonathan/go-kitsune/tails/ksqs
+go get github.com/zenbaku/go-kitsune/tails/ksqs
 ```
 
 Provides a receive source, a send sink, and a batch send sink. You own the `*sqs.Client`.
@@ -111,7 +111,7 @@ Provides a receive source, a send sink, and a batch send sink. You own the `*sqs
 ### kkinesis — AWS Kinesis
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kkinesis
+go get github.com/zenbaku/go-kitsune/tails/kkinesis
 ```
 
 Shard consumer source and PutRecords batch sink. You own the `*kinesis.Client`.
@@ -121,7 +121,7 @@ Shard consumer source and PutRecords batch sink. You own the `*kinesis.Client`.
 ### kpulsar — Apache Pulsar
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kpulsar
+go get github.com/zenbaku/go-kitsune/tails/kpulsar
 ```
 
 Consumer source and producer sink. You own the `pulsar.Client`.
@@ -131,7 +131,7 @@ Consumer source and producer sink. You own the `pulsar.Client`.
 ### kmqtt — MQTT
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kmqtt
+go get github.com/zenbaku/go-kitsune/tails/kmqtt
 ```
 
 Subscribe source and publish sink. You own the `mqtt.Client`.
@@ -141,7 +141,7 @@ Subscribe source and publish sink. You own the `mqtt.Client`.
 ### kwebsocket — WebSocket
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kwebsocket
+go get github.com/zenbaku/go-kitsune/tails/kwebsocket
 ```
 
 Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/websocket`](../examples/websocket) for a complete in-process server/client example.
@@ -151,7 +151,7 @@ Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/web
 ### kgrpc — gRPC
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kgrpc
+go get github.com/zenbaku/go-kitsune/tails/kgrpc
 ```
 
 Server-streaming source and client-streaming sink. You own the gRPC connection.
@@ -163,7 +163,7 @@ Server-streaming source and client-streaming sink. You own the gRPC connection.
 ### kpostgres — PostgreSQL
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kpostgres
+go get github.com/zenbaku/go-kitsune/tails/kpostgres
 ```
 
 **Source** — LISTEN/NOTIFY for event-driven pipelines:
@@ -207,7 +207,7 @@ pipe.ForEach(sink).Run(ctx)
 ### kredis — Redis
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kredis
+go get github.com/zenbaku/go-kitsune/tails/kredis
 ```
 
 `kredis` is the most feature-rich tail — it provides four distinct capabilities:
@@ -253,7 +253,7 @@ See [`examples/redis`](../examples/redis) for a complete example covering all fo
 ### ksqlite — SQLite
 
 ```
-go get github.com/jonathan/go-kitsune/tails/ksqlite
+go get github.com/zenbaku/go-kitsune/tails/ksqlite
 ```
 
 Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`examples/sqlite`](../examples/sqlite).
@@ -263,7 +263,7 @@ Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`example
 ### kmongo — MongoDB
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kmongo
+go get github.com/zenbaku/go-kitsune/tails/kmongo
 ```
 
 Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
@@ -273,7 +273,7 @@ Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
 ### kdynamo — AWS DynamoDB
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kdynamo
+go get github.com/zenbaku/go-kitsune/tails/kdynamo
 ```
 
 Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
@@ -283,7 +283,7 @@ Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
 ### kclickhouse — ClickHouse
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kclickhouse
+go get github.com/zenbaku/go-kitsune/tails/kclickhouse
 ```
 
 Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
@@ -293,7 +293,7 @@ Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
 ### kes — Elasticsearch
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kes
+go get github.com/zenbaku/go-kitsune/tails/kes
 ```
 
 Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`.
@@ -305,7 +305,7 @@ Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`
 ### ks3 — S3-compatible object storage
 
 ```
-go get github.com/jonathan/go-kitsune/tails/ks3
+go get github.com/zenbaku/go-kitsune/tails/ks3
 ```
 
 Works with AWS S3, Google Cloud Storage (via S3-interop API), MinIO, and any other S3-compatible store.
@@ -336,7 +336,7 @@ pipe.ForEach(processLine).Run(ctx)
 ### kfile — Local files (CSV, JSONL, raw)
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kfile
+go get github.com/zenbaku/go-kitsune/tails/kfile
 ```
 
 Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See [`examples/files`](../examples/files).
@@ -348,7 +348,7 @@ Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CS
 ### khttp — HTTP pagination source and webhook sink
 
 ```
-go get github.com/jonathan/go-kitsune/tails/khttp
+go get github.com/zenbaku/go-kitsune/tails/khttp
 ```
 
 Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See [`examples/http`](../examples/http).
@@ -366,7 +366,7 @@ runner.Run(ctx, kitsune.WithHook(hook))
 ### kotel — OpenTelemetry
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kotel
+go get github.com/zenbaku/go-kitsune/tails/kotel
 ```
 
 Records per-stage metrics using any OTel-compatible backend. Instruments emitted:
@@ -391,7 +391,7 @@ runner.Run(ctx, kitsune.WithHook(hook))
 ### kprometheus — Prometheus
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kprometheus
+go get github.com/zenbaku/go-kitsune/tails/kprometheus
 ```
 
 Counters and histograms per stage, registered against any `prometheus.Registerer`.
@@ -416,7 +416,7 @@ See [`examples/prometheus`](../examples/prometheus) for a complete example with 
 ### kdatadog — Datadog DogStatsD
 
 ```
-go get github.com/jonathan/go-kitsune/tails/kdatadog
+go get github.com/zenbaku/go-kitsune/tails/kdatadog
 ```
 
 Counts and distributions per stage, sent via DogStatsD. You own the `*statsd.Client`.

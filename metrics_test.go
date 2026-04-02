@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func TestMetricsHook_Processed(t *testing.T) {

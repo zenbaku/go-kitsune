@@ -2,10 +2,11 @@
 //
 // Demonstrates: WithLatestFrom, Partition, Map, MergeRunners, NewChannel.
 //
-// Both pipelines passed to WithLatestFrom must share the same pipeline graph.
-// The idiomatic pattern is to use a single source (Channel or Generate), then
-// split it with Partition so that config/state updates and primary events each
-// travel their own branch of the same graph.
+// WithLatestFrom works with pipelines from the same graph or from completely
+// independent graphs. Use independent pipelines (scenario 3) when the two
+// streams originate from separate sources. Use Partition on a shared source
+// (scenarios 1 and 2) when config updates and primary events are multiplexed
+// into the same channel.
 package main
 
 import (
@@ -13,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // --- Scenario 1: tag requests with the active config version ---
@@ -164,5 +165,51 @@ func main() {
 	fmt.Printf("%-6s  %-6s  %-6s\n", "raw", "offset", "adjusted")
 	for _, a := range measurements2 {
 		fmt.Printf("%-6.1f  %-6.1f  %.1f\n", a.Raw, a.Offset, a.Final)
+	}
+
+	// --- Scenario 3: independent graphs — two separate sources ---
+	//
+	// When the primary and secondary streams come from entirely different sources
+	// there is no need to multiplex them through a shared channel. Pass the two
+	// independent pipelines directly to WithLatestFrom.
+	fmt.Println("\n=== WithLatestFrom: independent sources ===")
+
+	configCh := kitsune.NewChannel[string](4)
+	requestCh := kitsune.NewChannel[string](4)
+
+	ctx3 := context.Background()
+
+	var tagged3 []string
+	h3 := kitsune.Map(
+		kitsune.WithLatestFrom(requestCh.Source(), configCh.Source()),
+		func(_ context.Context, p kitsune.Pair[string, string]) (string, error) {
+			return fmt.Sprintf("%s @ %s", p.First, p.Second), nil
+		},
+	).ForEach(func(_ context.Context, s string) error {
+		tagged3 = append(tagged3, s)
+		return nil
+	}).RunAsync(ctx3)
+
+	// Publish config first so WithLatestFrom has a value before requests arrive.
+	_ = configCh.Send(ctx3, "v2")
+	time.Sleep(20 * time.Millisecond)
+
+	_ = requestCh.Send(ctx3, "req-1")
+	_ = requestCh.Send(ctx3, "req-2")
+	time.Sleep(20 * time.Millisecond)
+
+	_ = configCh.Send(ctx3, "v3") // config update mid-stream
+	time.Sleep(20 * time.Millisecond)
+
+	_ = requestCh.Send(ctx3, "req-3")
+
+	configCh.Close()
+	requestCh.Close()
+
+	if err := h3.Wait(); err != nil {
+		panic(err)
+	}
+	for _, t := range tagged3 {
+		fmt.Println(" ", t)
 	}
 }

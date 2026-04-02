@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/jonathan/go-kitsune/tails/kdynamo"
+	"github.com/zenbaku/go-kitsune/tails/kdynamo"
 )
 
 // --- in-memory DynamoDB stub ---

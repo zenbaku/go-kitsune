@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/examples/websocket
+module github.com/zenbaku/go-kitsune/examples/websocket
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
-	github.com/jonathan/go-kitsune/tails/kwebsocket v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune/tails/kwebsocket v0.0.0
 	nhooyr.io/websocket v1.8.17
 )
 
@@ -14,6 +14,6 @@ require (
 )
 
 replace (
-	github.com/jonathan/go-kitsune => ../..
-	github.com/jonathan/go-kitsune/tails/kwebsocket => ../../tails/kwebsocket
+	github.com/zenbaku/go-kitsune => ../..
+	github.com/zenbaku/go-kitsune/tails/kwebsocket => ../../tails/kwebsocket
 )

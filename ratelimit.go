@@ -3,7 +3,7 @@ package kitsune
 import (
 	"context"
 
-	"github.com/jonathan/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/engine"
 	"golang.org/x/time/rate"
 )
 

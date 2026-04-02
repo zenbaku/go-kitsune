@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"github.com/reugn/go-streams/extension"
 	gsflow "github.com/reugn/go-streams/flow"
 	"github.com/sourcegraph/conc"

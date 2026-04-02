@@ -14,8 +14,8 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kwebsocket"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kwebsocket"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )

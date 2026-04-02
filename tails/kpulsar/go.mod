@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/tails/kpulsar
+module github.com/zenbaku/go-kitsune/tails/kpulsar
 
 go 1.26.1
 
 require (
 	github.com/apache/pulsar-client-go v0.14.0
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -53,4 +53,4 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

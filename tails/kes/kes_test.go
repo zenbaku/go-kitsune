@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/elastic/go-elasticsearch/v8"
-	"github.com/jonathan/go-kitsune/tails/kes"
+	"github.com/zenbaku/go-kitsune/tails/kes"
 )
 
 // cannedTransport returns a sequence of canned HTTP responses.

@@ -77,6 +77,12 @@ func putFlatMapSlot(s *flatMapSlot) {
 	flatMapSlotPool.Put(s)
 }
 
+// receiveBatchSize is the maximum number of items drained per channel receive
+// in the fast-path stage functions. One blocking receive is followed by up to
+// receiveBatchSize-1 non-blocking drains, amortising per-channel-op overhead
+// across a micro-batch while preserving per-item timing correctness.
+const receiveBatchSize = 16
+
 // RunConfig holds runtime options for a pipeline execution.
 type RunConfig struct {
 	Hook         Hook
@@ -182,8 +188,18 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 		return runWithDrain(ctx, cfg, g, chans, outboxes, hook, done, signalDone)
 	}
 
+	fusionChains := detectFusionChains(g, chans, hook)
+	fusedIDs, fusedHeads := buildFusionSets(fusionChains)
+
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, n := range g.Nodes {
+		if fusedIDs[n.ID] {
+			if chain := fusedHeads[n.ID]; chain != nil {
+				eg.Go(fusedNodeRunner(egCtx, chain))
+			}
+			// Interior and tail nodes are handled by the head's goroutine.
+			continue
+		}
 		eg.Go(nodeRunner(egCtx, n, cfg, chans, outboxes, hook, done, signalDone))
 	}
 	return eg.Wait()
@@ -221,7 +237,16 @@ func runWithDrain(parentCtx context.Context, cfg RunConfig, g *Graph, chans map[
 		}
 	}()
 
+	fusionChains := detectFusionChains(g, chans, hook)
+	fusedIDs, fusedHeads := buildFusionSets(fusionChains)
+
 	for _, n := range g.Nodes {
+		if fusedIDs[n.ID] {
+			if chain := fusedHeads[n.ID]; chain != nil {
+				eg.Go(fusedNodeRunner(egCtx, chain))
+			}
+			continue
+		}
 		eg.Go(nodeRunner(egCtx, n, cfg, chans, outboxes, hook, done, signalDone))
 	}
 
@@ -351,6 +376,15 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 
 	return func() error {
 		defer outCloser()
+		// Drain all input channels when this stage exits. This unblocks any
+		// upstream that is doing a plain send (drain protocol fast path), and
+		// prevents goroutine leaks if the pipeline cancels mid-stream.
+		if n.Kind != Source {
+			for _, ch := range inChs {
+				ch := ch
+				defer func() { go func() { for range ch {} }() }()
+			}
+		}
 		return supervise(ctx, n.Supervision, hook, name, inner)
 	}
 }
@@ -407,8 +441,39 @@ func wrapStageErr(name string, err error, attempt int) error {
 // Source
 // ---------------------------------------------------------------------------
 
+func runSourceFastPath(ctx context.Context, fn func(context.Context, func(any) bool) error, outCh chan any, done <-chan struct{}) error {
+	srcCtx, srcCancel := context.WithCancel(ctx)
+	defer srcCancel()
+	go func() {
+		select {
+		case <-done:
+			srcCancel()
+		case <-srcCtx.Done():
+		}
+	}()
+	err := fn(srcCtx, func(item any) bool {
+		outCh <- item                 // plain send — drain protocol prevents deadlock
+		return srcCtx.Err() == nil   // detect cancellation after send
+	})
+	select {
+	case <-done:
+		return nil
+	default:
+	}
+	return err
+}
+
 func runSource(ctx context.Context, n *Node, outbox Outbox, hook Hook, done <-chan struct{}, sampleRate int64, gate *Gate) error {
 	name := nodeName(n, "source")
+
+	if _, ok := hook.(NoopHook); ok {
+		if bo, ok := outbox.(*blockingOutbox); ok {
+			if gate == nil {
+				fn := n.Fn.(func(context.Context, func(any) bool) error)
+				return runSourceFastPath(ctx, fn, bo.ch, done)
+			}
+		}
+	}
 
 	// Create a source-scoped context that also fires when the drain-done signal
 	// is received. This lets source functions use <-ctx.Done() uniformly for
@@ -477,6 +542,18 @@ func runMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hoo
 	name := nodeName(n, "map")
 
 	if n.Concurrency <= 1 {
+		// Batch-drain fast path is unsafe when supervision is active: pre-fetching
+		// items from the channel means they are lost if the stage errors and is
+		// restarted. Only use it when supervision is disabled.
+		if !n.Supervision.HasSupervision() {
+			if _, ok := handler.(DefaultHandler); ok {
+				if _, ok := hook.(NoopHook); ok {
+					if bo, ok := outbox.(*blockingOutbox); ok {
+						return runMapFastPath(ctx, fn, inCh, bo.ch, name)
+					}
+				}
+			}
+		}
 		return runMapSingle(ctx, fn, inCh, outbox, handler, name, hook, sampleRate)
 	}
 	if n.Ordered {
@@ -488,32 +565,54 @@ func runMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hoo
 // runMapFastPath is a stripped-down Map loop for the common case where no
 // instrumentation, retries, or overflow handling are active. It replaces the
 // two-case receive select with a range loop and calls fn directly.
+// Drain protocol: on exit a goroutine drains inCh so upstream senders never
+// deadlock on a plain channel send.
 func runMapFastPath(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outCh chan any, name string) error {
-	for item := range inCh {
-		result, err := fn(ctx, item)
-		if err != nil {
-			if err == ErrSkipped {
-				continue
-			}
-			return &StageError{Stage: name, Cause: err}
+	defer func() { go func() { for range inCh {} }() }()
+	var buf [receiveBatchSize]any
+	for {
+		item, ok := <-inCh
+		if !ok {
+			return ctx.Err()
 		}
-		select {
-		case outCh <- result:
-		case <-ctx.Done():
+		buf[0] = item
+		n := 1
+		closed := false
+	fillMapBuf:
+		for n < receiveBatchSize {
+			select {
+			case v, ok2 := <-inCh:
+				if !ok2 {
+					closed = true
+					break fillMapBuf
+				}
+				buf[n] = v
+				n++
+			default:
+				break fillMapBuf
+			}
+		}
+		for i := range n {
+			result, err := fn(ctx, buf[i])
+			buf[i] = nil
+			if err != nil {
+				if err == ErrSkipped {
+					continue
+				}
+				return &StageError{Stage: name, Cause: err}
+			}
+			outCh <- result
+		}
+		if closed {
+			return ctx.Err()
+		}
+		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 	}
-	return ctx.Err()
 }
 
 func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook, sampleRate int64) error {
-	if _, ok := handler.(DefaultHandler); ok {
-		if _, ok := hook.(NoopHook); ok {
-			if bo, ok := outbox.(*blockingOutbox); ok {
-				return runMapFastPath(ctx, fn, inCh, bo.ch, name)
-			}
-		}
-	}
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
@@ -766,6 +865,15 @@ func runFlatMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook
 	name := nodeName(n, "flatmap")
 
 	if n.Concurrency <= 1 {
+		if !n.Supervision.HasSupervision() {
+			if _, ok := handler.(DefaultHandler); ok {
+				if _, ok := hook.(NoopHook); ok {
+					if bo, ok := outbox.(*blockingOutbox); ok {
+						return runFlatMapFastPath(ctx, fn, inCh, bo.ch, name)
+					}
+				}
+			}
+		}
 		return runFlatMapSingle(ctx, fn, inCh, outbox, handler, name, hook)
 	}
 	if n.Ordered {
@@ -816,34 +924,59 @@ func flatMapProcessItem(ctx context.Context, fn func(context.Context, any, func(
 // runFlatMapFastPath is the instrumentation-free FlatMap loop. The yield
 // closure sends each output directly to outCh without going through the
 // outbox interface or accumulating into an intermediate slice.
+// Drain protocol: on exit a goroutine drains inCh so upstream senders never
+// deadlock on a plain channel send.
 func runFlatMapFastPath(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outCh chan any, name string) error {
-	for item := range inCh {
-		err := fn(ctx, item, func(v any) error {
+	defer func() { go func() { for range inCh {} }() }()
+	var buf [receiveBatchSize]any
+	for {
+		item, ok := <-inCh
+		if !ok {
+			return ctx.Err()
+		}
+		buf[0] = item
+		n := 1
+		closed := false
+	fillFlatMapBuf:
+		for n < receiveBatchSize {
 			select {
-			case outCh <- v:
+			case v, ok2 := <-inCh:
+				if !ok2 {
+					closed = true
+					break fillFlatMapBuf
+				}
+				buf[n] = v
+				n++
+			default:
+				break fillFlatMapBuf
+			}
+		}
+		for i := range n {
+			err := fn(ctx, buf[i], func(v any) error {
+				outCh <- v
 				return nil
-			case <-ctx.Done():
+			})
+			buf[i] = nil
+			if err != nil {
+				if err == ErrSkipped {
+					continue
+				}
+				return &StageError{Stage: name, Cause: err}
+			}
+			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-		})
-		if err != nil {
-			if err == ErrSkipped {
-				continue
-			}
-			return &StageError{Stage: name, Cause: err}
+		}
+		if closed {
+			return ctx.Err()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 	}
-	return ctx.Err()
 }
 
 func runFlatMapSingle(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook) error {
-	if _, ok := handler.(DefaultHandler); ok {
-		if _, ok := hook.(NoopHook); ok {
-			if bo, ok := outbox.(*blockingOutbox); ok {
-				return runFlatMapFastPath(ctx, fn, inCh, bo.ch, name)
-			}
-		}
-	}
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
@@ -1101,17 +1234,47 @@ dispatchDone:
 // ---------------------------------------------------------------------------
 
 // runFilterFastPath is the instrumentation-free Filter loop.
+// Drain protocol: on exit a goroutine drains inCh so upstream senders never
+// deadlock on a plain channel send.
 func runFilterFastPath(ctx context.Context, fn func(any) bool, inCh chan any, outCh chan any) error {
-	for item := range inCh {
-		if fn(item) {
+	defer func() { go func() { for range inCh {} }() }()
+	var buf [receiveBatchSize]any
+	for {
+		item, ok := <-inCh
+		if !ok {
+			return ctx.Err()
+		}
+		buf[0] = item
+		n := 1
+		closed := false
+	fillFilterBuf:
+		for n < receiveBatchSize {
 			select {
-			case outCh <- item:
-			case <-ctx.Done():
-				return ctx.Err()
+			case v, ok2 := <-inCh:
+				if !ok2 {
+					closed = true
+					break fillFilterBuf
+				}
+				buf[n] = v
+				n++
+			default:
+				break fillFilterBuf
 			}
 		}
+		for i := range n {
+			it := buf[i]
+			buf[i] = nil
+			if fn(it) {
+				outCh <- it
+			}
+		}
+		if closed {
+			return ctx.Err()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
-	return ctx.Err()
 }
 
 func runFilter(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
@@ -1453,15 +1616,44 @@ func runMerge(ctx context.Context, inChs []chan any, outbox Outbox, hook Hook, n
 
 // runSinkFastPath is the instrumentation-free Sink loop for Concurrency(1).
 func runSinkFastPath(ctx context.Context, fn func(context.Context, any) error, inCh chan any, name string) error {
-	for item := range inCh {
-		if err := fn(ctx, item); err != nil {
-			if err == ErrSkipped {
-				continue
+	defer func() { go func() { for range inCh {} }() }()
+	var buf [receiveBatchSize]any
+	for {
+		item, ok := <-inCh
+		if !ok {
+			return ctx.Err()
+		}
+		buf[0] = item
+		n := 1
+		closed := false
+	fillSinkBuf:
+		for n < receiveBatchSize {
+			select {
+			case v, ok2 := <-inCh:
+				if !ok2 {
+					closed = true
+					break fillSinkBuf
+				}
+				buf[n] = v
+				n++
+			default:
+				break fillSinkBuf
 			}
-			return &StageError{Stage: name, Cause: err}
+		}
+		for i := range n {
+			it := buf[i]
+			buf[i] = nil
+			if err := fn(ctx, it); err != nil {
+				if err == ErrSkipped {
+					continue
+				}
+				return &StageError{Stage: name, Cause: err}
+			}
+		}
+		if closed {
+			return ctx.Err()
 		}
 	}
-	return ctx.Err()
 }
 
 func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook, sampleRate int64) error {
@@ -1470,7 +1662,7 @@ func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook, sampleRate 
 	name := nodeName(n, "sink")
 	adapted := func(ctx context.Context, in any) (any, error) { return nil, fn(ctx, in) }
 
-	if n.Concurrency <= 1 {
+	if n.Concurrency <= 1 && !n.Supervision.HasSupervision() {
 		if _, ok := handler.(DefaultHandler); ok {
 			if _, ok := hook.(NoopHook); ok {
 				return runSinkFastPath(ctx, fn, inCh, name)

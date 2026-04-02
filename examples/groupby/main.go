@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sort"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 type Order struct {

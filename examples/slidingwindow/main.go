@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"math"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func mean(xs []float64) float64 {

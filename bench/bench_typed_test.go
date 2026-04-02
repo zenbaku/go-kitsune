@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jonathan/go-kitsune/engine/typed"
+	"github.com/zenbaku/go-kitsune/engine/typed"
 )
 
 // BenchmarkTyped runs the same Map → Filter → Drain pipeline as BenchmarkKitsune

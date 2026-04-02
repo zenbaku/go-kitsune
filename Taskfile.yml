@@ -56,8 +56,65 @@ tasks:
   test:ext:
     desc: Run tail tests (kredis, ksqlite, kfile, khttp)
     cmds:
-      - for: [kredis, ksqlite, kfile, khttp, kotel, kprometheus, knats, kpubsub, kgrpc, ksqs, kdatadog, kmongo, kclickhouse, kwebsocket, kmqtt, kkinesis, kpulsar, kes, kdynamo]
+      - for: [kredis, ksqlite, kfile, khttp, kotel, kprometheus, knats, kpubsub, kgrpc, ksqs, kdatadog, kmongo, kclickhouse, kwebsocket, kmqtt, kkinesis, kpulsar, kes, kdynamo, kgcs, kazsb, kazeh]
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
+
+  test:fuzz:
+    desc: Run fuzz seed corpus only (fast; use fuzz:* tasks to actively search for bugs)
+    cmds:
+      - go test -run='FuzzOutboxDrop' -race ./engine/
+      - go test -run='FuzzPipeline' .
+
+  fuzz:outbox-drop-newest:
+    desc: Fuzz the drop-newest outbox under concurrent senders (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzOutboxDropNewest -fuzztime={{.FUZZ_TIME}} -race ./engine/
+
+  fuzz:outbox-drop-oldest:
+    desc: Fuzz the drop-oldest outbox under concurrent senders (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzOutboxDropOldest -fuzztime={{.FUZZ_TIME}} -race ./engine/
+
+  fuzz:overflow:
+    desc: Fuzz pipeline Map stages across all overflow strategies (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzPipelineOverflow -fuzztime={{.FUZZ_TIME}} .
+
+  fuzz:cancellation:
+    desc: Fuzz pipeline context cancellation at varying times (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzPipelineCancellation -fuzztime={{.FUZZ_TIME}} .
+
+  fuzz:multi-stage:
+    desc: Fuzz the scheduler across multi-stage pipelines (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzPipelineMultiStage -fuzztime={{.FUZZ_TIME}} .
+
+  fuzz:all:
+    desc: Run all fuzz targets sequentially (FUZZ_TIME default 5m each; good for nightly CI)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - task: fuzz:outbox-drop-newest
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
+      - task: fuzz:outbox-drop-oldest
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
+      - task: fuzz:overflow
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
+      - task: fuzz:cancellation
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
+      - task: fuzz:multi-stage
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
 
   bench:
     desc: Run benchmarks

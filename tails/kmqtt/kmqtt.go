@@ -35,7 +35,7 @@ package kmqtt
 import (
 	"context"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 

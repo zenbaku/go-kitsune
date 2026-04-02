@@ -32,7 +32,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // Listen creates a Pipeline that receives PostgreSQL LISTEN/NOTIFY notifications

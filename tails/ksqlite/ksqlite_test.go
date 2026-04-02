@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/ksqlite"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/ksqlite"
 	_ "modernc.org/sqlite"
 )
 

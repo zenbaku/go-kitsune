@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/kwebsocket
+module github.com/zenbaku/go-kitsune/tails/kwebsocket
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	nhooyr.io/websocket v1.8.17
 )
 
@@ -12,4 +12,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

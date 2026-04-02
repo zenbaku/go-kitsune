@@ -23,7 +23,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // Consume creates a Pipeline that reads messages from a Kafka topic.

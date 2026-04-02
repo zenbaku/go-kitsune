@@ -2,7 +2,7 @@
 
 > **Note:** This project is an AI code exploration — the codebase is partially written using AI agents as an experiment in AI-assisted software development.
 
-A type-safe, concurrent data pipeline library for Go. Compose ordinary functions into pipelines; the runtime handles channels, goroutines, backpressure, and error routing transparently.
+Type-safe, concurrent data pipelines for Go. Compose functions into stages; channels, goroutines, backpressure, and error routing are handled for you.
 
 ![Kitsune Inspector — live pipeline view](doc/screenshoot.png)
 
@@ -22,20 +22,20 @@ go get github.com/zenbaku/go-kitsune
 
 Kitsune is a good fit for **in-process data pipelines** where you want typed composition, backpressure, and concurrency control without boilerplate:
 
-- **ETL and data processing** — read from files, APIs, or databases; transform; write to sinks
-- **Fan-out workflows** — partition, broadcast, or duplicate streams with compile-time type safety
-- **Concurrent enrichment** — call external services with bounded parallelism and automatic retry
-- **Streaming aggregation** — batch, window, deduplicate, or cache in-flight data
+- **ETL and data processing**: read from files, APIs, or databases; transform; write to sinks
+- **Fan-out workflows**: partition, broadcast, or duplicate streams with compile-time type safety
+- **Concurrent enrichment**: call external services with bounded parallelism and automatic retry
+- **Streaming aggregation**: batch, window, deduplicate, or cache in-flight data
 
-Kitsune is **not** a distributed stream processor — there is no Kafka consumer group management, no checkpointing, and no cluster coordination. For distributed processing, look at dedicated frameworks. Kitsune complements them: use it for the in-process pipeline logic and connect to external systems through the `tails/` or your own `Generate`/`ForEach` stages.
+Kitsune is **not** a distributed stream processor. No Kafka consumer group management, no checkpointing, no cluster coordination. For distributed processing, use a dedicated framework. Kitsune complements them: handle the in-process pipeline logic here and connect to external systems via `tails/` or your own `Generate`/`ForEach` stages.
 
-**New to Kitsune?** Start with the [Getting Started guide](doc/getting-started.md) — mental model, first pipeline, concurrency, error handling, and testing in ~10 minutes.
+**New to Kitsune?** Start with the [Getting Started guide](doc/getting-started.md): first pipeline, concurrency, error handling, and testing in ~10 minutes.
 
 For a comparison with other Go pipeline and streaming libraries (conc, go-streams, RxGo, Watermill, Benthos, Machinery), see the [Comparison Guide](doc/comparison.md).
 
 ## Live inspector dashboard
 
-The `inspector` sub-package serves a real-time web dashboard. Add one line to any pipeline — no other changes needed.
+The `inspector` sub-package serves a real-time web dashboard. Add one line to any pipeline, no other changes needed.
 
 ```
 go get github.com/zenbaku/go-kitsune/inspector
@@ -83,7 +83,7 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 
 ## Operator catalog
 
-**Free functions** (`Map`, `FlatMap`, `Batch`, …) change the element type as items flow through. **Methods** (`.Filter`, `.Take`, `.Skip`, …) preserve it. This split is a Go language constraint: methods cannot introduce new type parameters, so any operation that changes `Pipeline[A]` to `Pipeline[B]` must be a free function like `Map[A, B]`. The upside is that each intermediate variable documents what is flowing, and the compiler checks every type transition.
+**Free functions** (`Map`, `FlatMap`, `Batch`, …) change the element type as items flow through. **Methods** (`.Filter`, `.Take`, `.Skip`, …) preserve it. This split is a Go constraint: methods can't introduce new type parameters, so anything that changes `Pipeline[A]` to `Pipeline[B]` must be a free function. Each intermediate variable documents what is flowing, and the compiler checks every transition.
 
 ### Sources
 
@@ -139,13 +139,13 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 
 ### Enrichment
 
-Enrichment operators bulk-fetch external data for a batch of items and join it back. Keys are automatically deduplicated before each fetch call — if multiple items share the same key, only one lookup is made.
+Enrichment operators bulk-fetch external data for a batch of items and attach it. Keys are deduplicated before each fetch call, so if multiple items share the same key, only one lookup is made.
 
 | Function | Description |
 |---|---|
 | `MapBatch[I,O](p, size, fn, opts…)` | Collect up to `size` items, pass the slice to `fn`, flatten results back to individual items; sugar for `Batch`+`FlatMap` |
-| `LookupBy[T,K,V](p, cfg)` | Bulk-fetch a value per item using `LookupConfig.Key`/`Fetch`; emits `Pair[T,V]` — use with `ZipWith` for parallel lookups |
-| `Enrich[T,K,V,O](p, cfg)` | Like `LookupBy` but calls `EnrichConfig.Join` to produce `O` directly — no intermediate `Pair` |
+| `LookupBy[T,K,V](p, cfg)` | Bulk-fetch a value per item using `LookupConfig.Key`/`Fetch`; emits `Pair[T,V]`; use `ZipWith` for parallel lookups |
+| `Enrich[T,K,V,O](p, cfg)` | Like `LookupBy` but calls `EnrichConfig.Join` to produce `O` directly, no intermediate `Pair` |
 
 Config types:
 
@@ -154,7 +154,7 @@ kitsune.LookupConfig[T, K, V]{Key, Fetch, BatchSize}
 kitsune.EnrichConfig[T, K, V, O]{Key, Fetch, Join, BatchSize}
 ```
 
-**Parallel lookups** — use `Broadcast` + two `LookupBy` calls + `ZipWith` to run independent fetches concurrently:
+**Parallel lookups**: use `Broadcast` + two `LookupBy` calls + `ZipWith` to run independent fetches concurrently:
 
 ```go
 branches   := kitsune.Broadcast(terms, 2)
@@ -224,7 +224,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 |---|---|
 | `Partition[T](p, fn)` | Route each item to `match` or `rest` based on predicate; exactly one output per item |
 | `Broadcast[T](p, n)` | Copy every item to all `n` output pipelines |
-| `Merge[T](ps…)` | Fan-in: combine multiple same-graph pipelines into one |
+| `Merge[T](ps…)` | Fan-in: combine multiple pipelines into one; works across independent graphs |
 | `Zip[A,B](a, b)` | Pair items by position into `Pair[A,B]`; stops when the shorter input closes |
 | `ZipWith[A,B,O](a, b, fn, opts…)` | Like `Zip` but applies `fn(a, b)` immediately, producing `O` directly without an intermediate `Pair` |
 | `Unzip[A,B](p)` | Split a `Pipeline[Pair[A,B]]` into two pipelines `(*Pipeline[A], *Pipeline[B])`; inverse of `Zip` |
@@ -258,7 +258,7 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 
 ### Channel[T] + RunAsync
 
-`Channel[T]` is a push-based source for scenarios where external code drives when items arrive — HTTP handlers, CLI loops, event bridges.
+`Channel[T]` is a push-based source for when external code drives item arrival: HTTP handlers, CLI loops, event bridges.
 
 ```go
 src := kitsune.NewChannel[string](256)
@@ -311,7 +311,7 @@ events, _ := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
 | `(s) Apply(p *Pipeline[I]) *Pipeline[O]` | Run this stage against an input pipeline |
 | `Then[A,B,C](first, second)` | Compose two stages into one; free function required (Go methods cannot introduce new type parameters) |
 
-`Stage[T, T]` is directly compatible with `.Through()` — no adapter needed:
+`Stage[T, T]` is directly compatible with `.Through()`, no adapter needed:
 
 ```go
 var Validate kitsune.Stage[Order, Order] = func(p *kitsune.Pipeline[Order]) *kitsune.Pipeline[Order] {
@@ -325,7 +325,7 @@ kitsune.Then(Validate, enrich)  // compose with a downstream stage
 
 #### Generic middleware
 
-A Stage factory function parameterised over `T` acts as generic middleware — one definition, any item type:
+A Stage factory function parameterised over `T` acts as generic middleware, one definition for any item type:
 
 ```go
 // WithLogging works for Pipeline[string], Pipeline[Event], Pipeline[Result], etc.
@@ -365,7 +365,7 @@ full   := kitsune.Then(ParseStage, enrich)
 
 #### Swappable sources
 
-The same `Stage` value runs unchanged against different sources — `FromSlice` for deterministic tests, `Channel[T]` for production:
+The same `Stage` runs against different sources — `FromSlice` for tests, `Channel[T]` for production:
 
 ```go
 var FullPipeline = kitsune.Then(ParseStage, EnrichStage) // Stage[string, Result]
@@ -440,7 +440,7 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 
 | Symbol | Description |
 |---|---|
-| `Hook` interface | `OnStageStart`, `OnItem`, `OnStageDone` — base lifecycle events |
+| `Hook` interface | `OnStageStart`, `OnItem`, `OnStageDone`; base lifecycle events |
 | `OverflowHook` | Optional extension: `OnDrop` called when items are dropped |
 | `SupervisionHook` | Optional extension: `OnStageRestart` called on stage restart |
 | `SampleHook` | Optional extension: `OnItemSample` called for ~every 10th item |
@@ -459,7 +459,7 @@ throughput (millions of items/sec) this creates GC pressure that shows up as
 latency spikes. `MapPooled` eliminates the per-item allocation by drawing
 pre-allocated objects from a `sync.Pool` and handing them directly to your
 transform function. The caller is responsible for returning objects to the pool
-once done — either item-by-item with `Pooled[T].Release()` inside `ForEach`, or
+once done: either item-by-item with `Pooled[T].Release()` inside `ForEach`, or
 in bulk with `ReleaseAll` after `Collect`.
 
 Use pooling when profiling shows allocation as a bottleneck, or when the output
@@ -498,7 +498,7 @@ kitsune.ReleaseAll(results) // return every object to the pool when done
 | `WithDedupSet(s)` | Stage option: custom `DedupSet` backend for `Dedupe` (e.g. Redis-backed) |
 | `MergeRunners(runners…)` | Combine forked terminal branches into a single `Runner`; returns `(*Runner, error)` |
 | `WithStore(s)` | Run option: set the state backend (default: `MemoryStore`) |
-| `WithDrain(timeout)` | Run option: graceful shutdown — drain in-flight items before exiting |
+| `WithDrain(timeout)` | Run option: graceful shutdown; drains in-flight items before exit |
 | `WithCache(cache, ttl)` | Run option: default cache backend and TTL for all `Map`+`CacheBy` stages |
 | `WithSampleRate(n)` | Run option: `OnItemSample` fires every nth item (default 10); pass ≤0 to disable |
 | `WithCodec(c)` | Run option: custom serialisation codec for `Store`-backed state and `CacheBy` (default: JSON) |
@@ -513,7 +513,7 @@ import (
     "fmt"
     "strconv"
 
-    kitsune "github.com/jonathan/go-kitsune"
+    kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func main() {
@@ -747,32 +747,32 @@ kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type }) // by
 
 ## Tails
 
-Tails are Kitsune's extension modules — optional packages that connect pipelines to external systems. Each tail is a separate Go module, so you only pull in the dependencies you use.
+Tails are optional extension packages that connect pipelines to external systems. Each tail is a separate Go module, so you only pull in the dependencies you use.
 
 | Tail | Import | What |
 |---|---|---|
-| **kfile** | `github.com/jonathan/go-kitsune/tails/kfile` | File, CSV, JSONL sources and sinks |
-| **khttp** | `github.com/jonathan/go-kitsune/tails/khttp` | Paginated HTTP GET source, POST/webhook sink |
-| **kkafka** | `github.com/jonathan/go-kitsune/tails/kkafka` | Kafka consumer source, producer sink |
-| **kpostgres** | `github.com/jonathan/go-kitsune/tails/kpostgres` | LISTEN/NOTIFY source, INSERT + COPY batch sink |
-| **kredis** | `github.com/jonathan/go-kitsune/tails/kredis` | Redis Store, Cache, DedupSet, list source/sink |
-| **ks3** | `github.com/jonathan/go-kitsune/tails/ks3` | S3-compatible object listing and line-streaming sources |
-| **ksqlite** | `github.com/jonathan/go-kitsune/tails/ksqlite` | SQLite query source, single/batch insert sinks |
-| **kotel** | `github.com/jonathan/go-kitsune/tails/kotel` | OpenTelemetry Hook — per-stage metrics and buffer gauges |
-| **kprometheus** | `github.com/jonathan/go-kitsune/tails/kprometheus` | Prometheus Hook — counters and duration histograms per stage |
-| **kdatadog** | `github.com/jonathan/go-kitsune/tails/kdatadog` | Datadog DogStatsD Hook — counts and distributions per stage |
-| **knats** | `github.com/jonathan/go-kitsune/tails/knats` | NATS core subscribe/publish + JetStream consume/publish |
-| **kpubsub** | `github.com/jonathan/go-kitsune/tails/kpubsub` | Google Cloud Pub/Sub subscribe source and publish sink |
-| **ksqs** | `github.com/jonathan/go-kitsune/tails/ksqs` | AWS SQS receive source, send sink, batch send sink |
-| **kkinesis** | `github.com/jonathan/go-kitsune/tails/kkinesis` | AWS Kinesis shard consumer source and PutRecords batch sink |
-| **kdynamo** | `github.com/jonathan/go-kitsune/tails/kdynamo` | AWS DynamoDB Scan/Query sources and BatchWriteItem sink |
-| **kmongo** | `github.com/jonathan/go-kitsune/tails/kmongo` | MongoDB Find/Watch sources and InsertMany batch sink |
-| **kclickhouse** | `github.com/jonathan/go-kitsune/tails/kclickhouse` | ClickHouse Query source and native-protocol batch Insert sink |
-| **kes** | `github.com/jonathan/go-kitsune/tails/kes` | Elasticsearch scrolling Search source and Bulk index sink |
-| **kgrpc** | `github.com/jonathan/go-kitsune/tails/kgrpc` | gRPC server-streaming source and client-streaming sink |
-| **kwebsocket** | `github.com/jonathan/go-kitsune/tails/kwebsocket` | WebSocket frame Read source and Write sink |
-| **kmqtt** | `github.com/jonathan/go-kitsune/tails/kmqtt` | MQTT Subscribe source and Publish sink |
-| **kpulsar** | `github.com/jonathan/go-kitsune/tails/kpulsar` | Apache Pulsar consumer source and producer sink |
+| **kfile** | `github.com/zenbaku/go-kitsune/tails/kfile` | File, CSV, JSONL sources and sinks |
+| **khttp** | `github.com/zenbaku/go-kitsune/tails/khttp` | Paginated HTTP GET source, POST/webhook sink |
+| **kkafka** | `github.com/zenbaku/go-kitsune/tails/kkafka` | Kafka consumer source, producer sink |
+| **kpostgres** | `github.com/zenbaku/go-kitsune/tails/kpostgres` | LISTEN/NOTIFY source, INSERT + COPY batch sink |
+| **kredis** | `github.com/zenbaku/go-kitsune/tails/kredis` | Redis Store, Cache, DedupSet, list source/sink |
+| **ks3** | `github.com/zenbaku/go-kitsune/tails/ks3` | S3-compatible object listing and line-streaming sources |
+| **ksqlite** | `github.com/zenbaku/go-kitsune/tails/ksqlite` | SQLite query source, single/batch insert sinks |
+| **kotel** | `github.com/zenbaku/go-kitsune/tails/kotel` | OpenTelemetry Hook; per-stage metrics and buffer gauges |
+| **kprometheus** | `github.com/zenbaku/go-kitsune/tails/kprometheus` | Prometheus Hook; per-stage counters and duration histograms |
+| **kdatadog** | `github.com/zenbaku/go-kitsune/tails/kdatadog` | Datadog DogStatsD Hook; per-stage counts and distributions |
+| **knats** | `github.com/zenbaku/go-kitsune/tails/knats` | NATS core subscribe/publish + JetStream consume/publish |
+| **kpubsub** | `github.com/zenbaku/go-kitsune/tails/kpubsub` | Google Cloud Pub/Sub subscribe source and publish sink |
+| **ksqs** | `github.com/zenbaku/go-kitsune/tails/ksqs` | AWS SQS receive source, send sink, batch send sink |
+| **kkinesis** | `github.com/zenbaku/go-kitsune/tails/kkinesis` | AWS Kinesis shard consumer source and PutRecords batch sink |
+| **kdynamo** | `github.com/zenbaku/go-kitsune/tails/kdynamo` | AWS DynamoDB Scan/Query sources and BatchWriteItem sink |
+| **kmongo** | `github.com/zenbaku/go-kitsune/tails/kmongo` | MongoDB Find/Watch sources and InsertMany batch sink |
+| **kclickhouse** | `github.com/zenbaku/go-kitsune/tails/kclickhouse` | ClickHouse Query source and native-protocol batch Insert sink |
+| **kes** | `github.com/zenbaku/go-kitsune/tails/kes` | Elasticsearch scrolling Search source and Bulk index sink |
+| **kgrpc** | `github.com/zenbaku/go-kitsune/tails/kgrpc` | gRPC server-streaming source and client-streaming sink |
+| **kwebsocket** | `github.com/zenbaku/go-kitsune/tails/kwebsocket` | WebSocket frame Read source and Write sink |
+| **kmqtt** | `github.com/zenbaku/go-kitsune/tails/kmqtt` | MQTT Subscribe source and Publish sink |
+| **kpulsar** | `github.com/zenbaku/go-kitsune/tails/kpulsar` | Apache Pulsar consumer source and producer sink |
 
 All tails follow the **user-managed connections** principle: you create, configure, and close clients yourself. Kitsune never opens or closes connections.
 
@@ -837,7 +837,7 @@ examples/websocket  — kwebsocket: Read source and Write sink over an in-proces
 The `kitsune/testkit` package provides assertion helpers for pipeline tests:
 
 ```go
-import "github.com/jonathan/go-kitsune/testkit"
+import "github.com/zenbaku/go-kitsune/testkit"
 
 // Collect items, failing the test on error.
 got := testkit.MustCollect(t, p)

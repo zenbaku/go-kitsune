@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/testkit"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/testkit"
 )
 
 // TestLatencyPercentiles measures per-item processing latency distributions for

@@ -5,15 +5,15 @@ The `inspector` sub-package serves a real-time web dashboard that shows your pip
 ## Install
 
 ```
-go get github.com/jonathan/go-kitsune/inspector
+go get github.com/zenbaku/go-kitsune/inspector
 ```
 
 ## Minimal usage
 
 ```go
 import (
-    kitsune  "github.com/jonathan/go-kitsune"
-    "github.com/jonathan/go-kitsune/inspector"
+    kitsune  "github.com/zenbaku/go-kitsune"
+    "github.com/zenbaku/go-kitsune/inspector"
 )
 
 func main() {

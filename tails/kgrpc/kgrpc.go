@@ -24,7 +24,7 @@ import (
 	"context"
 	"io"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"google.golang.org/grpc"
 )
 

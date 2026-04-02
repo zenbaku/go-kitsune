@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/v5/statsd"
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // DatadogHook records Kitsune pipeline events as Datadog DogStatsD metrics.

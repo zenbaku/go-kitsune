@@ -1,4 +1,4 @@
-module github.com/jonathan/go-kitsune
+module github.com/zenbaku/go-kitsune
 
 go 1.26.1
 

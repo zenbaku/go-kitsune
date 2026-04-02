@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 var errTransient = errors.New("transient failure")

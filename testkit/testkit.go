@@ -17,7 +17,7 @@ import (
 	"slices"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // MustRun runs the runner and calls t.Fatal if it returns an error.

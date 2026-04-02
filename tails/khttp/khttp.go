@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // GetPages creates a Pipeline that follows paginated HTTP responses.

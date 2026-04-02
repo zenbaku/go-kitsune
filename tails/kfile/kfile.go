@@ -12,7 +12,7 @@ import (
 	"io"
 	"sync"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // ---------------------------------------------------------------------------

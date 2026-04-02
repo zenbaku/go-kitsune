@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // dropLogger implements Hook + OverflowHook to log and count every dropped item.

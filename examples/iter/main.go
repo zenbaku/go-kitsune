@@ -9,7 +9,7 @@ import (
 	"maps"
 	"slices"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func main() {

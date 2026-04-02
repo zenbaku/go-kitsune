@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // StageStartEvent records a stage start notification.

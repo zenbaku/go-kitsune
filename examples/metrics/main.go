@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // stageMetrics holds counters for a single named stage.

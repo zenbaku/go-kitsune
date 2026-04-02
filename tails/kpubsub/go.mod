@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/tails/kpubsub
+module github.com/zenbaku/go-kitsune/tails/kpubsub
 
 go 1.26.1
 
 require (
 	cloud.google.com/go/pubsub v1.45.3
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -42,4 +42,4 @@ require (
 	google.golang.org/protobuf v1.35.2 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

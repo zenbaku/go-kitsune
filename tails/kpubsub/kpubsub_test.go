@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/jonathan/go-kitsune/tails/kpubsub"
+	"github.com/zenbaku/go-kitsune/tails/kpubsub"
 )
 
 // Integration tests require PUBSUB_PROJECT_ID and a running Pub/Sub emulator

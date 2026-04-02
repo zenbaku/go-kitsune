@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func TestRateLimit_WaitMode_PassesAllItems(t *testing.T) {

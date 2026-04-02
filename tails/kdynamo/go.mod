@@ -1,11 +1,11 @@
-module github.com/jonathan/go-kitsune/tails/kdynamo
+module github.com/zenbaku/go-kitsune/tails/kdynamo
 
 go 1.26.1
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.40.1
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -18,4 +18,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // dropCountHook implements kitsune.Hook + kitsune.OverflowHook, counting drops.
@@ -1022,14 +1022,16 @@ func TestMergePanics(t *testing.T) {
 	})
 
 	t.Run("different graphs", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("expected Merge with different graphs to panic")
-			}
-		}()
 		p1 := kitsune.FromSlice([]int{1})
-		p2 := kitsune.FromSlice([]int{2}) // different graph
-		kitsune.Merge(p1, p2)
+		p2 := kitsune.FromSlice([]int{2})
+		got, err := kitsune.Merge(p1, p2).Collect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, []int{1, 2}) {
+			t.Errorf("got %v, want [1 2]", got)
+		}
 	})
 }
 
@@ -2292,15 +2294,22 @@ func TestZipUnequalLengths(t *testing.T) {
 	}
 }
 
-func TestZipCrossGraphPanic(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for cross-graph Zip")
-		}
-	}()
+func TestZipIndependentGraphs(t *testing.T) {
 	a := kitsune.FromSlice([]int{1, 2, 3})
 	b := kitsune.FromSlice([]string{"x", "y", "z"})
-	kitsune.Zip(a, b) // should panic
+	pairs, err := kitsune.Zip(a, b).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []kitsune.Pair[int, string]{{1, "x"}, {2, "y"}, {3, "z"}}
+	if len(pairs) != len(want) {
+		t.Fatalf("got %v, want %v", pairs, want)
+	}
+	for i, p := range pairs {
+		if p != want[i] {
+			t.Fatalf("pairs[%d] = %v, want %v", i, p, want[i])
+		}
+	}
 }
 
 func TestScanTypeChange(t *testing.T) {
@@ -3961,15 +3970,24 @@ func TestWithLatestFrom(t *testing.T) {
 	}
 }
 
-func TestWithLatestFromPanicOnDifferentGraphs(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for pipelines from different graphs")
+func TestWithLatestFromIndependentGraphs(t *testing.T) {
+	// Primary ticks every ~1ms; secondary produces a single value immediately.
+	// All primary items should be combined with that value once it arrives.
+	primary := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	secondary := kitsune.FromSlice([]string{"latest"})
+	pairs, err := kitsune.WithLatestFrom(primary, secondary).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Some primary items may be dropped before secondary emits; rest must be valid pairs.
+	if len(pairs) > 5 {
+		t.Fatalf("too many pairs: %d", len(pairs))
+	}
+	for _, p := range pairs {
+		if p.Second != "latest" {
+			t.Errorf("unexpected secondary value: %q", p.Second)
 		}
-	}()
-	a := kitsune.FromSlice([]int{1, 2, 3})
-	b := kitsune.FromSlice([]string{"x", "y", "z"})
-	kitsune.WithLatestFrom(a, b)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -3997,15 +4015,19 @@ func TestZipWith(t *testing.T) {
 	}
 }
 
-func TestZipWithPanicOnDifferentGraphs(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for pipelines from different graphs")
-		}
-	}()
+func TestZipWithIndependentGraphs(t *testing.T) {
 	a := kitsune.FromSlice([]int{1, 2, 3})
 	b := kitsune.FromSlice([]int{4, 5, 6})
-	kitsune.ZipWith(a, b, func(_ context.Context, x, y int) (int, error) { return x + y, nil })
+	results, err := kitsune.ZipWith(a, b, func(_ context.Context, x, y int) (int, error) {
+		return x + y, nil
+	}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{5, 7, 9}
+	if !slices.Equal(results, want) {
+		t.Errorf("got %v, want %v", results, want)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -5077,11 +5099,11 @@ func TestGraphNodeHasSupervision(t *testing.T) {
 // MergeIndependent tests
 // ---------------------------------------------------------------------------
 
-func TestMergeIndependent_TwoDifferentGraphs(t *testing.T) {
+func TestMerge_Independent_TwoDifferentGraphs(t *testing.T) {
 	// Two independent FromSlice sources — different graphs.
 	a := kitsune.FromSlice([]int{1, 2, 3})
 	b := kitsune.FromSlice([]int{4, 5, 6})
-	merged := kitsune.MergeIndependent(a, b)
+	merged := kitsune.Merge(a, b)
 	got, err := merged.Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -5093,11 +5115,11 @@ func TestMergeIndependent_TwoDifferentGraphs(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_ThreeGraphs(t *testing.T) {
+func TestMerge_Independent_ThreeGraphs(t *testing.T) {
 	a := kitsune.FromSlice([]int{1})
 	b := kitsune.FromSlice([]int{2})
 	c := kitsune.FromSlice([]int{3})
-	merged := kitsune.MergeIndependent(a, b, c)
+	merged := kitsune.Merge(a, b, c)
 	got, err := merged.Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -5108,10 +5130,10 @@ func TestMergeIndependent_ThreeGraphs(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_SameGraphDelegatesToMerge(t *testing.T) {
+func TestMerge_Independent_SameGraphDelegatesToMerge(t *testing.T) {
 	// Two pipelines from the same Broadcast share a graph — should still work.
 	branches := kitsune.Broadcast(kitsune.FromSlice([]int{1, 2, 3}), 2)
-	merged := kitsune.MergeIndependent(branches[0], branches[1])
+	merged := kitsune.Merge(branches[0], branches[1])
 	got, err := merged.Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -5122,9 +5144,9 @@ func TestMergeIndependent_SameGraphDelegatesToMerge(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_SinglePipeline(t *testing.T) {
+func TestMerge_Independent_SinglePipeline(t *testing.T) {
 	p := kitsune.FromSlice([]int{10, 20})
-	merged := kitsune.MergeIndependent(p)
+	merged := kitsune.Merge(p)
 	got, err := merged.Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -5134,28 +5156,28 @@ func TestMergeIndependent_SinglePipeline(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_ErrorPropagates(t *testing.T) {
+func TestMerge_Independent_ErrorPropagates(t *testing.T) {
 	boom := errors.New("boom")
 	// One pipeline errors, one succeeds.
 	a := kitsune.FromSlice([]int{1, 2, 3})
 	b := kitsune.Map(kitsune.FromSlice([]int{1}), func(_ context.Context, n int) (int, error) {
 		return 0, boom
 	})
-	merged := kitsune.MergeIndependent(a, b)
+	merged := kitsune.Merge(a, b)
 	_, err := merged.Collect(context.Background())
 	if !errors.Is(err, boom) {
 		t.Errorf("expected boom error, got %v", err)
 	}
 }
 
-func TestMergeIndependent_ContextCancellation(t *testing.T) {
+func TestMerge_Independent_ContextCancellation(t *testing.T) {
 	// Source that blocks until context is cancelled.
 	a := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
 		<-ctx.Done()
 		return ctx.Err()
 	})
 	b := kitsune.FromSlice([]int{1, 2, 3})
-	merged := kitsune.MergeIndependent(a, b)
+	merged := kitsune.Merge(a, b)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 	_, err := merged.Collect(ctx)
@@ -5166,11 +5188,11 @@ func TestMergeIndependent_ContextCancellation(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_TakeDownstream(t *testing.T) {
+func TestMerge_Independent_TakeDownstream(t *testing.T) {
 	// Verify early exit (yield returns false) doesn't deadlock.
 	a := kitsune.FromSlice(make([]int, 1000))
 	b := kitsune.FromSlice(make([]int, 1000))
-	merged := kitsune.MergeIndependent(a, b)
+	merged := kitsune.Merge(a, b)
 	got, err := merged.Take(5).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -5180,8 +5202,8 @@ func TestMergeIndependent_TakeDownstream(t *testing.T) {
 	}
 }
 
-func TestMergeIndependent_Panic(t *testing.T) {
-	if len(func() (r []int) { defer func() { recover() }(); kitsune.MergeIndependent[int](); return }()) == 0 {
+func TestMerge_Independent_Panic(t *testing.T) {
+	if len(func() (r []int) { defer func() { recover() }(); kitsune.Merge[int](); return }()) == 0 {
 		// panic was recovered — the test passed
 	}
 }

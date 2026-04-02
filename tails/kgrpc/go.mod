@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/kgrpc
+module github.com/zenbaku/go-kitsune/tails/kgrpc
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	google.golang.org/grpc v1.71.1
 )
 
@@ -17,4 +17,4 @@ require (
 	google.golang.org/protobuf v1.36.4 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

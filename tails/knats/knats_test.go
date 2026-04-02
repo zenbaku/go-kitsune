@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jonathan/go-kitsune/tails/knats"
+	"github.com/zenbaku/go-kitsune/tails/knats"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )

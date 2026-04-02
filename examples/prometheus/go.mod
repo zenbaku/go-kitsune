@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/examples/prometheus
+module github.com/zenbaku/go-kitsune/examples/prometheus
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
-	github.com/jonathan/go-kitsune/tails/kprometheus v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune/tails/kprometheus v0.0.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
 )
@@ -22,6 +22,6 @@ require (
 )
 
 replace (
-	github.com/jonathan/go-kitsune => ../..
-	github.com/jonathan/go-kitsune/tails/kprometheus => ../../tails/kprometheus
+	github.com/zenbaku/go-kitsune => ../..
+	github.com/zenbaku/go-kitsune/tails/kprometheus => ../../tails/kprometheus
 )

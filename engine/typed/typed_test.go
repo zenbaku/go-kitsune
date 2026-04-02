@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jonathan/go-kitsune/engine/typed"
+	"github.com/zenbaku/go-kitsune/engine/typed"
 )
 
 func TestMapFilter(t *testing.T) {

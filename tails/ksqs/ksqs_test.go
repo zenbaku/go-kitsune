@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/jonathan/go-kitsune/tails/ksqs"
+	"github.com/zenbaku/go-kitsune/tails/ksqs"
 )
 
 // --- in-memory SQS stub ---

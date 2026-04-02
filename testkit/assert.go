@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // AssertNoErrors fails the test if the hook recorded any item errors.

@@ -392,11 +392,13 @@ Primary items that arrive before the secondary has emitted a single value are
 silently dropped — this matches RxJS semantics. The background goroutine exits
 when `secondaryCh` is closed or `ctx` is cancelled.
 
-**Same-graph requirement**: `WithLatestFrom` checks that both pipelines share
-the same `*Graph` pointer. Because the channel map is keyed by node ID, nodes
-from different graphs would produce wrong (or panicking) lookups. When you need
-two logically independent event streams, merge them into a single source with a
-tagged-union type and split with `Partition`:
+**Independent-graph support**: `WithLatestFrom` (like `Merge` and `Zip`) works
+with pipelines from separate graphs. When the two pipelines share a graph the
+engine-native node is used; otherwise the secondary pipeline drains into a
+mutex-protected `latest` value in a background goroutine while the primary is
+forwarded through a channel — mirroring the engine implementation but at the
+`Generate` layer. The `Partition` pattern is still useful when config updates
+and primary events are multiplexed into the same source channel:
 
 ```go
 cfgBranch, reqBranch := kitsune.Partition(src.Source(), func(e Event) bool {

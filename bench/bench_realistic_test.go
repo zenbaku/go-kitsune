@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"golang.org/x/sync/errgroup"
 )
 

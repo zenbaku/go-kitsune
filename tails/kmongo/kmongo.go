@@ -33,7 +33,7 @@ package kmongo
 import (
 	"context"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 

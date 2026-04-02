@@ -29,7 +29,7 @@ package kpubsub
 import (
 	"context"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 	"cloud.google.com/go/pubsub"
 )
 

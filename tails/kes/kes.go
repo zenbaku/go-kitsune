@@ -34,7 +34,7 @@ import (
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // Search creates a Pipeline that streams hits from an Elasticsearch scrolling

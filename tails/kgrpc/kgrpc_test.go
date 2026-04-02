@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jonathan/go-kitsune/tails/kgrpc"
+	"github.com/zenbaku/go-kitsune/tails/kgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )

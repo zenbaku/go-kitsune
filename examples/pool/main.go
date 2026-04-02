@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // record is a reusable output object. In a real system this might be a large

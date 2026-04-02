@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/khttp"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/khttp"
 )
 
 func TestGetPages(t *testing.T) {

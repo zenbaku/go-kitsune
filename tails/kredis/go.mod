@@ -1,9 +1,9 @@
-module github.com/jonathan/go-kitsune/tails/kredis
+module github.com/zenbaku/go-kitsune/tails/kredis
 
 go 1.26.1
 
 require (
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
@@ -15,4 +15,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/inspector"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/inspector"
 )
 
 type event struct {

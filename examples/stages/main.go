@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // ---------------------------------------------------------------------------

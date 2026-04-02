@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // restartHook logs supervision events in addition to the standard lifecycle events.

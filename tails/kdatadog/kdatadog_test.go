@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/v5/statsd"
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kdatadog"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kdatadog"
 )
 
 // newClient returns a statsd client that discards all metrics.

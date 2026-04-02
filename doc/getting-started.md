@@ -49,7 +49,7 @@ import (
     "fmt"
     "strconv"
 
-    kitsune "github.com/jonathan/go-kitsune"
+    kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func main() {
@@ -323,7 +323,7 @@ func TestParseLine(t *testing.T) {
 The `kitsune/testkit` package wraps this pattern with assertion helpers:
 
 ```go
-import "github.com/jonathan/go-kitsune/testkit"
+import "github.com/zenbaku/go-kitsune/testkit"
 
 testkit.CollectAndExpect(t, p, []int{2, 4, 6})
 testkit.CollectAndExpectUnordered(t, p, []int{6, 2, 4})

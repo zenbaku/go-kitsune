@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/tails/kes
+module github.com/zenbaku/go-kitsune/tails/kes
 
 go 1.26.1
 
 require (
 	github.com/elastic/go-elasticsearch/v8 v8.17.0
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -18,4 +18,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

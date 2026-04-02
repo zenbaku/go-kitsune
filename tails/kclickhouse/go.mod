@@ -1,10 +1,10 @@
-module github.com/jonathan/go-kitsune/tails/kclickhouse
+module github.com/zenbaku/go-kitsune/tails/kclickhouse
 
 go 1.26.1
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.1
-	github.com/jonathan/go-kitsune v0.0.0
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -27,4 +27,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/jonathan/go-kitsune => ../..
+replace github.com/zenbaku/go-kitsune => ../..

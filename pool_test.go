@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	kitsune "github.com/jonathan/go-kitsune"
+	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 // trackingPool wraps Pool and counts allocations via the factory.

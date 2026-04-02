@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	kitsune "github.com/jonathan/go-kitsune"
-	"github.com/jonathan/go-kitsune/tails/kprometheus"
+	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/tails/kprometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus"
 )

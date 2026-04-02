@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jonathan/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/engine"
 )
 
 // Numeric is satisfied by all integer and floating-point numeric types.
