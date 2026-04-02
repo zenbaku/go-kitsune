@@ -7,6 +7,13 @@
 # Example binaries built in-place (e.g. `go build ./examples/scan`)
 examples/*/main
 examples/*/*.exe
+# Examples with a standalone go.mod build a binary named after the directory.
+examples/files/files
+examples/http/http
+examples/prometheus/prometheus
+examples/redis/redis
+examples/sqlite/sqlite
+examples/websocket/websocket
 
 # Test cache and coverage output
 *.test
