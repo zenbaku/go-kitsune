@@ -15,7 +15,7 @@ err    := parsed.Filter(isCritical).ForEach(notify).Run(ctx)
 ## Install
 
 ```
-go get github.com/jonathan/go-kitsune
+go get github.com/zenbaku/go-kitsune
 ```
 
 ## When to use Kitsune
@@ -38,7 +38,7 @@ For a comparison with other Go pipeline and streaming libraries (conc, go-stream
 The `inspector` sub-package serves a real-time web dashboard. Add one line to any pipeline — no other changes needed.
 
 ```
-go get github.com/jonathan/go-kitsune/inspector
+go get github.com/zenbaku/go-kitsune/inspector
 ```
 
 ```go
