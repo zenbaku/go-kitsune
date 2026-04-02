@@ -15,20 +15,20 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 | Benchmark | Dataset | ns/op | items/sec | B/op | allocs/op |
 |---|---|---:|---:|---:|---:|
 | `MapLinear` | 10,000 items, `Concurrency(1)` | 5,066 µs | ~2.0 M/s | 156 KB | 19,659 |
-| `MapConcurrent` | 10,000 items, `Concurrency(4)` | 6,129 µs | ~1.6 M/s | 157 KB | 19,672 |
+| `MapConcurrent` | 10,000 items, `Concurrency(4)` | 4,604 µs | ~2.2 M/s | 157 KB | 19,685 |
 | `FlatMap` | 1,000 items → 10,000 outputs | 2,837 µs | ~3.5 M out/s | 325 KB | 11,272 |
 | `BatchUnbatch` | 10,000 items, `Batch(100)` + `Unbatch` | 4,228 µs | ~2.4 M/s | 599 KB | 20,041 |
 | `Filter` | 10,000 items, 50% pass | 3,153 µs | ~3.2 M/s | 79 KB | 9,786 |
 | `Dedupe` | 10,000 items, 50% unique | 4,232 µs | ~2.4 M/s | 653 KB | 29,048 |
 | `MapWithCache` | 10,000 items, 1,000 unique keys (~90% hit) | 7,508 µs | ~1.3 M/s | 1.9 MB | 53,462 |
-| `MapOrdered/ordered` | 10,000 items, `Concurrency(8)` + `Ordered()` | 8,061 µs | ~1.2 M/s | 1.9 MB | 39,696 |
-| `MapOrdered/unordered` | 10,000 items, `Concurrency(8)` | 7,563 µs | ~1.3 M/s | 163 KB | 19,690 |
+| `MapOrdered/ordered` | 10,000 items, `Concurrency(8)` + `Ordered()` | 8,764 µs | ~1.1 M/s | 1.9 MB | 39,697 |
+| `MapOrdered/unordered` | 10,000 items, `Concurrency(8)` | 5,521 µs | ~1.8 M/s | 163 KB | 19,689 |
 
 ---
 
 ## Notes
 
-**MapConcurrent is slower than MapLinear** for this synthetic workload because the transformation (`n * 2`) is CPU-trivial — goroutine coordination overhead dominates. `Concurrency(n)` pays off for I/O-bound stages (HTTP calls, database queries) where goroutines block waiting for external systems rather than competing for CPU.
+**MapConcurrent is slower than MapLinear** for this synthetic workload because the transformation (`n * 2`) is CPU-trivial — goroutine coordination overhead dominates. `Concurrency(n)` pays off for I/O-bound stages (HTTP calls, database queries) where goroutines block waiting for external systems rather than competing for CPU. The concurrent fast path skips per-item timing, hook dispatch, and `ProcessItem` overhead in the worker loop (same conditions as the `Concurrency(1)` fast path: `DefaultHandler + NoopHook`).
 
 **FlatMap items/sec** is measured as output items (10,000) per ns/op, since the expansion ratio (1:10) is the primary cost driver.
 

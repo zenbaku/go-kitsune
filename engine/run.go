@@ -559,14 +559,55 @@ func runMapConcurrent(ctx context.Context, fn func(context.Context, any) (any, e
 	innerCtx, innerCancel := context.WithCancel(ctx)
 	defer innerCancel()
 
-	hook.OnStageStart(ctx, name)
-	var processed, errCount atomic.Int64
-
 	var (
 		wg       sync.WaitGroup
 		errOnce  sync.Once
 		firstErr error
 	)
+
+	// Fast path: skip timing, hook dispatch, ProcessItem overhead, and atomic
+	// counters when no custom handler or hook is attached.
+	if _, ok := handler.(DefaultHandler); ok {
+		if _, ok := hook.(NoopHook); ok {
+			for range concurrency {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for {
+						select {
+						case item, ok := <-inCh:
+							if !ok {
+								return
+							}
+							result, err := fn(innerCtx, item)
+							if err != nil {
+								if err == ErrSkipped {
+									continue
+								}
+								errOnce.Do(func() {
+									firstErr = &StageError{Stage: name, Cause: err}
+								})
+								innerCancel()
+								return
+							}
+							if err := outbox.Send(innerCtx, result); err != nil {
+								errOnce.Do(func() { firstErr = err })
+								innerCancel()
+								return
+							}
+						case <-innerCtx.Done():
+							return
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			return firstErr
+		}
+	}
+
+	hook.OnStageStart(ctx, name)
+	var processed, errCount atomic.Int64
 
 	for range concurrency {
 		wg.Add(1)
@@ -855,16 +896,54 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any, fun
 	innerCtx, innerCancel := context.WithCancel(ctx)
 	defer innerCancel()
 
-	hook.OnStageStart(ctx, name)
-	var processed, errCount atomic.Int64
-
-	_, isDefault := handler.(DefaultHandler)
-
 	var (
 		wg       sync.WaitGroup
 		errOnce  sync.Once
 		firstErr error
 	)
+
+	// Fast path: skip timing, hook dispatch, and wrapStageErr overhead when
+	// no custom handler or hook is attached.
+	if _, ok := handler.(DefaultHandler); ok {
+		if _, ok := hook.(NoopHook); ok {
+			for range concurrency {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for {
+						select {
+						case item, ok := <-inCh:
+							if !ok {
+								return
+							}
+							err := fn(innerCtx, item, func(v any) error {
+								return outbox.Send(innerCtx, v)
+							})
+							if err != nil {
+								if err == ErrSkipped {
+									continue
+								}
+								errOnce.Do(func() {
+									firstErr = &StageError{Stage: name, Cause: err}
+								})
+								innerCancel()
+								return
+							}
+						case <-innerCtx.Done():
+							return
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			return firstErr
+		}
+	}
+
+	hook.OnStageStart(ctx, name)
+	var processed, errCount atomic.Int64
+
+	_, isDefault := handler.(DefaultHandler)
 
 	for range concurrency {
 		wg.Add(1)
@@ -881,7 +960,6 @@ func runFlatMapConcurrent(ctx context.Context, fn func(context.Context, any, fun
 					var attempt int
 
 					if isDefault {
-						// Fast path: yield directly, no buffering.
 						err = fn(innerCtx, item, func(v any) error {
 							return outbox.Send(innerCtx, v)
 						})

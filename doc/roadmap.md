@@ -98,11 +98,13 @@ Checked items are complete.
   via `ctx.Err()` after the loop exits. Net result: 3-stage comparison benchmark
   improved from ~1.69 M/s to ~2.85 M/s (overhead vs raw goroutines: 3.5x → 2.1x).
 
-- [ ] **Concurrent fast paths** — extend the `Concurrency(1)` fast-path pattern to
+- [x] **Concurrent fast paths** — extended the fast-path pattern to
   `runMapConcurrent` and `runFlatMapConcurrent` (unordered). When
-  `DefaultHandler + NoopHook` hold, worker goroutines can skip per-item timing
-  and hook dispatch. Benefits any workload using `Concurrency(n)` for I/O
-  simulation.
+  `DefaultHandler + NoopHook` hold, worker goroutines skip per-item timing,
+  hook dispatch, `ProcessItem`/`wrapStageErr`, and atomic counter updates.
+  The inner-context `Done` arm is retained (needed for prompt worker exit when
+  a sibling worker errors). Result: `MapConcurrent` 6,129 → 4,604 µs (−25%),
+  `MapOrdered/unordered` 7,563 → 5,521 µs (−27%).
 
 - [ ] **Chunked inter-stage transport** — stages currently exchange items one `any`
   at a time via `chan any`. Each channel op costs a mutex lock/unlock plus a
