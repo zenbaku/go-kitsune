@@ -149,7 +149,7 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 
 **`reugn/go-streams`** is ~1.36M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
 
-**When does Kitsune overhead matter?** At 2.85M items/sec, each item costs ~350 ns of total pipeline time, of which ~183 ns is Kitsune overhead. For stages doing real I/O (database queries, HTTP calls, gRPC), stage latency will be 10–100× higher, making Kitsune's overhead negligible. The overhead is only significant for CPU-trivial, high-throughput pipelines on a single core.
+**When does Kitsune overhead matter?** At 2.85M items/sec, each item costs ~350 ns of total pipeline time, of which ~183 ns is Kitsune overhead. The realistic benchmarks below quantify exactly when this matters.
 
 To reproduce:
 
@@ -162,6 +162,52 @@ Or via Task:
 ```
 task bench:compare
 ```
+
+---
+
+## Realistic workloads
+
+The trivial benchmark above (Map `n*2`, Filter `n%3 != 0`) maximally amplifies
+framework overhead because stage functions run in ~5 ns. Real pipelines do more
+work per item. Two additional tiers show how overhead scales with stage cost.
+
+**Machine**: Apple M1, darwin/arm64, Go 1.26.1
+**Method**: `go test -bench='BenchmarkLightCPU|BenchmarkIOBound' -benchmem -count=5` in `bench/`, median of 5 runs
+
+### Light CPU — SHA-256 per item (~300 ns work)
+
+Represents data transformation pipelines: hashing, encoding, schema validation.
+Stage cost (~300 ns) is in the same order of magnitude as Kitsune's per-item
+overhead (~180 ns), so the framework cost is visible but not dominant.
+
+| Implementation | ns/op | items/sec | vs raw |
+|---|---:|---:|---:|
+| Raw goroutines | 267 ms | ~3.75 M/s | — |
+| **Kitsune** | **405 ms** | **~2.47 M/s** | **+52%** |
+
+### I/O bound — 1 µs sleep per item (~3 µs effective on M1)
+
+Represents stages that call external systems: HTTP, database queries, gRPC.
+`time.Sleep(1µs)` sleeps ~3 µs on macOS due to OS scheduler granularity;
+both implementations sleep equally so the overhead ratio is still accurate.
+
+| Implementation | ns/op | items/sec | vs raw |
+|---|---:|---:|---:|
+| Raw goroutines | 31.3 ms | ~320 k/s | — |
+| **Kitsune** | **33.1 ms** | **~302 k/s** | **+6%** |
+
+### Overhead vs stage cost
+
+| Stage cost | Kitsune overhead | Representative workload |
+|---|---:|---|
+| ~5 ns (trivial) | +110% | CPU-trivial transforms |
+| ~300 ns (SHA-256) | +52% | Hashing, encoding, validation |
+| ~3 µs (I/O sleep) | +6% | Database queries, HTTP calls |
+| ~100 µs (network) | <1% | Cross-datacenter RPC |
+
+**Framework overhead is negligible for any I/O-bound stage.** The ~180 ns/item
+Kitsune cost only matters when stage functions themselves run in under ~500 ns —
+which is rare in production pipelines that interact with external systems.
 
 ---
 
