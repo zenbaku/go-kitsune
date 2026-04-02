@@ -95,7 +95,99 @@ These measurements reflect stage processing time (the duration the stage functio
 
 ---
 
+## Experimental typed engine
+
+The `engine/typed` package implements the same 3-stage pipeline (Map → Filter → Drain)
+using `chan T` instead of `chan any`, eliminating all per-item interface boxing.
+
+**Machine**: Apple M1, darwin/arm64, Go 1.26.1
+**Method**: `go test -bench=BenchmarkTyped -benchmem -count=5` in `bench/`, median of 5 runs
+
+Both engines now use `for range` on receive and a single send-side `select`, so the
+comparison is apples-to-apples.
+
+| Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
+|---|---:|---:|---:|---:|---:|
+| Raw goroutines | 167 ms | ~5.98 M/s | 1 KB | 13 | — |
+| **Typed (experimental)** | **317 ms** | **~3.15 M/s** | **2 KB** | **29** | **+90%** |
+| **Kitsune** | **350 ms** | **~2.85 M/s** | **15.3 MB** | **2,000,000** | **+110%** |
+
+**Boxing is eliminated in typed** — 29 allocs is pipeline setup only (goroutine stacks,
+channels, sync structures). Zero per-item allocations.
+
+**The typed engine is ~10% faster than Kitsune** (317 vs 350 ms). With both engines on
+equal footing (same `for range` receive pattern), the remaining gap is GC pressure from
+Kitsune's 2M allocs/run visibly affecting throughput at 1M items. The earlier measurement
+showing only a 7% gap was an artefact of typed still using a 2-case receive select.
+
+**The remaining ~1.9x gap to raw goroutines** (317 vs 167 ms) is the send-side `select`
+— both engines need it to prevent deadlock on early downstream exit. Raw goroutines use
+plain `ch <- v` with no cancellation guard. Closing this gap requires either removing
+the send-side `select` (unsafe without a different teardown protocol) or chunked transport
+(amortising one select over N items).
+
+---
+
+## Comparison: Kitsune vs alternatives
+
+Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across four implementations on the same machine.
+
+**Pipeline**: Map `n*2` → Filter `n%3 != 0` (~67% pass-through) → Drain (discard)
+**Machine**: Apple M1, darwin/arm64, Go 1.26.1
+**Method**: `go test -bench=. -benchmem -count=5` in `bench/`, median of 5 runs
+
+| Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
+|---|---:|---:|---:|---:|---:|
+| Raw goroutines | 167 ms | ~5.98 M/s | 1 KB | 13 | — |
+| `sourcegraph/conc` | 167 ms | ~6.00 M/s | 1 KB | 12 | +0% |
+| **Kitsune** | **350 ms** | **~2.85 M/s** | **15.3 MB** | **2,000,000** | **+110%** |
+| `reugn/go-streams` | 733 ms | ~1.36 M/s | 30.5 MB | 2,000,000 | +341% |
+
+**Raw goroutines and `sourcegraph/conc` are nearly identical** — conc is a structured-concurrency primitive (WaitGroup + panic propagation), not a pipeline library. Its overhead over raw goroutines is <1%.
+
+**Kitsune processes 2.85M items/sec at 1M items**, carrying a ~2.1x overhead vs raw goroutines. Fast paths for `Map`, `FlatMap`, `Filter`, and `Sink` at `Concurrency(1)` use `for range` on receive (no per-item ctx.Done select) plus a single send-side `select`. The remaining overhead is `any`-boxing at stage boundaries (2 allocs/item) and the send-side `select` needed to prevent deadlock on early downstream exit.
+
+**`reugn/go-streams`** is ~1.36M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
+
+**When does Kitsune overhead matter?** At 2.85M items/sec, each item costs ~350 ns of total pipeline time, of which ~183 ns is Kitsune overhead. For stages doing real I/O (database queries, HTTP calls, gRPC), stage latency will be 10–100× higher, making Kitsune's overhead negligible. The overhead is only significant for CPU-trivial, high-throughput pipelines on a single core.
+
+To reproduce:
+
+```
+cd bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
+```
+
+Or via Task:
+
+```
+task bench:compare
+```
+
+---
+
+## Allocation budgets
+
+Per-pipeline allocation ceilings for the highest-traffic operators, measured on Apple M1, Go 1.26.1. Ceilings include ~5% headroom above the baseline measurement.
+
+These bounds are enforced by `TestAllocBounds` in `bench_allocs_test.go` and run as part of the standard test suite.
+
+| Operator | Config | allocs/run (10K items) | Ceiling | Allocs/item | Key sources |
+|---|---|---:|---:|---:|---|
+| `Map` | `Concurrency(1)`, `n*2` | ~19,675 | 21,000 | ~2 | `any` boxing of input + output |
+| `FlatMap` | 1K items → 10K outputs | ~10,288 | 11,000 | ~1/output | yield closure + `any` boxing per output |
+| `Batch` | `Batch(100)`, 100 flushes | ~10,003 | 10,500 | ~1 | `make([]T)` per flush; `[]any` buffer reused via `clear`+reslice |
+| `RateLimit` | wait mode, rate=1e9/s | ~19,556 | 21,000 | ~2 | Same as Map (reservation amortised at high rate) |
+| `CircuitBreaker` | closed state, all-success | ~19,683 | 21,000 | ~2 | Map boxing + 2× `ref.Update` closures (amortised) |
+
+**Allocation count includes pipeline setup** (goroutine stacks, channels, engine graph). Setup is roughly constant (~80 allocs) regardless of item count; per-item cost dominates for N ≥ 1,000.
+
+**`RateLimit` and `CircuitBreaker`** show nearly the same alloc count as plain `Map` at high throughput — the `rate.Reservation` and `ref.Update` closure costs are real but small relative to the `any`-boxing that dominates at 2 allocs/item.
+
+---
+
 ## Running benchmarks yourself
+
+**Core operator benchmarks** (throughput + allocation benchmarks):
 
 ```
 go test -bench=. -benchmem ./...
@@ -107,7 +199,19 @@ For stable results across multiple runs:
 go test -bench=. -benchmem -count=5 ./...
 ```
 
-For latency percentile output (uses `-run`, not `-bench`):
+**Comparison benchmarks** (Kitsune vs raw goroutines, conc, go-streams):
+
+```
+cd bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
+```
+
+**Allocation regression tests** (hard-fail on ceiling violation):
+
+```
+go test -run TestAllocBounds -count=1 ./...
+```
+
+**Latency percentile output** (uses `-run`, not `-bench`):
 
 ```
 go test -v -run TestLatencyPercentiles ./...
@@ -116,5 +220,6 @@ go test -v -run TestLatencyPercentiles ./...
 Or via Task:
 
 ```
-task bench
+task bench           # core benchmarks
+task bench:compare   # comparison benchmarks
 ```

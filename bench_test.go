@@ -10,6 +10,95 @@ import (
 	kitsune "github.com/jonathan/go-kitsune"
 )
 
+// ---------------------------------------------------------------------------
+// Allocation benchmarks — measure allocs/item for the highest-traffic paths.
+// ---------------------------------------------------------------------------
+
+func BenchmarkAllocsMap(b *testing.B) {
+	items := makeItems(10_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.FromSlice(items)
+		kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+			return n * 2, nil
+		}).Drain().Run(context.Background())
+	}
+	b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "items/sec")
+}
+
+func BenchmarkAllocsFlatMap(b *testing.B) {
+	// 1K items, each yielding 10 outputs = 10K output items.
+	// Measures: yield-closure allocation + any-boxing per output.
+	items := makeItems(1_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.FromSlice(items)
+		kitsune.FlatMap(p, func(_ context.Context, n int, yield func(int) error) error {
+			for i := range 10 {
+				if err := yield(n + i); err != nil {
+					return err
+				}
+			}
+			return nil
+		}).Drain().Run(context.Background())
+	}
+	b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "out-items/sec")
+}
+
+func BenchmarkAllocsBatch(b *testing.B) {
+	// 10K items with batch size 100 = 100 flushes.
+	// Measures: make([]any, 0, cap) + make([]T, len) per flush.
+	items := makeItems(10_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.FromSlice(items)
+		kitsune.Batch(p, 100).Drain().Run(context.Background())
+	}
+	b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "items/sec")
+}
+
+func BenchmarkAllocsRateLimit(b *testing.B) {
+	// Rate set to 1e9/s (effectively unlimited) to isolate framework overhead,
+	// not actual throttling cost.
+	items := makeItems(10_000)
+	b.Run("wait", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p := kitsune.FromSlice(items)
+			kitsune.RateLimit(p, 1e9, kitsune.Burst(len(items))).Drain().Run(context.Background())
+		}
+		b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "items/sec")
+	})
+	b.Run("drop", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			p := kitsune.FromSlice(items)
+			kitsune.RateLimit(p, 1e9, kitsune.Burst(len(items)), kitsune.RateMode(kitsune.RateLimitDrop)).Drain().Run(context.Background())
+		}
+		b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "items/sec")
+	})
+}
+
+func BenchmarkAllocsCircuitBreaker(b *testing.B) {
+	// All items succeed — circuit stays closed throughout.
+	// Measures: Map boxing + 2x ref.Update closure allocations per item.
+	items := makeItems(10_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.FromSlice(items)
+		kitsune.CircuitBreaker(p, func(_ context.Context, n int) (int, error) {
+			return n * 2, nil
+		}).Drain().Run(context.Background())
+	}
+	b.ReportMetric(float64(b.N*10_000)/float64(b.Elapsed().Nanoseconds())*1e9, "items/sec")
+}
+
 func makeItems(n int) []int {
 	items := make([]int, n)
 	for i := range items {

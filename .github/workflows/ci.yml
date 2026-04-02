@@ -42,6 +42,9 @@ jobs:
           go vet ./...
           go test -short -race -count=1 -timeout 60s ./...
 
+      - name: Allocation regression tests
+        run: go test -run TestAllocBounds -count=1 -timeout 30s ./...
+
       - name: Examples — smoke test all runnable examples
         run: go test -v -run TestExamples -timeout 120s -count=1 .
 

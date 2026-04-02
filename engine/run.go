@@ -11,6 +11,72 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ---------------------------------------------------------------------------
+// Ordered-stage slot types and pools
+// ---------------------------------------------------------------------------
+
+// mapSlot is a unit of work for runMapConcurrentOrdered.
+// Slots are pooled to avoid per-item allocation of both the struct and its
+// done channel. The done channel is buffered (cap 1) so that a worker can
+// send without blocking regardless of whether the collector is ready.
+type mapSlot struct {
+	item   any
+	result any
+	err    error
+	done   chan struct{}
+}
+
+var mapSlotPool = sync.Pool{
+	New: func() any { return &mapSlot{done: make(chan struct{}, 1)} },
+}
+
+func getMapSlot(item any) *mapSlot {
+	s := mapSlotPool.Get().(*mapSlot)
+	s.item = item
+	return s
+}
+
+func putMapSlot(s *mapSlot) {
+	s.item = nil
+	s.result = nil
+	s.err = nil
+	// Drain any unconsumed signal (defensive; should not happen in steady state).
+	select {
+	case <-s.done:
+	default:
+	}
+	mapSlotPool.Put(s)
+}
+
+// flatMapSlot is the ordered-FlatMap equivalent of mapSlot.
+type flatMapSlot struct {
+	item    any
+	results []any
+	err     error
+	done    chan struct{}
+}
+
+var flatMapSlotPool = sync.Pool{
+	New: func() any { return &flatMapSlot{done: make(chan struct{}, 1)} },
+}
+
+func getFlatMapSlot(item any) *flatMapSlot {
+	s := flatMapSlotPool.Get().(*flatMapSlot)
+	s.item = item
+	return s
+}
+
+func putFlatMapSlot(s *flatMapSlot) {
+	s.item = nil
+	s.results = s.results[:0]
+	s.err = nil
+	select {
+	case <-s.done:
+	default:
+	}
+	flatMapSlotPool.Put(s)
+}
+
 // RunConfig holds runtime options for a pipeline execution.
 type RunConfig struct {
 	Hook         Hook
@@ -419,7 +485,35 @@ func runMap(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hoo
 	return runMapConcurrent(ctx, fn, inCh, outbox, n.Concurrency, handler, name, hook, sampleRate)
 }
 
+// runMapFastPath is a stripped-down Map loop for the common case where no
+// instrumentation, retries, or overflow handling are active. It replaces the
+// two-case receive select with a range loop and calls fn directly.
+func runMapFastPath(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outCh chan any, name string) error {
+	for item := range inCh {
+		result, err := fn(ctx, item)
+		if err != nil {
+			if err == ErrSkipped {
+				continue
+			}
+			return &StageError{Stage: name, Cause: err}
+		}
+		select {
+		case outCh <- result:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return ctx.Err()
+}
+
 func runMapSingle(ctx context.Context, fn func(context.Context, any) (any, error), inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook, sampleRate int64) error {
+	if _, ok := handler.(DefaultHandler); ok {
+		if _, ok := hook.(NoopHook); ok {
+			if bo, ok := outbox.(*blockingOutbox); ok {
+				return runMapFastPath(ctx, fn, inCh, bo.ch, name)
+			}
+		}
+	}
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
@@ -539,17 +633,10 @@ func runMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) 
 
 	hook.OnStageStart(ctx, name)
 
-	type slot struct {
-		item   any
-		result any
-		err    error
-		done   chan struct{}
-	}
+	jobs := make(chan *mapSlot, concurrency)
+	pending := make(chan *mapSlot, concurrency)
 
-	jobs := make(chan *slot, concurrency)
-	pending := make(chan *slot, concurrency)
-
-	// Workers — process slots concurrently, close slot.done when finished.
+	// Workers — process slots concurrently, signal slot.done when finished.
 	var wg sync.WaitGroup
 	for range concurrency {
 		wg.Add(1)
@@ -561,7 +648,7 @@ func runMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) 
 				s.result, s.err, attempt = ProcessItem(innerCtx, fn, s.item, handler)
 				s.err = wrapStageErr(name, s.err, attempt)
 				hook.OnItem(innerCtx, name, time.Since(start), s.err)
-				close(s.done)
+				s.done <- struct{}{}
 			}
 		}()
 	}
@@ -580,16 +667,21 @@ func runMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) 
 			}
 			if s.err == ErrSkipped {
 				errCount.Add(1)
+				putMapSlot(s)
 				continue
 			}
 			if s.err != nil {
 				errCount.Add(1)
 				innerCancel()
-				collErr <- s.err
+				err := s.err
+				putMapSlot(s)
+				collErr <- err
 				return
 			}
 			processed.Add(1)
-			if err := outbox.Send(innerCtx, s.result); err != nil {
+			result := s.result
+			putMapSlot(s)
+			if err := outbox.Send(innerCtx, result); err != nil {
 				collErr <- err
 				return
 			}
@@ -599,11 +691,12 @@ func runMapConcurrentOrdered(ctx context.Context, fn func(context.Context, any) 
 
 	// Dispatcher — reads inCh, assigns slots, preserves order via pending.
 	for item := range inCh {
-		s := &slot{item: item, done: make(chan struct{})}
+		s := getMapSlot(item)
 		// Send to pending first to guarantee output ordering.
 		select {
 		case pending <- s:
 		case <-innerCtx.Done():
+			putMapSlot(s)
 			goto dispatchDone
 		}
 		select {
@@ -679,7 +772,37 @@ func flatMapProcessItem(ctx context.Context, fn func(context.Context, any, func(
 	}
 }
 
+// runFlatMapFastPath is the instrumentation-free FlatMap loop. The yield
+// closure sends each output directly to outCh without going through the
+// outbox interface or accumulating into an intermediate slice.
+func runFlatMapFastPath(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outCh chan any, name string) error {
+	for item := range inCh {
+		err := fn(ctx, item, func(v any) error {
+			select {
+			case outCh <- v:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		if err != nil {
+			if err == ErrSkipped {
+				continue
+			}
+			return &StageError{Stage: name, Cause: err}
+		}
+	}
+	return ctx.Err()
+}
+
 func runFlatMapSingle(ctx context.Context, fn func(context.Context, any, func(any) error) error, inCh chan any, outbox Outbox, handler ErrorHandler, name string, hook Hook) error {
+	if _, ok := handler.(DefaultHandler); ok {
+		if _, ok := hook.(NoopHook); ok {
+			if bo, ok := outbox.(*blockingOutbox); ok {
+				return runFlatMapFastPath(ctx, fn, inCh, bo.ch, name)
+			}
+		}
+	}
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64
 	defer func() { hook.OnStageDone(ctx, name, processed, errCount) }()
@@ -805,15 +928,8 @@ func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, a
 
 	_, isDefault := handler.(DefaultHandler)
 
-	type slot struct {
-		item    any
-		results []any
-		err     error
-		done    chan struct{}
-	}
-
-	jobs := make(chan *slot, concurrency)
-	pending := make(chan *slot, concurrency)
+	jobs := make(chan *flatMapSlot, concurrency)
+	pending := make(chan *flatMapSlot, concurrency)
 
 	var wg sync.WaitGroup
 	for range concurrency {
@@ -837,7 +953,7 @@ func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, a
 					s.err = wrapStageErr(name, s.err, attempt)
 				}
 				hook.OnItem(innerCtx, name, time.Since(start), s.err)
-				close(s.done)
+				s.done <- struct{}{}
 			}
 		}()
 	}
@@ -854,30 +970,36 @@ func runFlatMapConcurrentOrdered(ctx context.Context, fn func(context.Context, a
 			}
 			if s.err == ErrSkipped {
 				errCount.Add(1)
+				putFlatMapSlot(s)
 				continue
 			}
 			if s.err != nil {
 				errCount.Add(1)
 				innerCancel()
-				collErr <- s.err
+				err := s.err
+				putFlatMapSlot(s)
+				collErr <- err
 				return
 			}
 			processed.Add(1)
 			for _, r := range s.results {
 				if err := outbox.Send(innerCtx, r); err != nil {
+					putFlatMapSlot(s)
 					collErr <- err
 					return
 				}
 			}
+			putFlatMapSlot(s)
 		}
 		collErr <- nil
 	}()
 
 	for item := range inCh {
-		s := &slot{item: item, done: make(chan struct{})}
+		s := getFlatMapSlot(item)
 		select {
 		case pending <- s:
 		case <-innerCtx.Done():
+			putFlatMapSlot(s)
 			goto dispatchDone
 		}
 		select {
@@ -900,8 +1022,27 @@ dispatchDone:
 // Filter / Tap / Take
 // ---------------------------------------------------------------------------
 
+// runFilterFastPath is the instrumentation-free Filter loop.
+func runFilterFastPath(ctx context.Context, fn func(any) bool, inCh chan any, outCh chan any) error {
+	for item := range inCh {
+		if fn(item) {
+			select {
+			case outCh <- item:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	return ctx.Err()
+}
+
 func runFilter(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
 	fn := n.Fn.(func(any) bool)
+	if _, ok := hook.(NoopHook); ok {
+		if bo, ok := outbox.(*blockingOutbox); ok {
+			return runFilterFastPath(ctx, fn, inCh, bo.ch)
+		}
+	}
 	hook.OnStageStart(ctx, name)
 	var count int64
 	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
@@ -1097,7 +1238,11 @@ func runBatch(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook H
 			return nil
 		}
 		converted := convert(batch)
-		batch = make([]any, 0, initCap)
+		// Reuse the backing array: nil out interface values so the GC can
+		// collect the referenced items, then reset the length to zero.
+		// convert copies items into a new []T and does not retain this slice.
+		clear(batch)
+		batch = batch[:0]
 		if timer != nil {
 			timer.Stop()
 		}
@@ -1228,11 +1373,32 @@ func runMerge(ctx context.Context, inChs []chan any, outbox Outbox, hook Hook, n
 // Sink (terminal)
 // ---------------------------------------------------------------------------
 
+// runSinkFastPath is the instrumentation-free Sink loop for Concurrency(1).
+func runSinkFastPath(ctx context.Context, fn func(context.Context, any) error, inCh chan any, name string) error {
+	for item := range inCh {
+		if err := fn(ctx, item); err != nil {
+			if err == ErrSkipped {
+				continue
+			}
+			return &StageError{Stage: name, Cause: err}
+		}
+	}
+	return ctx.Err()
+}
+
 func runSink(ctx context.Context, n *Node, inCh chan any, hook Hook, sampleRate int64) error {
 	fn := n.Fn.(func(context.Context, any) error)
 	handler := nodeErrorHandler(n)
 	name := nodeName(n, "sink")
 	adapted := func(ctx context.Context, in any) (any, error) { return nil, fn(ctx, in) }
+
+	if n.Concurrency <= 1 {
+		if _, ok := handler.(DefaultHandler); ok {
+			if _, ok := hook.(NoopHook); ok {
+				return runSinkFastPath(ctx, fn, inCh, name)
+			}
+		}
+	}
 
 	hook.OnStageStart(ctx, name)
 	var processed, errCount int64

@@ -87,6 +87,40 @@ Checked items are complete.
   a custom codec replaces `encoding/json` for both cache and store-backed `Ref`
   serialization. `JSONCodec` remains the default for backward compatibility.
 
+- [x] **`Concurrency(1)` fast paths** — for `Map`, `FlatMap`, `Filter`, and `Sink`
+  at `Concurrency(1)` with no custom hook or error handler, a stripped-down loop
+  bypasses `time.Now()` / `time.Since()`, `ProcessItem()` retry dispatch,
+  `hook.OnItem()` interface dispatch, and `outbox.Send()` interface dispatch.
+  Also added `sync.Pool` reuse for ordered-concurrent `mapSlot` / `flatMapSlot`
+  structs (including their `done` channels), and `clear`+reslice batch-buffer
+  reuse in `runBatch`. Fast paths use `for range` on receive (no per-item
+  ctx.Done select) plus a single send-side `select`; cancellation is detected
+  via `ctx.Err()` after the loop exits. Net result: 3-stage comparison benchmark
+  improved from ~1.69 M/s to ~2.85 M/s (overhead vs raw goroutines: 3.5x → 2.1x).
+
+- [ ] **Concurrent fast paths** — extend the `Concurrency(1)` fast-path pattern to
+  `runMapConcurrent` and `runFlatMapConcurrent` (unordered). When
+  `DefaultHandler + NoopHook` hold, worker goroutines can skip per-item timing
+  and hook dispatch. Benefits any workload using `Concurrency(n)` for I/O
+  simulation.
+
+- [ ] **Chunked inter-stage transport** — stages currently exchange items one `any`
+  at a time via `chan any`. Each channel op costs a mutex lock/unlock plus a
+  potential goroutine handoff. Switching to `chan []any` with pooled fixed-size
+  slices (e.g. 16–32 items) would reduce channel ops by ~16× at the cost of a
+  small per-batch latency increase. Plausibly brings overhead from ~3.1× to under
+  2× without touching the public API. Requires changes to `runSource`, all fast
+  paths, and the channel allocation in `buildGraph`.
+
+- [ ] **Generics at the engine layer (v2)** — the remaining 2 allocs/item are from
+  boxing values into `any` at stage boundaries. The `engine/typed` experiment
+  confirmed that on equal footing (both using `for range` receive), eliminating
+  boxing improves throughput by ~10% (350 ms → 317 ms at 1M items) and drops
+  allocs from 2,000,000 to ~29 per pipeline run. The remaining ~1.9x gap to raw
+  goroutines is the send-side `select` (shared by both engines). The v2 case
+  improves both GC pressure and throughput; the gain scales with pipeline
+  frequency. Requires a new module path; revisit once the API surface is stable.
+
 ---
 
 ## Multi-graph and composition
@@ -110,7 +144,7 @@ Checked items are complete.
 
 ## Benchmarks & performance evidence
 
-- [ ] **Benchmark vs raw goroutines** — measure the overhead of Kitsune's
+- [x] **Benchmark vs raw goroutines** — measure the overhead of Kitsune's
   engine against an equivalent hand-rolled goroutine/channel pipeline for a
   3-stage linear graph (Map → Filter → ForEach) at 1M items. Include comparisons
   against `sourcegraph/conc` and `reugn/go-streams`. The goal is a documented,
@@ -118,7 +152,7 @@ Checked items are complete.
   cite before adopting. Publish results in `doc/benchmarks.md` and keep the
   benchmark programs in `bench/`.
 
-- [ ] **Allocation benchmark suite** — extend `bench_test.go` with
+- [x] **Allocation benchmark suite** — extend `bench_test.go` with
   `AllocsPerOp` tracking for the highest-traffic paths: `Map`, `FlatMap`,
   `Batch`, `RateLimit`, and `CircuitBreaker`. Zero-alloc hot paths should be
   verified and regressions caught in CI.
