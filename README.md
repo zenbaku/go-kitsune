@@ -1,6 +1,10 @@
 # Kitsune
 
+> **Note:** This project is an AI code exploration — the codebase is partially written using AI agents as an experiment in AI-assisted software development.
+
 A type-safe, concurrent data pipeline library for Go. Compose ordinary functions into pipelines; the runtime handles channels, goroutines, backpressure, and error routing transparently.
+
+![Kitsune Inspector — live pipeline view](doc/screenshoot.png)
 
 ```go
 lines  := kitsune.FromSlice(rawLines)
