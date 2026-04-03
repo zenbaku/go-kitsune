@@ -189,16 +189,22 @@ func (c *Channel[T]) Close() {
 
 // Ticker emits the current [time.Time] at regular intervals.
 // The first tick fires after d. The pipeline runs until the context is cancelled.
+// Pass [WithClock] to use a deterministic clock for testing.
 //
 //	p := kitsune.Ticker(5 * time.Second)
 //	p.Take(10) // collect 10 ticks then stop
-func Ticker(d time.Duration) *Pipeline[time.Time] {
+func Ticker(d time.Duration, opts ...StageOption) *Pipeline[time.Time] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = engine.RealClock{}
+	}
 	return Generate(func(ctx context.Context, yield func(time.Time) bool) error {
-		ticker := time.NewTicker(d)
+		ticker := clk.NewTicker(d)
 		defer ticker.Stop()
 		for {
 			select {
-			case t := <-ticker.C:
+			case t := <-ticker.C():
 				if !yield(t) {
 					return nil
 				}
@@ -211,17 +217,23 @@ func Ticker(d time.Duration) *Pipeline[time.Time] {
 
 // Interval emits a monotonically increasing int64 (0, 1, 2, …) at regular intervals.
 // The first value fires after d. The pipeline runs until the context is cancelled.
+// Pass [WithClock] to use a deterministic clock for testing.
 //
 //	p := kitsune.Interval(time.Second)
 //	p.Take(5) // → 0, 1, 2, 3, 4
-func Interval(d time.Duration) *Pipeline[int64] {
+func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = engine.RealClock{}
+	}
 	return Generate(func(ctx context.Context, yield func(int64) bool) error {
-		ticker := time.NewTicker(d)
+		ticker := clk.NewTicker(d)
 		defer ticker.Stop()
 		var i int64
 		for {
 			select {
-			case <-ticker.C:
+			case <-ticker.C():
 				if !yield(i) {
 					return nil
 				}
@@ -324,13 +336,19 @@ func Cycle[T any](items []T) *Pipeline[T] {
 
 // Timer emits a single value after delay by calling fn, then closes.
 // The pipeline produces exactly one item unless the context is cancelled first.
+// Pass [WithClock] to use a deterministic clock for testing.
 //
 //	// Emit a heartbeat message after 5 seconds.
 //	kitsune.Timer(5*time.Second, func() string { return "ping" })
-func Timer[T any](delay time.Duration, fn func() T) *Pipeline[T] {
+func Timer[T any](delay time.Duration, fn func() T, opts ...StageOption) *Pipeline[T] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = engine.RealClock{}
+	}
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		select {
-		case <-time.After(delay):
+		case <-clk.After(delay):
 			yield(fn())
 			return nil
 		case <-ctx.Done():

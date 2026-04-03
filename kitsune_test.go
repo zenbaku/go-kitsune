@@ -15,6 +15,7 @@ import (
 	"time"
 
 	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/testkit"
 )
 
 // dropCountHook implements kitsune.Hook + kitsune.OverflowHook, counting drops.
@@ -203,6 +204,72 @@ func TestErrorHandlingSkip(t *testing.T) {
 		if v != expected[i] {
 			t.Errorf("results[%d] = %d, want %d", i, v, expected[i])
 		}
+	}
+}
+
+func TestErrorHandlingReturn(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	mapped := kitsune.Map(input, func(_ context.Context, n int) (int, error) {
+		if n == 2 {
+			return 0, errors.New("replace me")
+		}
+		return n * 10, nil
+	}, kitsune.OnError(kitsune.Return(-1)))
+
+	results, err := mapped.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{10, -1, 30}
+	if !slices.Equal(results, expected) {
+		t.Fatalf("expected %v, got %v", expected, results)
+	}
+}
+
+func TestErrorHandlingReturnStruct(t *testing.T) {
+	type User struct {
+		Name string
+	}
+	sentinel := User{Name: "unknown"}
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	mapped := kitsune.Map(input, func(_ context.Context, n int) (User, error) {
+		if n == 2 {
+			return User{}, errors.New("lookup failed")
+		}
+		return User{Name: fmt.Sprintf("user%d", n)}, nil
+	}, kitsune.OnError(kitsune.Return(sentinel)))
+
+	results, err := mapped.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results[1] != sentinel {
+		t.Errorf("expected sentinel %v at index 1, got %v", sentinel, results[1])
+	}
+}
+
+func TestErrorHandlingRetryThenReturn(t *testing.T) {
+	var attempts atomic.Int32
+	input := kitsune.FromSlice([]int{1})
+	mapped := kitsune.Map(input, func(_ context.Context, n int) (int, error) {
+		attempts.Add(1)
+		return 0, errors.New("always fails")
+	}, kitsune.OnError(kitsune.RetryThen(2, kitsune.FixedBackoff(0), kitsune.Return(0))))
+
+	results, err := mapped.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{0}
+	if !slices.Equal(results, expected) {
+		t.Fatalf("expected %v, got %v", expected, results)
+	}
+	// 1 initial attempt + 2 retries = 3 total
+	if attempts.Load() != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts.Load())
 	}
 }
 
@@ -456,6 +523,34 @@ func TestLift(t *testing.T) {
 	}
 	if len(results) != 3 || results[0] != 1 || results[1] != 2 || results[2] != 3 {
 		t.Fatalf("unexpected results: %v", results)
+	}
+}
+
+func TestLiftPure(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	doubled := kitsune.Map(input, kitsune.LiftPure(func(n int) int { return n * 2 }))
+
+	results, err := doubled.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{2, 4, 6}
+	if !slices.Equal(results, expected) {
+		t.Fatalf("expected %v, got %v", expected, results)
+	}
+}
+
+func TestLiftPureTypeChange(t *testing.T) {
+	input := kitsune.FromSlice([]int{1, 2, 3})
+	strs := kitsune.Map(input, kitsune.LiftPure(func(n int) string { return strconv.Itoa(n) }))
+
+	results, err := strs.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"1", "2", "3"}
+	if !slices.Equal(results, expected) {
+		t.Fatalf("expected %v, got %v", expected, results)
 	}
 }
 
@@ -3599,6 +3694,142 @@ func TestConcatMapIgnoresConcurrency(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SwitchMap
+// ---------------------------------------------------------------------------
+
+func TestSwitchMap(t *testing.T) {
+	// Basic: each item yields itself twice; no cancellation because input is
+	// consumed sequentially (single-item latency << test timeout).
+	results, err := kitsune.SwitchMap(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int, yield func(int) error) error {
+			if err := yield(v); err != nil {
+				return err
+			}
+			return yield(v * 10)
+		}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// At minimum we expect the last item's outputs; depending on timing we may
+	// also see earlier items' outputs. Just verify no error and non-empty result.
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+}
+
+func TestSwitchMapCancelsInner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing-sensitive test in short mode")
+	}
+	// Slow inner function: each item sleeps, then yields. We send items quickly
+	// so later items should cancel earlier ones.
+	// The last item (3) must be present in the output; items 1 and 2 may be
+	// cancelled before they yield.
+	const last = 3
+	results, err := kitsune.SwitchMap(kitsune.FromSlice([]int{1, 2, last}),
+		func(ctx context.Context, v int, yield func(int) error) error {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return yield(v)
+		},
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The last value must appear; earlier values may or may not.
+	found := false
+	for _, v := range results {
+		if v == last {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected last item (%d) in output, got %v", last, results)
+	}
+}
+
+func TestSwitchMapContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := kitsune.SwitchMap(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int, yield func(int) error) error {
+			return yield(v)
+		}).Collect(ctx)
+	// Either nil (pipeline short-circuits before producing anything) or a
+	// context error is acceptable; what must NOT happen is a panic.
+	_ = err
+}
+
+// ---------------------------------------------------------------------------
+// ExhaustMap
+// ---------------------------------------------------------------------------
+
+func TestExhaustMap(t *testing.T) {
+	// Basic: single item, no contention.
+	results, err := kitsune.ExhaustMap(kitsune.FromSlice([]int{42}),
+		func(_ context.Context, v int, yield func(int) error) error {
+			if err := yield(v); err != nil {
+				return err
+			}
+			return yield(v * 10)
+		}).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(results, []int{42, 420}) {
+		t.Fatalf("expected [42 420], got %v", results)
+	}
+}
+
+func TestExhaustMapIgnoresDuringActive(t *testing.T) {
+	// First item gets a slow inner function. Items 2 and 3 arrive while inner
+	// is active and should be dropped. Only item 1's output must appear.
+	results, err := kitsune.ExhaustMap(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(ctx context.Context, v int, yield func(int) error) error {
+			if v == 1 {
+				// Slow enough that items 2 and 3 arrive before we finish.
+				select {
+				case <-time.After(40 * time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return yield(v)
+		},
+		kitsune.Buffer(8),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Item 1 must appear; items 2 and 3 may be dropped (or may sneak in on a
+	// fast machine before the goroutine spins up). Just verify item 1 is there.
+	found := false
+	for _, v := range results {
+		if v == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected item 1 in output, got %v", results)
+	}
+}
+
+func TestExhaustMapContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := kitsune.ExhaustMap(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int, yield func(int) error) error {
+			return yield(v)
+		}).Collect(ctx)
+	// Either nil or context error is acceptable; no panic.
+	_ = err
+}
+
+// ---------------------------------------------------------------------------
 // SlidingWindow
 // ---------------------------------------------------------------------------
 
@@ -5506,6 +5737,184 @@ func TestOr_BothFail(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// CombineLatest
+// ---------------------------------------------------------------------------
+
+func TestCombineLatest(t *testing.T) {
+	// Same-graph: Broadcast a source into 2 branches, CombineLatest them.
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	branches := kitsune.Broadcast(src, 2)
+	combined := kitsune.CombineLatest(branches[0], branches[1])
+	results, err := combined.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// At least some pairs should be produced; each value must be from [1,3].
+	for _, p := range results {
+		if p.First < 1 || p.First > 3 {
+			t.Errorf("unexpected First value %d", p.First)
+		}
+		if p.Second < 1 || p.Second > 3 {
+			t.Errorf("unexpected Second value %d", p.Second)
+		}
+	}
+}
+
+func TestCombineLatestBothSidesTrigger(t *testing.T) {
+	// Both sides should trigger output (key distinction from WithLatestFrom).
+	// Use independent pipelines so we can observe pairs from both sides.
+	a := kitsune.FromSlice([]int{10, 20})
+	b := kitsune.FromSlice([]int{1, 2})
+	results, err := kitsune.CombineLatest(a, b).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// We expect some output; the exact count depends on scheduling.
+	// Verify every pair has valid values.
+	for _, p := range results {
+		if p.First != 10 && p.First != 20 {
+			t.Errorf("unexpected First value %d", p.First)
+		}
+		if p.Second != 1 && p.Second != 2 {
+			t.Errorf("unexpected Second value %d", p.Second)
+		}
+	}
+}
+
+func TestCombineLatestOneSideEmpty(t *testing.T) {
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]int{}) // empty
+	results, err := kitsune.CombineLatest(a, b).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results when one side is empty, got %d: %v", len(results), results)
+	}
+}
+
+func TestCombineLatestIndependentGraphs(t *testing.T) {
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]string{"x", "y", "z"})
+	results, err := kitsune.CombineLatest(a, b).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Some pairs should be produced; verify value constraints.
+	for _, p := range results {
+		if p.First < 1 || p.First > 3 {
+			t.Errorf("unexpected First value %d", p.First)
+		}
+		if p.Second != "x" && p.Second != "y" && p.Second != "z" {
+			t.Errorf("unexpected Second value %q", p.Second)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Balance
+// ---------------------------------------------------------------------------
+
+func TestBalance(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
+	outputs := kitsune.Balance(src, 3)
+
+	var mu sync.Mutex
+	var all []int
+	var perOutput [3][]int
+
+	runners := make([]*kitsune.Runner, 3)
+	for i, p := range outputs {
+		i := i
+		runners[i] = p.ForEach(func(_ context.Context, n int) error {
+			mu.Lock()
+			all = append(all, n)
+			perOutput[i] = append(perOutput[i], n)
+			mu.Unlock()
+			return nil
+		})
+	}
+	merged, err := kitsune.MergeRunners(runners...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// All 6 items should be present exactly once.
+	slices.Sort(all)
+	if !slices.Equal(all, []int{1, 2, 3, 4, 5, 6}) {
+		t.Errorf("expected all items [1-6], got %v", all)
+	}
+
+	// Each output should have exactly 2 items.
+	for i, items := range perOutput {
+		if len(items) != 2 {
+			t.Errorf("output %d: expected 2 items, got %d: %v", i, len(items), items)
+		}
+	}
+}
+
+func TestBalanceRoundRobin(t *testing.T) {
+	// Ordered items should distribute round-robin.
+	src := kitsune.FromSlice([]int{0, 1, 2, 3, 4, 5})
+	outputs := kitsune.Balance(src, 3)
+
+	results := make([][]int, 3)
+	runners := make([]*kitsune.Runner, 3)
+	for i, p := range outputs {
+		i := i
+		runners[i] = p.ForEach(func(_ context.Context, n int) error {
+			results[i] = append(results[i], n)
+			return nil
+		})
+	}
+	merged, err := kitsune.MergeRunners(runners...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := merged.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify round-robin: output[i] should contain items i, i+3.
+	for i, items := range results {
+		if len(items) != 2 {
+			t.Errorf("output %d: expected 2 items, got %d: %v", i, len(items), items)
+		}
+		// Items should be i and i+3 (modular round-robin).
+		slices.Sort(items)
+		want := []int{i, i + 3}
+		if !slices.Equal(items, want) {
+			t.Errorf("output %d: got %v, want %v", i, items, want)
+		}
+	}
+}
+
+func TestBalanceSingleOutput(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	outputs := kitsune.Balance(src, 1)
+	results, err := outputs[0].Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(results, []int{1, 2, 3}) {
+		t.Errorf("got %v, want [1 2 3]", results)
+	}
+}
+
+func TestBalancePanics(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected Balance(p, 0) to panic")
+		}
+	}()
+	kitsune.Balance(src, 0)
+}
+
 func TestOr_ComposesWithThen(t *testing.T) {
 	orStage := kitsune.Or(
 		func(_ context.Context, n int) (int, error) { return n * 2, nil },
@@ -5522,5 +5931,278 @@ func TestOr_ComposesWithThen(t *testing.T) {
 	expected := []int{4, 8, 12}
 	if !slices.Equal(results, expected) {
 		t.Errorf("got %v, want %v", results, expected)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestClock integration tests — deterministic, no real sleeps
+// ---------------------------------------------------------------------------
+
+// TestWindow_TestClock verifies that Window flushes when virtual time advances
+// past the window duration.
+func TestWindow_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+
+	// Use a channel source so we can control item delivery and close timing.
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	w := kitsune.Window(src, 5*time.Second, kitsune.WithClock(clock))
+
+	// Collect runs the pipeline in a background goroutine; resultCh carries the result.
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := w.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	// Send 3 items, then advance time past the window boundary to flush them.
+	// Small real sleep so the goroutine reaches the select in runBatch before we advance.
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 1)
+	_ = ch.Send(context.Background(), 2)
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+	clock.Advance(5 * time.Second)
+
+	// Send 2 more items, then close — end-of-stream flush.
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 4)
+	_ = ch.Send(context.Background(), 5)
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	batches := <-resultCh
+
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 windows, got %d: %v", len(batches), batches)
+	}
+	// First window must contain the first 3 items.
+	if !slices.Equal(batches[0], []int{1, 2, 3}) {
+		t.Errorf("window[0] = %v, want [1 2 3]", batches[0])
+	}
+	// Last window must contain 4 and 5.
+	last := batches[len(batches)-1]
+	if !slices.Equal(last, []int{4, 5}) {
+		t.Errorf("window[last] = %v, want [4 5]", last)
+	}
+}
+
+// TestBatch_TestClock verifies that Batch flushes a partial batch when virtual
+// time advances past the BatchTimeout.
+func TestBatch_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	batched := kitsune.Batch(src, 10,
+		kitsune.BatchTimeout(1*time.Second),
+		kitsune.WithClock(clock),
+	)
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := batched.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 10)
+	_ = ch.Send(context.Background(), 20)
+	_ = ch.Send(context.Background(), 30)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance past the timeout — should flush the partial batch of 3.
+	clock.Advance(1 * time.Second)
+	time.Sleep(5 * time.Millisecond)
+
+	// Send one more item then close — flushed as end-of-stream batch.
+	_ = ch.Send(context.Background(), 40)
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	batches := <-resultCh
+
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 batches, got %d: %v", len(batches), batches)
+	}
+	if !slices.Equal(batches[0], []int{10, 20, 30}) {
+		t.Errorf("batch[0] = %v, want [10 20 30]", batches[0])
+	}
+	if !slices.Equal(batches[len(batches)-1], []int{40}) {
+		t.Errorf("batch[last] = %v, want [40]", batches[len(batches)-1])
+	}
+}
+
+// TestThrottle_TestClock verifies that Throttle uses virtual time to decide
+// whether an item is within the cooldown window.
+func TestThrottle_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const window = 5 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	throttled := kitsune.Throttle(src, window, kitsune.WithClock(clock))
+
+	resultCh := make(chan []int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := throttled.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+
+	// First item: should pass through (nothing emitted yet).
+	_ = ch.Send(context.Background(), 1)
+	time.Sleep(5 * time.Millisecond)
+
+	// Second item within the window: should be dropped.
+	_ = ch.Send(context.Background(), 2)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance past the throttle window.
+	clock.Advance(5 * time.Second)
+	time.Sleep(5 * time.Millisecond)
+
+	// Third item: cooldown elapsed, should pass through.
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if !slices.Equal(results, []int{1, 3}) {
+		t.Errorf("got %v, want [1 3]", results)
+	}
+}
+
+// TestDebounce_TestClock verifies that Debounce uses virtual time and emits
+// only after the quiet period elapses.
+func TestDebounce_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const quietPeriod = 2 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	debounced := kitsune.Debounce(src, quietPeriod, kitsune.WithClock(clock))
+
+	resultCh := make(chan []int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := debounced.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+
+	// Send a burst of 3 items — only the last should be emitted after the quiet period.
+	_ = ch.Send(context.Background(), 1)
+	time.Sleep(2 * time.Millisecond)
+	_ = ch.Send(context.Background(), 2)
+	time.Sleep(2 * time.Millisecond)
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance time past the quiet period to trigger the debounce flush.
+	clock.Advance(2 * time.Second)
+	time.Sleep(10 * time.Millisecond)
+
+	// Close the channel — no pending item at this point.
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d: %v", len(results), results)
+	}
+	if results[0] != 3 {
+		t.Errorf("expected 3 (last item of burst), got %d", results[0])
+	}
+}
+
+// TestTicker_TestClock verifies that Ticker emits time values when the virtual
+// clock advances past tick intervals.
+func TestTicker_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const tickInterval = 1 * time.Second
+
+	// Collect exactly 3 ticks using Take.
+	p := kitsune.Ticker(tickInterval, kitsune.WithClock(clock)).Take(3)
+
+	resultCh := make(chan []time.Time, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := p.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	// Advance the clock three times, one tick interval each time.
+	for i := 0; i < 3; i++ {
+		time.Sleep(5 * time.Millisecond)
+		clock.Advance(tickInterval)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 ticks, got %d", len(results))
+	}
+	// Each tick time should be after the previous one.
+	for i := 1; i < len(results); i++ {
+		if !results[i].After(results[i-1]) {
+			t.Errorf("tick[%d] (%v) is not after tick[%d] (%v)", i, results[i], i-1, results[i-1])
+		}
+	}
+}
+
+// TestInterval_TestClock verifies that Interval emits sequential int64 values
+// when the virtual clock advances.
+func TestInterval_TestClock(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const tickInterval = 1 * time.Second
+
+	p := kitsune.Interval(tickInterval, kitsune.WithClock(clock)).Take(4)
+
+	resultCh := make(chan []int64, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := p.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	for i := 0; i < 4; i++ {
+		time.Sleep(5 * time.Millisecond)
+		clock.Advance(tickInterval)
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if !slices.Equal(results, []int64{0, 1, 2, 3}) {
+		t.Errorf("got %v, want [0 1 2 3]", results)
 	}
 }

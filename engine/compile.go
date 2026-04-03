@@ -67,10 +67,18 @@ type ErrorHandler interface {
 type ErrorAction int
 
 const (
-	ActionHalt  ErrorAction = iota // stop the pipeline
-	ActionSkip                     // drop item, continue
-	ActionRetry                    // retry with backoff
+	ActionHalt   ErrorAction = iota // stop the pipeline
+	ActionSkip                      // drop item, continue
+	ActionRetry                     // retry with backoff
+	ActionReturn                    // emit replacement value, continue
 )
+
+// Returner is optionally implemented by an ErrorHandler that uses ActionReturn.
+// When Handle returns ActionReturn, the engine calls ReturnValue to obtain
+// the replacement item.
+type Returner interface {
+	ReturnValue() any
+}
 
 // DefaultHandler halts on any error.
 type DefaultHandler struct{}
@@ -241,7 +249,7 @@ func CreateChannels(g *Graph) map[ChannelKey]chan any {
 		if n.Kind == Partition || n.Kind == MapResultNode {
 			chans[ChannelKey{n.ID, 0}] = make(chan any, buf) // ok / match
 			chans[ChannelKey{n.ID, 1}] = make(chan any, buf) // err / rest
-		} else if n.Kind == BroadcastNode {
+		} else if n.Kind == BroadcastNode || n.Kind == BalanceNode {
 			for i := range n.BroadcastN {
 				chans[ChannelKey{n.ID, i}] = make(chan any, buf)
 			}
@@ -268,7 +276,7 @@ func CreateOutboxes(g *Graph, chans map[ChannelKey]chan any, hook Hook) map[Chan
 		if n.Kind == Partition || n.Kind == MapResultNode {
 			outboxes[ChannelKey{n.ID, 0}] = NewOutbox(chans[ChannelKey{n.ID, 0}], overflow, hook, name)
 			outboxes[ChannelKey{n.ID, 1}] = NewOutbox(chans[ChannelKey{n.ID, 1}], overflow, hook, name)
-		} else if n.Kind == BroadcastNode {
+		} else if n.Kind == BroadcastNode || n.Kind == BalanceNode {
 			for i := range n.BroadcastN {
 				outboxes[ChannelKey{n.ID, i}] = NewOutbox(chans[ChannelKey{n.ID, i}], overflow, hook, name)
 			}

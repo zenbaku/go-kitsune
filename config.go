@@ -33,6 +33,7 @@ type stageConfig struct {
 	dedupSet     DedupSet
 	cbConfig     *cbConfig
 	rlConfig     *rateLimitConfig
+	clock        engine.Clock
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -79,7 +80,7 @@ func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOp
 	if cfg.cacheConfig != nil && kind != engine.Map {
 		panic("kitsune: CacheBy is only supported on Map stages")
 	}
-	if cfg.timeout > 0 && kind != engine.Map && kind != engine.FlatMap {
+	if cfg.timeout > 0 && kind != engine.Map && kind != engine.FlatMap && kind != engine.SwitchMapNode && kind != engine.ExhaustMapNode {
 		panic("kitsune: Timeout is only supported on Map and FlatMap stages")
 	}
 	_, hasRetry := cfg.errorHandler.(*retryHandler)
@@ -144,6 +145,13 @@ func OnError(h ErrorHandler) StageOption {
 // Only meaningful when used with [Batch].
 func BatchTimeout(d time.Duration) StageOption {
 	return func(c *stageConfig) { c.batchTimeout = d }
+}
+
+// WithClock sets the time source for time-sensitive stages (Window, Batch, Throttle, Debounce)
+// and source operators (Ticker, Interval, Timer).
+// Use testkit.NewTestClock() for deterministic, sleep-free tests.
+func WithClock(c engine.Clock) StageOption {
+	return func(cfg *stageConfig) { cfg.clock = c }
 }
 
 // WithDedupSet specifies the [DedupSet] backend for a [Dedupe] stage.
@@ -401,6 +409,22 @@ func Halt() ErrorHandler { return ErrorHandler{h: engine.DefaultHandler{}} }
 // Skip returns an ErrorHandler that drops the failing item and continues.
 func Skip() ErrorHandler { return ErrorHandler{h: &skipHandler{}} }
 
+// Return returns an [ErrorHandler] that replaces the failed item with val and continues.
+// Use with [OnError] to substitute a default value on failure instead of dropping
+// the item ([Skip]) or halting the pipeline ([Halt]):
+//
+//	kitsune.OnError(kitsune.Return(User{Name: "unknown"}))
+//
+// Return can be composed as a fallback after retries:
+//
+//	kitsune.OnError(kitsune.RetryThen(3, kitsune.FixedBackoff(time.Second), kitsune.Return(User{})))
+//
+// Note: in [FlatMap] stages, Return behaves like [Skip] because FlatMap has no
+// single replacement value to emit.
+func Return[T any](val T) ErrorHandler {
+	return ErrorHandler{h: &returnHandler{val: val}}
+}
+
 // Retry returns an ErrorHandler that retries up to n times with the given
 // backoff strategy, then halts.
 func Retry(n int, b Backoff) ErrorHandler {
@@ -435,6 +459,14 @@ type skipHandler struct{}
 func (*skipHandler) Handle(error, int) engine.ErrorAction     { return engine.ActionSkip }
 func (*skipHandler) Backoff() func(attempt int) time.Duration { return nil }
 
+type returnHandler struct {
+	val any
+}
+
+func (h *returnHandler) Handle(error, int) engine.ErrorAction     { return engine.ActionReturn }
+func (h *returnHandler) Backoff() func(attempt int) time.Duration { return nil }
+func (h *returnHandler) ReturnValue() any                         { return h.val }
+
 type retryHandler struct {
 	max      int
 	bo       Backoff
@@ -449,6 +481,13 @@ func (h *retryHandler) Handle(err error, attempt int) engine.ErrorAction {
 }
 
 func (h *retryHandler) Backoff() func(int) time.Duration { return h.bo }
+
+func (h *retryHandler) ReturnValue() any {
+	if r, ok := h.fallback.(engine.Returner); ok {
+		return r.ReturnValue()
+	}
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Observability

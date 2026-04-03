@@ -698,6 +698,25 @@ func TestProcessItem_Retry(t *testing.T) {
 	}
 }
 
+func TestProcessItem_Return(t *testing.T) {
+	boom := errors.New("boom")
+	fn := func(_ context.Context, _ any) (any, error) { return nil, boom }
+	result, err, _ := ProcessItem(context.Background(), fn, nil, &returnValueHandler{val: "fallback"})
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+	if result != "fallback" {
+		t.Errorf("expected result 'fallback', got %v", result)
+	}
+}
+
+// returnValueHandler is a local test ErrorHandler that returns a replacement value.
+type returnValueHandler struct{ val any }
+
+func (h *returnValueHandler) Handle(error, int) ErrorAction    { return ActionReturn }
+func (h *returnValueHandler) Backoff() func(int) time.Duration { return nil }
+func (h *returnValueHandler) ReturnValue() any                 { return h.val }
+
 // retryNHandler retries up to max times with zero backoff delay.
 type retryNHandler struct{ max int }
 

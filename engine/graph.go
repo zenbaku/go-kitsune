@@ -112,6 +112,10 @@ type Node struct {
 	// MapResultErrWrap converts an (input, error) pair into the type-erased ErrItem
 	// value that is sent to port 1. Set by the public kitsune.MapResult function.
 	MapResultErrWrap func(input any, err error) any
+
+	// Clock is the time source for time-sensitive nodes (Batch, Throttle, Debounce).
+	// nil means use RealClock{}.
+	Clock Clock
 }
 
 // InputRef identifies the output port of an upstream node.
@@ -148,6 +152,10 @@ const (
 	ReduceNode                  // fold entire stream into a single value, always emits once
 	MapResultNode               // map with error routing: success → port 0, error → port 1
 	WithLatestFromNode          // combine primary items with most-recent secondary value
+	SwitchMapNode               // like FlatMap but cancels active inner pipeline on new item (latest wins)
+	ExhaustMapNode              // like FlatMap but ignores upstream items while inner is active (first wins)
+	CombineLatestNode           // symmetric WithLatestFrom: either side triggers output
+	BalanceNode                 // round-robin fan-out to N outputs
 )
 
 // DefaultBuffer is the default channel buffer size between stages.

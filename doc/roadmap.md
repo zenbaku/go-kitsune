@@ -21,26 +21,26 @@ Checked items are complete.
 
 ## Operators: missing transforms
 
-- [ ] **`SwitchMap[I, O]`** — like `FlatMap` but cancels the active inner pipeline
+- [x] **`SwitchMap[I, O]`** — like `FlatMap` but cancels the active inner pipeline
   when a new upstream item arrives, then starts a fresh one. The defining pattern
   for search-as-you-type, live queries, and any scenario where a new request
   supersedes the previous one. Without it, users reach for `ConcatMap` (wrong
   ordering semantics) or wire up their own cancellation. Engine implementation
   needs a per-outer-item context that is cancelled on the next upstream receive.
 
-- [ ] **`ExhaustMap[I, O]`** — like `FlatMap` but ignores new upstream items while
+- [x] **`ExhaustMap[I, O]`** — like `FlatMap` but ignores new upstream items while
   an inner pipeline is still active. The defining pattern for "submit once, wait
   for completion" flows: form submissions, idempotent API calls, debounced writes.
   Complements `SwitchMap` — together they cover the three meaningful concurrency
   modes for inner pipelines (`FlatMap` = all concurrent, `ConcatMap` = all
   sequential, `SwitchMap` = latest wins, `ExhaustMap` = first wins).
 
-- [ ] **`LiftPure`** — ergonomic wrapper for context-free, error-free functions,
+- [x] **`LiftPure`** — ergonomic wrapper for context-free, error-free functions,
   complementing the existing `Lift` (which wraps `func(I) (O, error)`):
   `kitsune.LiftPure(func(n int) int { return n * 2 })`. Removes the most common
   friction point when onboarding users who just want a simple transform.
 
-- [ ] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a
+- [x] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a
   caller-supplied default value instead of dropping it (`Skip`) or halting the
   pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup
   should produce a sentinel value rather than a gap in the output:
@@ -199,7 +199,7 @@ Checked items are complete.
   a `Generate`-based implementation that runs each pipeline concurrently.
   `MergeIndependent` was removed — `Merge` subsumes it.
 
-- [ ] **`CombineLatest[A, B]`** — symmetric counterpart to `WithLatestFrom`:
+- [x] **`CombineLatest[A, B]`** — symmetric counterpart to `WithLatestFrom`:
   either side emitting triggers an output, always paired with the latest value
   from the other side. `WithLatestFrom` is asymmetric (only primary triggers);
   `CombineLatest` is needed whenever both streams are equally authoritative —
@@ -208,7 +208,7 @@ Checked items are complete.
   output channel, each reading the current latest from the other side before
   emitting.
 
-- [ ] **`Balance[T]`** — round-robin fan-out: each item goes to exactly one of N
+- [x] **`Balance[T]`** — round-robin fan-out: each item goes to exactly one of N
   output pipelines, distributing load evenly rather than copying it. `Broadcast`
   replicates every item to all outputs; `Balance` is for parallelising work across
   independent downstream branches where each item only needs one path. Completes
@@ -282,7 +282,7 @@ processing system competitive with Apache Flink for single-process workloads.
   `RecordingHook` implements all six hook interfaces and provides typed
   accessors (`Items`, `Errors`, `Drops`, `Restarts`, `Graph`, `Dones`).
 
-- [ ] **Virtual time / `TestClock`** — testing `Window`, `Debounce`, `Throttle`,
+- [x] **Virtual time / `TestClock`** — testing `Window`, `Debounce`, `Throttle`,
   `Ticker`, `Interval`, and `SessionWindow` currently requires real sleeps, making
   time-based tests slow and flaky. Add a `Clock` interface threaded through
   time-sensitive operators, with a `testkit.TestClock` implementation that

@@ -37,6 +37,11 @@ type Runner struct {
 	g *engine.Graph
 }
 
+// Clock abstracts time operations for deterministic testing.
+// Use testkit.NewTestClock() for deterministic, sleep-free tests.
+// Re-exported from engine so users don't need to import internal packages.
+type Clock = engine.Clock
+
 // Hook receives lifecycle and per-item events during pipeline execution.
 // Defined in the engine; re-exported here so users don't import internal packages.
 type Hook = engine.Hook

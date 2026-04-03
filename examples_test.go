@@ -70,6 +70,14 @@ func TestExamples(t *testing.T) {
 		"metricsapi",
 		"pool",
 		"ratelimit",
+		// switch/exhaust map operators
+		"switchmap",
+		"exhaustmap",
+		// multi-stream operators
+		"combinelatest",
+		"balance",
+		// testclock / deterministic time
+		"testclock",
 	}
 
 	for _, name := range examples {

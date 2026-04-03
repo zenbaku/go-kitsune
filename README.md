@@ -94,13 +94,13 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 | `Generate[T](fn)` | Push-based custom source; call `yield` per item, return when done |
 | `FromIter[T](seq iter.Seq[T])` | Wrap a Go 1.23+ iterator |
 | `NewChannel[T](buffer int)` | Push-based source for external producers (HTTP handlers, event loops); see [Channel[T]](#channelt--runasync) |
-| `Ticker(d)` | Emit `time.Time` on every tick of `d`; stops when context is cancelled |
-| `Interval(d)` | Emit a monotonically increasing `int64` (0, 1, 2, …) on every tick of `d` |
+| `Ticker(d, opts…)` | Emit `time.Time` on every tick of `d`; stops when context is cancelled |
+| `Interval(d, opts…)` | Emit a monotonically increasing `int64` (0, 1, 2, …) on every tick of `d` |
 | `Unfold[S,T](seed S, fn)` | Generate from a seed: `fn(acc)` → `(value, nextAcc, stop)`; halt when `stop` is true |
 | `Iterate[T](seed T, fn func(T) T)` | Infinite stream: emit `seed`, then `fn(seed)`, then `fn(fn(seed))`, … |
 | `Repeatedly[T](fn func() T)` | Infinite stream: call `fn` on each iteration; use `Take` to bound |
 | `Cycle[T](items []T)` | Infinite stream: loop over `items` forever; use `Take` to bound |
-| `Timer[T](delay, fn func() T)` | Emit exactly one value after `delay` by calling `fn`; stops if context is cancelled |
+| `Timer[T](delay, fn, opts…)` | Emit exactly one value after `delay` by calling `fn`; stops if context is cancelled |
 | `Concat[T](factories …func() *Pipeline[T])` | Run each factory sequentially, forwarding all items from each before starting the next |
 
 ### 1:1 Transforms
@@ -125,6 +125,8 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 |---|---|
 | `FlatMap[I,O](p, fn, opts…)` | Each input produces zero or more outputs |
 | `ConcatMap[I,O](p, fn, opts…)` | Like `FlatMap` but always sequential (forces `Concurrency(1)`); guarantees emission order |
+| `SwitchMap[I,O](p, fn, opts…)` | Like `FlatMap` but cancels the active inner pipeline when a new item arrives; only the latest item's output reaches downstream ("latest wins") |
+| `ExhaustMap[I,O](p, fn, opts…)` | Like `FlatMap` but ignores new upstream items while an inner pipeline is active ("first wins") |
 | `FlatMapWith[I,O,S](p, key, fn, opts…)` | `FlatMap` with injected concurrent-safe state `*Ref[S]` |
 | `Pairwise[T](p)` | Emit consecutive overlapping pairs `Pair[T,T]`; first item buffers, then `{0,1},{1,2},{2,3},…` |
 | `Unbatch[T](p)` | Flatten a `Pipeline[[]T]` back to individual items (inverse of `Batch`) |
@@ -134,7 +136,7 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 | Function | Description |
 |---|---|
 | `Batch[T](p, size, opts…)` | Collect up to `size` items into a `[]T` slice; use `BatchTimeout` to flush partials |
-| `Window[T](p, duration)` | Time-based batching: flush accumulated items every `duration` |
+| `Window[T](p, duration, opts…)` | Time-based batching: flush accumulated items every `duration` |
 | `SlidingWindow[T](p, size, step)` | Overlapping (size > step) or tumbling (size == step) count-based windows emitted as `[]T` |
 
 ### Enrichment
@@ -184,8 +186,8 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 
 | Function | Description |
 |---|---|
-| `Throttle[T](p, d)` | Emit the first item per window of `d`; drop items arriving within the cooldown |
-| `Debounce[T](p, d)` | Emit only the last item after `d` of silence; each new arrival resets the timer |
+| `Throttle[T](p, d, opts…)` | Emit the first item per window of `d`; drop items arriving within the cooldown |
+| `Debounce[T](p, d, opts…)` | Emit only the last item after `d` of silence; each new arrival resets the timer |
 | `RateLimit[T](p, rps, opts…)` | Token-bucket rate limiter; `Burst(n)` controls burst capacity; `RateMode(RateLimitWait)` (default) applies backpressure, `RateMode(RateLimitDrop)` silently discards excess items |
 
 ### Deduplication
@@ -229,6 +231,9 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `ZipWith[A,B,O](a, b, fn, opts…)` | Like `Zip` but applies `fn(a, b)` immediately, producing `O` directly without an intermediate `Pair` |
 | `Unzip[A,B](p)` | Split a `Pipeline[Pair[A,B]]` into two pipelines `(*Pipeline[A], *Pipeline[B])`; inverse of `Zip` |
 | `WithLatestFrom[A,B](primary, secondary)` | Combine each primary item with the most recent secondary value; drops primary items until secondary emits |
+| `CombineLatest[A,B](a, b)` | Like `WithLatestFrom` but symmetric: either side emitting triggers output, paired with the latest value from the other side; no output until both sides have emitted |
+| `CombineLatestWith[A,B,O](a, b, fn, opts…)` | Like `CombineLatest` but applies `fn(a, b)` immediately, producing `O` directly |
+| `Balance[T](p, n)` | Round-robin fan-out: each item goes to exactly one of `n` output pipelines; complements `Broadcast` (copy to all) and `Partition` (split by predicate) |
 
 ### Terminals
 
@@ -407,6 +412,7 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 | `OnError(handler)` | Per-stage error policy (default: `Halt`) |
 | `BatchTimeout(d)` | Flush a partial batch after `d` (use with `Batch`) |
 | `Timeout(d)` | Per-item deadline for `Map` and `FlatMap`; each attempt gets a fresh timeout |
+| `WithClock(c)` | Override the time source for time-sensitive stages (`Window`, `Batch`, `Throttle`, `Debounce`) and sources (`Ticker`, `Interval`, `Timer`); pass `testkit.NewTestClock()` for deterministic, sleep-free tests |
 | `Supervise(policy)` | Per-stage restart and panic-recovery policy |
 
 ### Fault Tolerance
@@ -424,6 +430,7 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 | `Skip()` | Drop failing item and continue |
 | `Retry(n, backoff)` | Retry up to `n` times, then halt |
 | `RetryThen(n, backoff, fallback)` | Retry up to `n` times, then delegate to `fallback` |
+| `Return(val)` | Replace the failing item with `val` and continue; compose with `RetryThen` for retry-then-default patterns |
 | `FixedBackoff(d)` | Constant wait between retries |
 | `ExponentialBackoff(initial, max)` | Doubling backoff capped at `max` |
 
@@ -492,6 +499,7 @@ kitsune.ReleaseAll(results) // return every object to the pool when done
 | Symbol | Description |
 |---|---|
 | `Lift[I,O](fn)` | Wrap a context-free `func(I)(O,error)` for use with `Map`/`FlatMap` |
+| `LiftPure[I,O](fn)` | Wrap a context-free, error-free `func(I) O` for use with `Map`/`FlatMap`; unlike `Lift`, the wrapped function never fails |
 | `Pair[A,B]` | Output type of `Zip` and `WithLatestFrom`: `{First A; Second B}` |
 | `ErrItem[I]` | Output type of `MapResult`/`DeadLetter` failed branch: `{Item I; Err error}` |
 | `StageError` | Error type returned by `Runner.Run`; carries `Stage`, `Attempt`, and `Cause` fields; unwrappable with `errors.As` |

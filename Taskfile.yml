@@ -148,7 +148,7 @@ tasks:
   examples:
     desc: Run all examples
     cmds:
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow, channel, collectors, concatmap, groupby, mapresult, pairwise, reduce, scan, slidingwindow, stages, ticker, timebased, timeout, withlatestfrom, circuitbreaker, metricsapi, pool, ratelimit]
+      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow, channel, collectors, concatmap, groupby, mapresult, pairwise, reduce, scan, slidingwindow, stages, ticker, timebased, timeout, withlatestfrom, circuitbreaker, metricsapi, pool, ratelimit, switchmap, exhaustmap, combinelatest, balance, testclock]
         cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
       - for: [files, redis, sqlite, http]
         cmd: echo "=== {{.ITEM}} ===" && cd examples/{{.ITEM}} && go run .

@@ -111,6 +111,63 @@ func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 	return FlatMap(p, fn, opts...)
 }
 
+// SwitchMap applies fn to each item from p, starting a new inner pipeline for
+// each item and cancelling the previously active inner pipeline. Only the latest
+// inner pipeline's output reaches the output pipeline; superseded pipelines are
+// cancelled as soon as the next upstream item arrives.
+//
+// SwitchMap is the "latest wins" counterpart to [ConcatMap] ("all sequential")
+// and [FlatMap] ("all concurrent"). Use it for search-as-you-type, live queries,
+// and any flow where a new request obsoletes the previous one.
+func SwitchMap[I, O any](p *Pipeline[I], fn func(ctx context.Context, item I, yield func(O) error) error, opts ...StageOption) *Pipeline[O] {
+	cfg := buildStageConfig(opts)
+	if cfg.timeout > 0 {
+		d := cfg.timeout
+		inner := fn
+		fn = func(ctx context.Context, item I, yield func(O) error) error {
+			tCtx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(tCtx, item, yield)
+		}
+	}
+	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
+		return fn(ctx, in.(I), func(out O) error {
+			return yield(out)
+		})
+	}
+	n := newNode(engine.SwitchMapNode, wrapped, p, opts)
+	id := p.g.AddNode(n)
+	return &Pipeline[O]{g: p.g, node: id}
+}
+
+// ExhaustMap applies fn to each item from p but ignores new upstream items
+// while the current inner pipeline is still active. Only the first item wins;
+// all items arriving while the inner pipeline runs are dropped.
+//
+// ExhaustMap is the "first wins" counterpart to [SwitchMap] ("latest wins").
+// Use it for form submissions, idempotent API calls, and debounced writes where
+// only the first trigger should be processed until completion.
+func ExhaustMap[I, O any](p *Pipeline[I], fn func(ctx context.Context, item I, yield func(O) error) error, opts ...StageOption) *Pipeline[O] {
+	cfg := buildStageConfig(opts)
+	if cfg.timeout > 0 {
+		d := cfg.timeout
+		inner := fn
+		fn = func(ctx context.Context, item I, yield func(O) error) error {
+			tCtx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(tCtx, item, yield)
+		}
+	}
+	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
+		return fn(ctx, in.(I), func(out O) error {
+			return yield(out)
+		})
+	}
+	n := newNode(engine.ExhaustMapNode, wrapped, p, opts)
+	id := p.g.AddNode(n)
+	return &Pipeline[O]{g: p.g, node: id}
+}
+
 // Batch collects items into slices of up to size elements.
 // Use [BatchTimeout] to flush partial batches after a duration.
 func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] {
@@ -130,6 +187,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 		BatchSize:    size,
 		BatchTimeout: cfg.batchTimeout.Nanoseconds(),
 		BatchConvert: convert,
+		Clock:        cfg.clock,
 	}
 	id := p.g.AddNode(n)
 	return &Pipeline[[]T]{g: p.g, node: id}
@@ -353,8 +411,9 @@ func Merge[T any](ps ...*Pipeline[T]) *Pipeline[T] {
 // Window collects items into slices based on time. Every duration d, the
 // accumulated items are flushed as a batch. This is a convenience wrapper
 // around [Batch] with an effectively unlimited size and a mandatory timeout.
-func Window[T any](p *Pipeline[T], d time.Duration) *Pipeline[[]T] {
-	return Batch(p, math.MaxInt, BatchTimeout(d))
+// Pass [WithClock] to use a deterministic clock for testing.
+func Window[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeline[[]T] {
+	return Batch(p, math.MaxInt, append(opts, BatchTimeout(d))...)
 }
 
 // SlidingWindow collects items into overlapping windows of a fixed size,
@@ -690,15 +749,19 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 // Use Throttle for high-frequency event streams where only the first event in
 // each window matters (e.g., rate-limiting API calls, coalescing UI events).
 // For "emit last in quiet period" semantics, use [Debounce] instead.
+// Pass [WithClock] to use a deterministic clock for testing.
 //
 //	// Allow at most one alert per 30 seconds.
 //	kitsune.Throttle(alerts, 30*time.Second)
-func Throttle[T any](p *Pipeline[T], d time.Duration) *Pipeline[T] {
+func Throttle[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeline[T] {
+	cfg := buildStageConfig(opts)
 	id := p.g.AddNode(&engine.Node{
 		Kind:             engine.ThrottleNode,
+		Name:             cfg.name,
 		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
 		Buffer:           engine.DefaultBuffer,
 		ThrottleDuration: d.Nanoseconds(),
+		Clock:            cfg.clock,
 	})
 	return &Pipeline[T]{g: p.g, node: id}
 }
@@ -712,15 +775,19 @@ func Throttle[T any](p *Pipeline[T], d time.Duration) *Pipeline[T] {
 // Use Debounce for scenarios where only the final item in a rapid series
 // matters (e.g., search-as-you-type, configuration change coalescing).
 // For "emit first in window" semantics, use [Throttle] instead.
+// Pass [WithClock] to use a deterministic clock for testing.
 //
 //	// Emit only after 500ms of user inactivity.
 //	kitsune.Debounce(keystrokes, 500*time.Millisecond)
-func Debounce[T any](p *Pipeline[T], d time.Duration) *Pipeline[T] {
+func Debounce[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeline[T] {
+	cfg := buildStageConfig(opts)
 	id := p.g.AddNode(&engine.Node{
 		Kind:             engine.DebounceNode,
+		Name:             cfg.name,
 		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
 		Buffer:           engine.DefaultBuffer,
 		ThrottleDuration: d.Nanoseconds(),
+		Clock:            cfg.clock,
 	})
 	return &Pipeline[T]{g: p.g, node: id}
 }
@@ -1129,6 +1196,183 @@ func WithLatestFrom[A, B any](primary *Pipeline[A], secondary *Pipeline[B]) *Pip
 }
 
 // ---------------------------------------------------------------------------
+// CombineLatest
+// ---------------------------------------------------------------------------
+
+// CombineLatest combines two pipelines such that whenever either side emits,
+// the output receives a Pair of the latest value from each side.
+// No output is produced until both sides have emitted at least once.
+//
+// CombineLatest is the symmetric counterpart to [WithLatestFrom] — either side
+// triggers output. Use it for price feeds, sensor fusion, or any flow where
+// both streams are equally authoritative.
+//
+// Pipelines may come from the same graph or from completely independent graphs.
+func CombineLatest[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
+	if a.g == b.g {
+		convert := func(va, vb any) any {
+			return Pair[A, B]{First: va.(A), Second: vb.(B)}
+		}
+		id := a.g.AddNode(&engine.Node{
+			Kind:       engine.CombineLatestNode,
+			Inputs:     []engine.InputRef{{Node: a.node, Port: a.port}, {Node: b.node, Port: b.port}},
+			Buffer:     engine.DefaultBuffer,
+			ZipConvert: convert,
+		})
+		return &Pipeline[Pair[A, B]]{g: a.g, node: id}
+	}
+
+	// Independent graphs: run both pipelines concurrently, maintain latest values,
+	// and emit a pair whenever either side produces a new value.
+	return Generate(func(ctx context.Context, yield func(Pair[A, B]) bool) error {
+		chA := make(chan A, 1)
+		chB := make(chan B, 1)
+		innerCtx, innerCancel := context.WithCancel(ctx)
+
+		var (
+			mu       sync.Mutex
+			latestA  A
+			latestB  B
+			hasA     bool
+			hasB     bool
+			wg       sync.WaitGroup
+			errOnce  sync.Once
+			firstErr error
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := a.ForEach(func(_ context.Context, item A) error {
+				select {
+				case chA <- item:
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
+				}
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+			close(chA)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := b.ForEach(func(_ context.Context, item B) error {
+				select {
+				case chB <- item:
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
+				}
+			}).Run(innerCtx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errOnce.Do(func() { firstErr = err })
+				innerCancel()
+			}
+			close(chB)
+		}()
+
+		doneA, doneB := false, false
+		for !doneA || !doneB {
+			select {
+			case item, ok := <-chA:
+				if !ok {
+					doneA = true
+					chA = nil
+					continue
+				}
+				mu.Lock()
+				latestA = item
+				hasA = true
+				hb, curB := hasB, latestB
+				mu.Unlock()
+				if !hb {
+					continue
+				}
+				if !yield(Pair[A, B]{First: item, Second: curB}) {
+					innerCancel()
+					for range chA {
+					}
+					for range chB {
+					}
+					wg.Wait()
+					return firstErr
+				}
+			case item, ok := <-chB:
+				if !ok {
+					doneB = true
+					chB = nil
+					continue
+				}
+				mu.Lock()
+				latestB = item
+				hasB = true
+				ha, curA := hasA, latestA
+				mu.Unlock()
+				if !ha {
+					continue
+				}
+				if !yield(Pair[A, B]{First: curA, Second: item}) {
+					innerCancel()
+					for range chA {
+					}
+					for range chB {
+					}
+					wg.Wait()
+					return firstErr
+				}
+			case <-innerCtx.Done():
+				wg.Wait()
+				return firstErr
+			}
+		}
+
+		innerCancel()
+		wg.Wait()
+		return firstErr
+	})
+}
+
+// CombineLatestWith is like [CombineLatest] but applies fn to each emitted pair.
+func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+	return Map(CombineLatest(a, b), func(ctx context.Context, p Pair[A, B]) (O, error) {
+		return fn(ctx, p.First, p.Second)
+	}, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// Balance
+// ---------------------------------------------------------------------------
+
+// Balance distributes items from p across n output pipelines in round-robin order.
+// Each item goes to exactly one output; use [Broadcast] to copy to all outputs.
+//
+// Balance completes the fan-out vocabulary alongside [Broadcast] (copy to all)
+// and [Partition] (split by predicate).
+//
+// Balance panics if n <= 0.
+func Balance[T any](p *Pipeline[T], n int) []*Pipeline[T] {
+	if n <= 0 {
+		panic("kitsune: Balance requires n > 0")
+	}
+	id := p.g.AddNode(&engine.Node{
+		Kind:       engine.BalanceNode,
+		Inputs:     []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:     engine.DefaultBuffer,
+		BroadcastN: n,
+	})
+	out := make([]*Pipeline[T], n)
+	for i := range n {
+		out[i] = &Pipeline[T]{g: p.g, node: id, port: i}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1138,6 +1382,16 @@ func WithLatestFrom[A, B any](primary *Pipeline[A], secondary *Pipeline[B]) *Pip
 func Lift[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, error) {
 	return func(_ context.Context, in I) (O, error) {
 		return fn(in)
+	}
+}
+
+// LiftPure wraps a context-free, error-free function for use with [Map] and [FlatMap].
+// Unlike [Lift], the wrapped function never fails.
+//
+//	doubled := kitsune.Map(numbers, kitsune.LiftPure(func(n int) int { return n * 2 }))
+func LiftPure[I, O any](fn func(I) O) func(context.Context, I) (O, error) {
+	return func(_ context.Context, in I) (O, error) {
+		return fn(in), nil
 	}
 }
 

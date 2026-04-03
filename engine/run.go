@@ -158,7 +158,7 @@ func Run(ctx context.Context, g *Graph, cfg RunConfig) error {
 							cap_ += cap(ch)
 						}
 					}
-				} else if n.Kind == BroadcastNode {
+				} else if n.Kind == BroadcastNode || n.Kind == BalanceNode {
 					for port := range n.BroadcastN {
 						if ch, ok := chans[ChannelKey{n.ID, port}]; ok {
 							total += len(ch)
@@ -309,7 +309,11 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 		inner = func() error { return runTake(ctx, n, inCh, outbox, signalDone, hook, name) }
 	case Batch:
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runBatch(ctx, n, inCh, outbox, hook, name) }
+		batchClk := n.Clock
+		if batchClk == nil {
+			batchClk = RealClock{}
+		}
+		inner = func() error { return runBatch(ctx, n, inCh, outbox, hook, name, batchClk) }
 	case Partition:
 		matchCh := chans[ChannelKey{n.ID, 0}]
 		restCh := chans[ChannelKey{n.ID, 1}]
@@ -351,10 +355,18 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 		inner = func() error { return runReduce(ctx, n, inCh, outbox, hook, name) }
 	case ThrottleNode:
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runThrottle(ctx, n, inCh, outbox, hook, name) }
+		throttleClk := n.Clock
+		if throttleClk == nil {
+			throttleClk = RealClock{}
+		}
+		inner = func() error { return runThrottle(ctx, n, inCh, outbox, hook, name, throttleClk) }
 	case DebounceNode:
 		outCloser = func() { close(outCh) }
-		inner = func() error { return runDebounce(ctx, n, inCh, outbox, hook, name) }
+		debounceClk := n.Clock
+		if debounceClk == nil {
+			debounceClk = RealClock{}
+		}
+		inner = func() error { return runDebounce(ctx, n, inCh, outbox, hook, name, debounceClk) }
 	case MapResultNode:
 		okCh := chans[ChannelKey{n.ID, 0}]
 		errCh := chans[ChannelKey{n.ID, 1}]
@@ -369,6 +381,32 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 			inCh2 = inChs[1]
 		}
 		inner = func() error { return runWithLatestFrom(ctx, n, inCh, inCh2, outbox, hook, name) }
+	case CombineLatestNode:
+		outCloser = func() { close(outCh) }
+		var inCh2 chan any
+		if len(inChs) >= 2 {
+			inCh2 = inChs[1]
+		}
+		inner = func() error { return runCombineLatest(ctx, n, inCh, inCh2, outbox, hook, name) }
+	case BalanceNode:
+		outChs := make([]chan any, n.BroadcastN)
+		balOutboxes := make([]Outbox, n.BroadcastN)
+		for i := range n.BroadcastN {
+			outChs[i] = chans[ChannelKey{n.ID, i}]
+			balOutboxes[i] = outboxes[ChannelKey{n.ID, i}]
+		}
+		outCloser = func() {
+			for _, ch := range outChs {
+				close(ch)
+			}
+		}
+		inner = func() error { return runBalance(ctx, inCh, balOutboxes, hook, name) }
+	case SwitchMapNode:
+		outCloser = func() { close(outCh) }
+		inner = func() error { return runSwitchMap(ctx, n, inCh, outCh, hook) }
+	case ExhaustMapNode:
+		outCloser = func() { close(outCh) }
+		inner = func() error { return runExhaustMap(ctx, n, inCh, outCh, hook) }
 	default:
 		outCloser = func() {}
 		inner = func() error { return fmt.Errorf("kitsune: unknown node kind %d", n.Kind) }
@@ -405,6 +443,11 @@ func ProcessItem(ctx context.Context, fn func(context.Context, any) (any, error)
 		switch h.Handle(err, attempt) {
 		case ActionSkip:
 			return nil, ErrSkipped, attempt
+		case ActionReturn:
+			if r, ok := h.(Returner); ok {
+				return r.ReturnValue(), nil, attempt
+			}
+			return nil, err, attempt
 		case ActionRetry:
 			bo := h.Backoff()
 			if bo == nil {
@@ -903,6 +946,9 @@ func flatMapProcessItem(ctx context.Context, fn func(context.Context, any, func(
 		switch h.Handle(err, attempt) {
 		case ActionSkip:
 			return ErrSkipped, attempt
+		case ActionReturn:
+			// FlatMap has no single replacement value; treat as skip.
+			return ErrSkipped, attempt
 		case ActionRetry:
 			bo := h.Backoff()
 			if bo == nil {
@@ -1230,6 +1276,176 @@ dispatchDone:
 }
 
 // ---------------------------------------------------------------------------
+// SwitchMap
+// ---------------------------------------------------------------------------
+
+// runSwitchMap applies fn to each upstream item, cancelling any still-running
+// inner pipeline when the next item arrives. Only the latest inner pipeline's
+// output reaches outCh; superseded goroutines are cancelled immediately.
+func runSwitchMap(ctx context.Context, n *Node, inCh chan any, outCh chan any, hook Hook) error {
+	fn := n.Fn.(func(context.Context, any, func(any) error) error)
+	name := nodeName(n, "switchmap")
+
+	var (
+		innerCancel context.CancelFunc
+		innerDone   <-chan error
+	)
+
+	cancelInner := func() {
+		if innerCancel != nil {
+			innerCancel()
+			if innerDone != nil {
+				<-innerDone
+			}
+			innerCancel = nil
+			innerDone = nil
+		}
+	}
+
+	launchInner := func(item any) {
+		innerCtx, cancel := context.WithCancel(ctx)
+		innerCancel = cancel
+		done := make(chan error, 1)
+		innerDone = done
+		go func(it any, ic context.Context, d chan<- error) {
+			yield := func(out any) error {
+				select {
+				case outCh <- out:
+					return nil
+				case <-ic.Done():
+					return ic.Err()
+				}
+			}
+			err := fn(ic, it, yield)
+			// If the inner context was cancelled (superseded by a new item), swallow the error.
+			if err != nil && ic.Err() != nil {
+				err = nil
+			}
+			d <- err
+		}(item, innerCtx, done)
+	}
+
+	hook.OnStageStart(ctx, name)
+	defer hook.OnStageDone(ctx, name, 0, 0)
+
+	for {
+		if innerDone != nil {
+			select {
+			case <-ctx.Done():
+				cancelInner()
+				return ctx.Err()
+			case err := <-innerDone:
+				innerCancel()
+				innerCancel = nil
+				innerDone = nil
+				if err != nil {
+					return &StageError{Stage: name, Cause: err}
+				}
+			case item, ok := <-inCh:
+				if !ok {
+					// Upstream closed while an inner pipeline is active.
+					// Wait for it to finish (no new items will arrive to supersede it).
+					select {
+					case err := <-innerDone:
+						innerCancel()
+						if err != nil {
+							return &StageError{Stage: name, Cause: err}
+						}
+						return nil
+					case <-ctx.Done():
+						cancelInner()
+						return ctx.Err()
+					}
+				}
+				cancelInner()
+				launchInner(item)
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case item, ok := <-inCh:
+				if !ok {
+					return nil
+				}
+				launchInner(item)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ExhaustMap
+// ---------------------------------------------------------------------------
+
+// runExhaustMap applies fn to each upstream item, but ignores new upstream
+// items while an inner pipeline is still running. Only the first item wins;
+// subsequent arrivals during active processing are dropped.
+func runExhaustMap(ctx context.Context, n *Node, inCh chan any, outCh chan any, hook Hook) error {
+	fn := n.Fn.(func(context.Context, any, func(any) error) error)
+	name := nodeName(n, "exhaustmap")
+
+	var innerDone <-chan error // non-nil when an inner pipeline is active
+
+	launchInner := func(item any) {
+		done := make(chan error, 1)
+		innerDone = done
+		go func(it any, d chan<- error) {
+			yield := func(out any) error {
+				select {
+				case outCh <- out:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			d <- fn(ctx, it, yield)
+		}(item, done)
+	}
+
+	hook.OnStageStart(ctx, name)
+	defer hook.OnStageDone(ctx, name, 0, 0)
+
+	for {
+		if innerDone != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case err := <-innerDone:
+				innerDone = nil
+				if err != nil {
+					return &StageError{Stage: name, Cause: err}
+				}
+			case _, ok := <-inCh:
+				if !ok {
+					// Upstream closed while inner is still active; wait for it to finish.
+					select {
+					case err := <-innerDone:
+						if err != nil {
+							return &StageError{Stage: name, Cause: err}
+						}
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				// Inner pipeline still active — drop this item.
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case item, ok := <-inCh:
+				if !ok {
+					return nil
+				}
+				launchInner(item)
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Filter / Tap / Take
 // ---------------------------------------------------------------------------
 
@@ -1449,7 +1665,7 @@ func runZip(ctx context.Context, n *Node, inCh1, inCh2 chan any, outbox Outbox, 
 // Batch
 // ---------------------------------------------------------------------------
 
-func runBatch(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+func runBatch(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string, clk Clock) error {
 	hook.OnStageStart(ctx, name)
 	var count int64
 	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
@@ -1465,13 +1681,13 @@ func runBatch(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook H
 	}
 	batch := make([]any, 0, initCap)
 
-	var timer *time.Timer
+	var timer Timer
 	var timerCh <-chan time.Time
 	if timeout > 0 {
-		timer = time.NewTimer(timeout)
+		timer = clk.NewTimer(timeout)
 		timer.Stop()
 		defer timer.Stop()
-		timerCh = timer.C
+		timerCh = timer.C()
 	}
 
 	flush := func() error {
@@ -1841,6 +2057,14 @@ func kindName(k NodeKind) string {
 		return "mapresult"
 	case WithLatestFromNode:
 		return "withlatestfrom"
+	case SwitchMapNode:
+		return "switchmap"
+	case ExhaustMapNode:
+		return "exhaustmap"
+	case CombineLatestNode:
+		return "combinelatest"
+	case BalanceNode:
+		return "balance"
 	default:
 		return "unknown"
 	}
@@ -1889,7 +2113,7 @@ func runReduce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook 
 
 // runThrottle emits the first item that arrives in each window of d, dropping
 // all subsequent items that arrive before d has elapsed since the last emission.
-func runThrottle(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+func runThrottle(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string, clk Clock) error {
 	d := time.Duration(n.ThrottleDuration)
 	hook.OnStageStart(ctx, name)
 	var processed, dropped int64
@@ -1902,7 +2126,7 @@ func runThrottle(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 			if !ok {
 				return nil
 			}
-			now := time.Now()
+			now := clk.Now()
 			if lastEmit.IsZero() || now.Sub(lastEmit) >= d {
 				lastEmit = now
 				processed++
@@ -1930,7 +2154,7 @@ func runThrottle(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 // runDebounce emits an item only after d has passed with no new items arriving.
 // Each new arrival resets the timer; only the last item in a burst is emitted.
 // On input close, any pending item is flushed immediately.
-func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string) error {
+func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string, clk Clock) error {
 	d := time.Duration(n.ThrottleDuration)
 	hook.OnStageStart(ctx, name)
 	var processed, dropped int64
@@ -1939,11 +2163,11 @@ func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 	var pending any
 	hasPending := false
 
-	timer := time.NewTimer(d)
+	timer := clk.NewTimer(d)
 	timer.Stop()
 	// Drain the channel in case Stop raced with a fire.
 	select {
-	case <-timer.C:
+	case <-timer.C():
 	default:
 	}
 	defer timer.Stop()
@@ -1969,13 +2193,13 @@ func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 			// Reset the quiet-period timer.
 			if !timer.Stop() {
 				select {
-				case <-timer.C:
+				case <-timer.C():
 				default:
 				}
 			}
 			timer.Reset(d)
 
-		case <-timer.C:
+		case <-timer.C():
 			if hasPending {
 				processed++
 				hook.OnItem(ctx, name, 0, nil)
@@ -2084,6 +2308,122 @@ func runWithLatestFrom(ctx context.Context, n *Node, primaryCh, secondaryCh chan
 			if err := outbox.Send(ctx, convert(item, lv)); err != nil {
 				return err
 			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// runCombineLatest is the symmetric counterpart to runWithLatestFrom: either
+// input channel emitting triggers an output paired with the latest value from
+// the other side. No output is produced until both sides have emitted at least once.
+func runCombineLatest(ctx context.Context, n *Node, aCh, bCh chan any, outbox Outbox, hook Hook, name string) error {
+	convert := n.ZipConvert
+	hook.OnStageStart(ctx, name)
+	var count atomic.Int64
+	defer func() { hook.OnStageDone(ctx, name, count.Load(), 0) }()
+
+	innerCtx, innerCancel := context.WithCancel(ctx)
+	defer innerCancel()
+
+	var (
+		mu      sync.Mutex
+		latestA any
+		latestB any
+		hasA    bool
+		hasB    bool
+
+		errOnce  sync.Once
+		firstErr error
+	)
+
+	eg, egCtx := errgroup.WithContext(innerCtx)
+
+	// Goroutine A: reads from aCh, updates latestA, emits when both sides ready.
+	eg.Go(func() error {
+		for {
+			select {
+			case item, ok := <-aCh:
+				if !ok {
+					return nil
+				}
+				mu.Lock()
+				latestA = item
+				hasA = true
+				ready := hasB
+				lB := latestB
+				mu.Unlock()
+				if !ready {
+					continue
+				}
+				count.Add(1)
+				hook.OnItem(egCtx, name, 0, nil)
+				if err := outbox.Send(egCtx, convert(item, lB)); err != nil {
+					errOnce.Do(func() { firstErr = err })
+					innerCancel()
+					return err
+				}
+			case <-egCtx.Done():
+				return nil
+			}
+		}
+	})
+
+	// Goroutine B: reads from bCh, updates latestB, emits when both sides ready.
+	eg.Go(func() error {
+		for {
+			select {
+			case item, ok := <-bCh:
+				if !ok {
+					return nil
+				}
+				mu.Lock()
+				latestB = item
+				hasB = true
+				ready := hasA
+				lA := latestA
+				mu.Unlock()
+				if !ready {
+					continue
+				}
+				count.Add(1)
+				hook.OnItem(egCtx, name, 0, nil)
+				if err := outbox.Send(egCtx, convert(lA, item)); err != nil {
+					errOnce.Do(func() { firstErr = err })
+					innerCancel()
+					return err
+				}
+			case <-egCtx.Done():
+				return nil
+			}
+		}
+	})
+
+	_ = eg.Wait()
+	return firstErr
+}
+
+// runBalance distributes items from inCh across outboxes in round-robin order.
+// Each item goes to exactly one output.
+func runBalance(ctx context.Context, inCh chan any, outboxes []Outbox, hook Hook, name string) error {
+	hook.OnStageStart(ctx, name)
+	var count int64
+	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
+
+	n := len(outboxes)
+	var i int
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				return nil
+			}
+			count++
+			hook.OnItem(ctx, name, 0, nil)
+			if err := outboxes[i%n].Send(ctx, item); err != nil {
+				return err
+			}
+			i++
 		case <-ctx.Done():
 			return ctx.Err()
 		}
