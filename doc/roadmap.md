@@ -19,6 +19,41 @@ Checked items are complete.
 
 ---
 
+## Operators: missing transforms
+
+- [ ] **`SwitchMap[I, O]`** — like `FlatMap` but cancels the active inner pipeline
+  when a new upstream item arrives, then starts a fresh one. The defining pattern
+  for search-as-you-type, live queries, and any scenario where a new request
+  supersedes the previous one. Without it, users reach for `ConcatMap` (wrong
+  ordering semantics) or wire up their own cancellation. Engine implementation
+  needs a per-outer-item context that is cancelled on the next upstream receive.
+
+- [ ] **`ExhaustMap[I, O]`** — like `FlatMap` but ignores new upstream items while
+  an inner pipeline is still active. The defining pattern for "submit once, wait
+  for completion" flows: form submissions, idempotent API calls, debounced writes.
+  Complements `SwitchMap` — together they cover the three meaningful concurrency
+  modes for inner pipelines (`FlatMap` = all concurrent, `ConcatMap` = all
+  sequential, `SwitchMap` = latest wins, `ExhaustMap` = first wins).
+
+- [ ] **`LiftPure`** — ergonomic wrapper for context-free, error-free functions,
+  complementing the existing `Lift` (which wraps `func(I) (O, error)`):
+  `kitsune.LiftPure(func(n int) int { return n * 2 })`. Removes the most common
+  friction point when onboarding users who just want a simple transform.
+
+- [ ] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a
+  caller-supplied default value instead of dropping it (`Skip`) or halting the
+  pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup
+  should produce a sentinel value rather than a gap in the output:
+  `kitsune.OnError(kitsune.Return(User{Name: "unknown"}))`.
+
+- [ ] **Session windows** — gap-based window that closes after a configurable
+  period of inactivity rather than on a fixed wall-clock boundary:
+  `kitsune.SessionWindow(p, gap time.Duration)`. Produces `[]T` slices like
+  `Window` and `SlidingWindow`. Requires a per-item timer that resets on each
+  new item and fires when the gap elapses with no new arrivals.
+
+---
+
 ## API correctness & completeness
 
 - [x] **`RestartOnPanic` must not restart on regular errors** — `RestartOnPanic`
@@ -164,6 +199,80 @@ Checked items are complete.
   a `Generate`-based implementation that runs each pipeline concurrently.
   `MergeIndependent` was removed — `Merge` subsumes it.
 
+- [ ] **`CombineLatest[A, B]`** — symmetric counterpart to `WithLatestFrom`:
+  either side emitting triggers an output, always paired with the latest value
+  from the other side. `WithLatestFrom` is asymmetric (only primary triggers);
+  `CombineLatest` is needed whenever both streams are equally authoritative —
+  price feeds, sensor fusion, derived UI state. Implementation mirrors
+  `WithLatestFrom` but with two background goroutines feeding into a shared
+  output channel, each reading the current latest from the other side before
+  emitting.
+
+- [ ] **`Balance[T]`** — round-robin fan-out: each item goes to exactly one of N
+  output pipelines, distributing load evenly rather than copying it. `Broadcast`
+  replicates every item to all outputs; `Balance` is for parallelising work across
+  independent downstream branches where each item only needs one path. Completes
+  the fan-out vocabulary alongside `Broadcast` and `Partition`.
+
+---
+
+## State management
+
+Kitsune's `Key[T]` + `Ref[T]` + `Store` model is unique in the Go streaming
+ecosystem. The items below complete it into a first-class stateful stream
+processing system competitive with Apache Flink for single-process workloads.
+
+- [ ] **Keyed state (`MapWithKey`, `FlatMapWithKey`)** — the most impactful missing
+  feature. Currently `MapWith` binds to a single global state slot shared by all
+  items. Keyed state partitions the `Ref` by a key extracted from each item,
+  backed by `Store.Get("key:"+entityID)` under the hood:
+
+  ```go
+  sessionKey := kitsune.NewKey("session", SessionState{})
+  kitsune.MapWithKey(events,
+      func(e Event) string { return e.UserID },
+      sessionKey,
+      func(ctx context.Context, ref *kitsune.Ref[SessionState], e Event) (Result, error) {
+          s, _ := ref.Get(ctx)  // state for this user only
+          s.EventCount++
+          ref.Set(ctx, s)
+          return Result{Count: s.EventCount}, nil
+      },
+  )
+  ```
+
+  Enables per-user session tracking, per-device state machines, per-entity rate
+  limiting, and any pattern where state must be scoped to a key derived from the
+  item itself — without users managing maps manually. The `Store` interface already
+  supports arbitrary string keys, so the implementation delta is entirely in the
+  public API and `Ref` lookup path.
+
+- [ ] **State TTL / expiry** — without TTL, keyed state grows unboundedly as new
+  entity keys appear. Add an optional TTL parameter to `NewKey`:
+  `kitsune.NewKey("session", SessionState{}, kitsune.StateTTL(30*time.Minute))`.
+  `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed.
+  `MemoryStore` needs a background reaper or lazy expiry on read; distributed
+  backends (Redis, DynamoDB) get this via their native TTL mechanisms.
+
+- [ ] **Aggregating state operators (`CountBy`, `SumBy`)** — thin ergonomic wrappers
+  over `MapWithKey` for the most common accumulation patterns. Built on top of
+  keyed state rather than buffering the entire stream, so they work on unbounded
+  streams:
+
+  ```go
+  kitsune.CountBy(events, func(e Event) string { return e.Type })
+  // → *Pipeline[map[string]int64], emitting a snapshot on each flush trigger
+
+  kitsune.SumBy(transactions,
+      func(t Transaction) string { return t.AccountID },
+      func(t Transaction) float64 { return t.Amount },
+  )
+  // → *Pipeline[map[string]float64]
+  ```
+
+  Flush trigger could be a time window, a count, or an explicit `Flush()` call.
+  Design should align with the session window and `Window` operators.
+
 ---
 
 ## Testing infrastructure
@@ -172,6 +281,24 @@ Checked items are complete.
   `CollectAndExpect`, `CollectAndExpectUnordered`, and `RecordingHook`.
   `RecordingHook` implements all six hook interfaces and provides typed
   accessors (`Items`, `Errors`, `Drops`, `Restarts`, `Graph`, `Dones`).
+
+- [ ] **Virtual time / `TestClock`** — testing `Window`, `Debounce`, `Throttle`,
+  `Ticker`, `Interval`, and `SessionWindow` currently requires real sleeps, making
+  time-based tests slow and flaky. Add a `Clock` interface threaded through
+  time-sensitive operators, with a `testkit.TestClock` implementation that
+  advances on demand:
+
+  ```go
+  clock := testkit.NewTestClock()
+  w := kitsune.Window(source, 5*time.Second, kitsune.WithClock(clock))
+  // ... send items ...
+  clock.Advance(5 * time.Second)  // triggers flush immediately, no sleep
+  ```
+
+  Requires a non-trivial pass through the engine and time-based operators to
+  inject the clock interface, but is a prerequisite for Kitsune to be taken
+  seriously as a production library — teams cannot ship pipelines whose tests
+  sleep for real durations.
 
 ---
 
@@ -269,7 +396,7 @@ Items that may be worth doing but require more design work or a concrete use cas
   place for "how do I…?" questions and design proposals. Keeps issues focused
   on confirmed bugs and actionable tasks.
 
-- [ ] **Fuzz testing for the pipeline engine** — add `go test -fuzz` targets
+- [x] **Fuzz testing for the pipeline engine** — added `go test -fuzz` targets
   for the scheduler, overflow logic, and context cancellation paths. Focus on
   concurrent interleavings that unit tests cannot cover deterministically. Run
   as a nightly CI job rather than in every PR.
