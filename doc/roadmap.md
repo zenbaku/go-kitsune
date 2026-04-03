@@ -182,12 +182,19 @@ Checked items are complete.
   improved from 189 ms → 75.7 ms (~2.16× faster than raw goroutines, overhead
   +17% → -54%); MapLinear improved from 1,845 µs → 768 µs.
 
-- [ ] **Generics at the engine layer (v2)** — the remaining 2 allocs/item are from
-  boxing values into `any` at stage boundaries. After the drain protocol, Kitsune
-  (75.7 ms, 2M allocs) is 4.2× faster than `engine/typed` (317 ms, 43 allocs) at
-  1M items. The benefit of generics is GC pressure reduction (2M allocs/run →
-  ~setup only) rather than raw throughput. Requires a new module path; revisit
-  once the API surface is stable.
+- [x] **Generics at the engine layer (v2)** — `github.com/zenbaku/go-kitsune/v2`
+  replaces `chan any` with `chan T` at every stage boundary, eliminating the
+  2 allocs/item boxing cost. The new architecture uses typed goroutine closures
+  appended to a shared `*stageList` instead of an engine.Graph/NodeKind dispatch
+  layer. `combineStageLists()` allows pipelines from independent sources to be
+  joined by `Merge`/`Zip`/`CombineLatest` without any API change. All v1 operators
+  are ported: Map (serial/concurrent/ordered), FlatMap, Filter, Tap, Take, Drop,
+  TakeWhile, DropWhile, Batch, Unbatch, Window, SlidingWindow, SessionWindow, Scan,
+  Reduce, Distinct, DistinctBy, Dedupe, DedupeBy, GroupBy, Frequencies, Merge,
+  Partition, Broadcast, Balance, Zip, ZipWith, CombineLatest, WithLatestFrom,
+  SwitchMap, ExhaustMap, ConcatMap, MapResult, MapRecover, Throttle, Debounce,
+  LiftPure, Timestamp, TimeInterval, Sort, SortBy, Unzip, StartWith, DefaultIfEmpty,
+  Contains, ElementAt, plus all terminal helpers. 68 tests pass under `-race`.
 
 ---
 
