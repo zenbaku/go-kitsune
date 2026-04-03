@@ -258,6 +258,8 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `MaxBy[T,K](ctx, p, key, less)` | `(T, bool, error)` | Item with the largest derived key |
 | `Frequencies[T comparable](ctx, p)` | `(map[T]int, error)` | Count occurrences of each distinct item |
 | `FrequenciesBy[T,K](ctx, p, key)` | `(map[K]int, error)` | Count occurrences of each distinct key |
+| `CountBy[T](p, keyFn, opts…)` | `*Pipeline[map[string]int64]` | Count occurrences by key; emits a `map[string]int64` snapshot after each item; compose with `Throttle` for periodic output |
+| `SumBy[T,V](p, keyFn, valueFn, opts…)` | `*Pipeline[map[string]V]` | Accumulate a numeric value by key; emits a `map[string]V` snapshot after each item |
 | `ReduceWhile[T,S](ctx, p, seed, fn)` | `(S, error)` | Fold with early termination; `fn` returns `(newAcc, continue)` |
 | `TakeRandom[T](ctx, p, n)` | `([]T, error)` | Uniform random sample of `n` items (reservoir sampling); all items if n ≥ stream length |
 
@@ -391,8 +393,11 @@ See [`examples/stages/`](examples/stages/) for a runnable version covering all f
 
 | Symbol | Description |
 |---|---|
-| `NewKey[T](name, initial T)` | Declare a typed, named state key with an initial value |
+| `NewKey[T](name, initial T, opts…)` | Declare a typed, named state key with an initial value |
 | `MapWith`, `FlatMapWith` | Transforms that inject a concurrent-safe `*Ref[S]` for the key |
+| `MapWithKey[I,O,S](p, keyFn, key, fn, opts…)` | Like `MapWith` but partitions state by a key extracted from each item; each distinct key gets its own independent `Ref` |
+| `FlatMapWithKey[I,O,S](p, keyFn, key, fn, opts…)` | Like `FlatMapWith` but with per-key state partitioning |
+| `StateTTL(d)` | `NewKey` option: expire state after `d` of inactivity; lazy expiry on read; reset to initial value on expiry |
 | `Ref[T].Get(ctx)` | Read current state value |
 | `Ref[T].Set(ctx, v)` | Overwrite state value |
 | `Ref[T].Update(ctx, fn)` | Atomic read-modify-write |

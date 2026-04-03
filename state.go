@@ -12,6 +12,22 @@ import (
 // Key & Ref — typed pipeline state
 // ---------------------------------------------------------------------------
 
+// KeyOption configures a Key.
+type KeyOption func(*keyConfig)
+
+type keyConfig struct {
+	ttl time.Duration
+}
+
+// StateTTL sets a time-to-live for state values associated with this key.
+// When a Ref's value has not been written for longer than ttl, Ref.Get
+// returns the initial value and the slot is reset. Expiry is checked lazily
+// on read. For Store-backed Refs, expiry is tracked on the Ref side (not
+// propagated to the Store's native TTL).
+func StateTTL(ttl time.Duration) KeyOption {
+	return func(c *keyConfig) { c.ttl = ttl }
+}
+
 // Key identifies a piece of typed, run-scoped pipeline state.
 // Declare keys as package-level variables:
 //
@@ -19,12 +35,17 @@ import (
 type Key[T any] struct {
 	name    string
 	initial T
+	ttl     time.Duration
 }
 
 // NewKey creates a typed state key with the given name and initial value.
 // The initial value is used at the start of each pipeline [Runner.Run].
-func NewKey[T any](name string, initial T) Key[T] {
-	return Key[T]{name: name, initial: initial}
+func NewKey[T any](name string, initial T, opts ...KeyOption) Key[T] {
+	cfg := &keyConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return Key[T]{name: name, initial: initial, ttl: cfg.ttl}
 }
 
 // Ref provides concurrent-safe access to a piece of pipeline state.
@@ -42,14 +63,31 @@ type Ref[T any] struct {
 	store Store
 	key   string
 	codec Codec
+
+	// TTL fields (zero values = no TTL).
+	ttl        time.Duration
+	lastWrite  time.Time // zero = never written
+	initialVal T
 }
 
 // Get returns the current state value.
 func (r *Ref[T]) Get(ctx context.Context) (T, error) {
 	if r.store == nil {
 		r.mu.RLock()
-		defer r.mu.RUnlock()
-		return r.value, nil
+		if r.ttl > 0 && !r.lastWrite.IsZero() && time.Now().After(r.lastWrite.Add(r.ttl)) {
+			r.mu.RUnlock()
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			// Double-check after lock upgrade.
+			if !r.lastWrite.IsZero() && time.Now().After(r.lastWrite.Add(r.ttl)) {
+				r.value = r.initialVal
+				r.lastWrite = time.Time{}
+			}
+			return r.value, nil
+		}
+		v := r.value
+		r.mu.RUnlock()
+		return v, nil
 	}
 	return r.storeGet(ctx)
 }
@@ -60,6 +98,9 @@ func (r *Ref[T]) Set(ctx context.Context, value T) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		r.value = value
+		if r.ttl > 0 {
+			r.lastWrite = time.Now()
+		}
 		return nil
 	}
 	return r.storeSet(ctx, value)
@@ -90,6 +131,9 @@ func (r *Ref[T]) UpdateAndGet(ctx context.Context, fn func(T) (T, error)) (T, er
 			return zero, err
 		}
 		r.value = v
+		if r.ttl > 0 {
+			r.lastWrite = time.Now()
+		}
 		return v, nil
 	}
 	return r.storeUpdateAndGet(ctx, fn)
@@ -105,6 +149,9 @@ func (r *Ref[T]) Update(ctx context.Context, fn func(T) (T, error)) error {
 			return err
 		}
 		r.value = v
+		if r.ttl > 0 {
+			r.lastWrite = time.Now()
+		}
 		return nil
 	}
 	return r.storeUpdate(ctx, fn)
@@ -237,16 +284,23 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 // Stateful operators
 // ---------------------------------------------------------------------------
 
+// newRef constructs a Ref with all fields set.
+func newRef[S any](initial S, storeKey string, store Store, codec Codec, ttl time.Duration) *Ref[S] {
+	return &Ref[S]{
+		value:      initial,
+		initialVal: initial,
+		key:        storeKey,
+		store:      store,
+		codec:      codec,
+		ttl:        ttl,
+	}
+}
+
 // MapWith applies a 1:1 transform with access to typed pipeline state.
 func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) (O, error), opts ...StageOption) *Pipeline[O] {
 	g := p.g
 	g.RegisterKey(key.name, func(store Store, codec Codec) any {
-		ref := &Ref[S]{value: key.initial, key: key.name}
-		if store != nil {
-			ref.store = store
-			ref.codec = codec
-		}
-		return ref
+		return newRef[S](key.initial, key.name, store, codec, key.ttl)
 	})
 
 	wrapped := func(ctx context.Context, in any) (any, error) {
@@ -262,17 +316,113 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	g := p.g
 	g.RegisterKey(key.name, func(store Store, codec Codec) any {
-		ref := &Ref[S]{value: key.initial, key: key.name}
-		if store != nil {
-			ref.store = store
-			ref.codec = codec
-		}
-		return ref
+		return newRef[S](key.initial, key.name, store, codec, key.ttl)
 	})
 
 	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
 		ref := g.GetRef(key.name).(*Ref[S])
 		return fn(ctx, ref, in.(I), func(out O) error {
+			return yield(out)
+		})
+	}
+	n := newNode(engine.FlatMap, wrapped, p, opts)
+	id := g.AddNode(n)
+	return &Pipeline[O]{g: g, node: id}
+}
+
+// ---------------------------------------------------------------------------
+// Keyed stateful operators (per-entity state)
+// ---------------------------------------------------------------------------
+
+// keyedRefMap holds a per-entity-key Ref map. It is initialized at run time
+// (like a plain Ref) and looked up by entity key on each item.
+type keyedRefMap[S any] struct {
+	mu      sync.Mutex
+	refs    map[string]*Ref[S]
+	initial S
+	store   Store
+	codec   Codec
+	keyName string
+	ttl     time.Duration
+}
+
+func (m *keyedRefMap[S]) getRef(entityKey string) *Ref[S] {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ref, ok := m.refs[entityKey]; ok {
+		// If expired, evict and create fresh.
+		if m.ttl > 0 && !ref.lastWrite.IsZero() && time.Now().After(ref.lastWrite.Add(m.ttl)) {
+			delete(m.refs, entityKey)
+		} else {
+			return ref
+		}
+	}
+	storeKey := m.keyName + ":" + entityKey
+	ref := newRef[S](m.initial, storeKey, m.store, m.codec, m.ttl)
+	m.refs[entityKey] = ref
+	return ref
+}
+
+// MapWithKey applies a 1:1 transform with per-entity typed pipeline state.
+// keyFn extracts a string entity key from each item; items with the same key
+// share a Ref, while different keys get independent Refs.
+func MapWithKey[I, O, S any](
+	p *Pipeline[I],
+	keyFn func(I) string,
+	key Key[S],
+	fn func(context.Context, *Ref[S], I) (O, error),
+	opts ...StageOption,
+) *Pipeline[O] {
+	g := p.g
+	regName := key.name + ":__keyed__"
+	g.RegisterKey(regName, func(store Store, codec Codec) any {
+		return &keyedRefMap[S]{
+			refs:    make(map[string]*Ref[S]),
+			initial: key.initial,
+			store:   store,
+			codec:   codec,
+			keyName: key.name,
+			ttl:     key.ttl,
+		}
+	})
+
+	wrapped := func(ctx context.Context, in any) (any, error) {
+		item := in.(I)
+		km := g.GetRef(regName).(*keyedRefMap[S])
+		ref := km.getRef(keyFn(item))
+		return fn(ctx, ref, item)
+	}
+	n := newNode(engine.Map, wrapped, p, opts)
+	id := g.AddNode(n)
+	return &Pipeline[O]{g: g, node: id}
+}
+
+// FlatMapWithKey applies a 1:N transform with per-entity typed pipeline state.
+func FlatMapWithKey[I, O, S any](
+	p *Pipeline[I],
+	keyFn func(I) string,
+	key Key[S],
+	fn func(context.Context, *Ref[S], I, func(O) error) error,
+	opts ...StageOption,
+) *Pipeline[O] {
+	g := p.g
+	regName := key.name + ":__keyed__"
+	g.RegisterKey(regName, func(store Store, codec Codec) any {
+		return &keyedRefMap[S]{
+			refs:    make(map[string]*Ref[S]),
+			initial: key.initial,
+			store:   store,
+			codec:   codec,
+			keyName: key.name,
+			ttl:     key.ttl,
+		}
+	})
+
+	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
+		item := in.(I)
+		km := g.GetRef(regName).(*keyedRefMap[S])
+		ref := km.getRef(keyFn(item))
+		return fn(ctx, ref, item, func(out O) error {
 			return yield(out)
 		})
 	}

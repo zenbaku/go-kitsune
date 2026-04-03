@@ -673,6 +673,524 @@ func TestRefWithMemoryStore(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// StateTTL tests
+// ---------------------------------------------------------------------------
+
+func TestStateTTL_ExpiryOnGet(t *testing.T) {
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey("ttl-expire", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], item int) (int, error) {
+		if err := ref.Set(ctx, 42); err != nil {
+			return 0, err
+		}
+		return item, nil
+	})
+	// Consume pipeline to set value.
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a second pipeline to read the value after TTL expiry.
+	input2 := kitsune.FromSlice([]int{1})
+	key2 := kitsune.NewKey("ttl-expire2", 0, kitsune.StateTTL(ttl))
+	var gotValue int
+	p2 := kitsune.MapWith(input2, key2, func(ctx context.Context, ref *kitsune.Ref[int], item int) (int, error) {
+		if err := ref.Set(ctx, 42); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl + 5*time.Millisecond) // sleep past TTL
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p2.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 0 {
+		t.Errorf("expected initial value 0 after TTL expiry, got %d", gotValue)
+	}
+}
+
+func TestStateTTL_ResetOnWrite(t *testing.T) {
+	ttl := 30 * time.Millisecond
+	key := kitsune.NewKey("ttl-reset", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], item int) (int, error) {
+		if err := ref.Set(ctx, 99); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Write again — resets the TTL clock.
+		if err := ref.Set(ctx, 99); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Should NOT be expired yet (TTL clock was reset by second write).
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 99 {
+		t.Errorf("expected 99 (not expired), got %d", gotValue)
+	}
+}
+
+func TestStateTTL_ZeroTTL_NoExpiry(t *testing.T) {
+	// Default key (no TTL) — value must never expire.
+	key := kitsune.NewKey("ttl-zero", 0)
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], item int) (int, error) {
+		if err := ref.Set(ctx, 7); err != nil {
+			return 0, err
+		}
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 7 {
+		t.Errorf("expected 7 (no TTL), got %d", gotValue)
+	}
+}
+
+func TestStateTTL_UpdateResetsTimer(t *testing.T) {
+	ttl := 30 * time.Millisecond
+	key := kitsune.NewKey("ttl-update", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], item int) (int, error) {
+		if err := ref.Set(ctx, 5); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Update — resets the TTL clock.
+		if err := ref.Update(ctx, func(v int) (int, error) { return v + 1, nil }); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Should NOT be expired.
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 6 {
+		t.Errorf("expected 6 (after Update, not expired), got %d", gotValue)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MapWithKey / FlatMapWithKey tests
+// ---------------------------------------------------------------------------
+
+func TestMapWithKey_PerEntityIsolation(t *testing.T) {
+	// Two entity keys must accumulate independently.
+	key := kitsune.NewKey("entity-count", 0)
+	type event struct {
+		entity string
+		val    int
+	}
+	items := []event{
+		{"a", 1}, {"b", 10}, {"a", 2}, {"b", 20}, {"a", 3},
+	}
+	input := kitsune.FromSlice(items)
+	p := kitsune.MapWithKey(input,
+		func(e event) string { return e.entity },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], e event) (int, error) {
+			return ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + e.val, nil })
+		},
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a: 1, 3, 6 (running totals); b: 10, 30 (running totals)
+	expected := []int{1, 10, 3, 30, 6}
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d results, got %d: %v", len(expected), len(results), results)
+	}
+	for i, v := range results {
+		if v != expected[i] {
+			t.Errorf("results[%d] = %d, want %d", i, v, expected[i])
+		}
+	}
+}
+
+func TestMapWithKey_SameKeySharesState(t *testing.T) {
+	key := kitsune.NewKey("shared-state", 0)
+	input := kitsune.FromSlice([]string{"x", "x", "x"})
+	p := kitsune.MapWithKey(input,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			return ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + 1, nil })
+		},
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []int{1, 2, 3}
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d results, got %d: %v", len(expected), len(results), results)
+	}
+	for i, v := range results {
+		if v != expected[i] {
+			t.Errorf("results[%d] = %d, want %d", i, v, expected[i])
+		}
+	}
+}
+
+func TestFlatMapWithKey_MultipleOutputs(t *testing.T) {
+	// 1:N with per-entity state.
+	key := kitsune.NewKey("flatmap-key-count", 0)
+	type item struct {
+		entity string
+		n      int
+	}
+	items := []item{{"a", 2}, {"b", 3}, {"a", 1}}
+	input := kitsune.FromSlice(items)
+	p := kitsune.FlatMapWithKey(input,
+		func(it item) string { return it.entity },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], it item, yield func(string) error) error {
+			cur, err := ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + it.n, nil })
+			if err != nil {
+				return err
+			}
+			for i := 0; i < it.n; i++ {
+				if err := yield(fmt.Sprintf("%s:%d", it.entity, cur)); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a: 2 outputs (total=2), b: 3 outputs (total=3), a: 1 output (total=3)
+	if len(results) != 6 {
+		t.Fatalf("expected 6 results, got %d: %v", len(results), results)
+	}
+}
+
+func TestMapWithKey_StoreBacked(t *testing.T) {
+	key := kitsune.NewKey("store-keyed", 0)
+	input := kitsune.FromSlice([]string{"u1", "u2", "u1"})
+	p := kitsune.MapWithKey(input,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+			n, err := ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + 1, nil })
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%s:%d", s, n), nil
+		},
+	)
+	results, err := p.Collect(context.Background(), kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"u1:1", "u2:1", "u1:2"}
+	if len(results) != len(expected) {
+		t.Fatalf("expected %d results, got %d: %v", len(expected), len(results), results)
+	}
+	for i, v := range results {
+		if v != expected[i] {
+			t.Errorf("results[%d] = %q, want %q", i, v, expected[i])
+		}
+	}
+}
+
+func TestMapWithKey_WithTTL(t *testing.T) {
+	// TTL + keyed state: after the TTL window expires, Get returns the initial
+	// value. We verify this by sleeping *inside* the stage function (after Set,
+	// before Get) so that the Ref's own TTL-on-read path triggers.
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey("keyed-ttl", 0, kitsune.StateTTL(ttl))
+
+	input := kitsune.FromSlice([]string{"a", "b"})
+	var gotValues []int
+	p := kitsune.MapWithKey(input,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			if err := ref.Set(ctx, 42); err != nil {
+				return 0, err
+			}
+			// Sleep past the TTL so Get sees expiry.
+			time.Sleep(ttl + 5*time.Millisecond)
+			v, err := ref.Get(ctx)
+			if err != nil {
+				return 0, err
+			}
+			gotValues = append(gotValues, v)
+			return v, nil
+		},
+	)
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotValues) != 2 {
+		t.Fatalf("expected 2 values, got %d: %v", len(gotValues), gotValues)
+	}
+	// Each entity's ref was written then expired — should return initial value 0.
+	for i, v := range gotValues {
+		if v != 0 {
+			t.Errorf("gotValues[%d] = %d, want 0 (initial after TTL expiry)", i, v)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CountBy / SumBy tests
+// ---------------------------------------------------------------------------
+
+func TestCountBy_Basic(t *testing.T) {
+	type event struct{ typ string }
+	items := []event{{"click"}, {"view"}, {"click"}, {"click"}, {"view"}}
+	input := kitsune.FromSlice(items)
+	p := kitsune.CountBy(input, func(e event) string { return e.typ })
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5 snapshots, got %d", len(results))
+	}
+	last := results[len(results)-1]
+	if last["click"] != 3 {
+		t.Errorf("expected click=3, got %d", last["click"])
+	}
+	if last["view"] != 2 {
+		t.Errorf("expected view=2, got %d", last["view"])
+	}
+}
+
+func TestCountBy_SnapshotIsolation(t *testing.T) {
+	// Mutating the returned map must not corrupt internal state.
+	input := kitsune.FromSlice([]string{"a", "b", "a"})
+	p := kitsune.CountBy(input, func(s string) string { return s })
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+	// Mutate the first snapshot.
+	results[0]["a"] = 9999
+	// Last snapshot should be unaffected.
+	last := results[len(results)-1]
+	if last["a"] != 2 {
+		t.Errorf("expected a=2 in last snapshot, got %d (snapshot isolation broken)", last["a"])
+	}
+}
+
+func TestCountBy_EmptyStream(t *testing.T) {
+	input := kitsune.FromSlice([]string{})
+	p := kitsune.CountBy(input, func(s string) string { return s })
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected no output for empty stream, got %d", len(results))
+	}
+}
+
+func TestSumBy_Float64(t *testing.T) {
+	type txn struct {
+		account string
+		amount  float64
+	}
+	items := []txn{
+		{"alice", 10.0}, {"bob", 5.0}, {"alice", 20.0}, {"bob", 15.0},
+	}
+	input := kitsune.FromSlice(items)
+	p := kitsune.SumBy(input,
+		func(t txn) string { return t.account },
+		func(t txn) float64 { return t.amount },
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 snapshots, got %d", len(results))
+	}
+	last := results[len(results)-1]
+	if last["alice"] != 30.0 {
+		t.Errorf("expected alice=30.0, got %v", last["alice"])
+	}
+	if last["bob"] != 20.0 {
+		t.Errorf("expected bob=20.0, got %v", last["bob"])
+	}
+}
+
+func TestSumBy_Integer(t *testing.T) {
+	type kv struct {
+		k string
+		v int
+	}
+	items := []kv{{"x", 1}, {"y", 2}, {"x", 3}, {"y", 4}}
+	input := kitsune.FromSlice(items)
+	p := kitsune.SumBy(input,
+		func(item kv) string { return item.k },
+		func(item kv) int { return item.v },
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := results[len(results)-1]
+	if last["x"] != 4 {
+		t.Errorf("expected x=4, got %d", last["x"])
+	}
+	if last["y"] != 6 {
+		t.Errorf("expected y=6, got %d", last["y"])
+	}
+}
+
+func TestSumBy_EmptyStream(t *testing.T) {
+	input := kitsune.FromSlice([]struct{ k string }{})
+	p := kitsune.SumBy(input,
+		func(item struct{ k string }) string { return item.k },
+		func(item struct{ k string }) int { return 0 },
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected no output for empty stream, got %d", len(results))
+	}
+}
+
+func TestSumBy_SnapshotIsolation(t *testing.T) {
+	// Mutating the returned map must not corrupt internal state.
+	type kv struct {
+		k string
+		v int
+	}
+	input := kitsune.FromSlice([]kv{{"a", 1}, {"b", 2}, {"a", 3}})
+	p := kitsune.SumBy(input,
+		func(item kv) string { return item.k },
+		func(item kv) int { return item.v },
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+	// Mutate the first snapshot.
+	results[0]["a"] = 9999
+	// Last snapshot should be unaffected.
+	last := results[len(results)-1]
+	if last["a"] != 4 {
+		t.Errorf("expected a=4 in last snapshot, got %d (snapshot isolation broken)", last["a"])
+	}
+}
+
+func TestSumBy_MultipleInstances(t *testing.T) {
+	// Two SumBy calls in the same pipeline must use independent state.
+	type kv struct {
+		k string
+		v int
+	}
+	input1 := kitsune.FromSlice([]kv{{"x", 10}, {"x", 20}, {"x", 30}})
+	input2 := kitsune.FromSlice([]kv{{"y", 5}, {"y", 5}})
+	p1 := kitsune.SumBy(input1,
+		func(item kv) string { return item.k },
+		func(item kv) int { return item.v },
+	)
+	p2 := kitsune.SumBy(input2,
+		func(item kv) string { return item.k },
+		func(item kv) int { return item.v },
+	)
+
+	r1, err := p1.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := p2.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	last1 := r1[len(r1)-1]
+	last2 := r2[len(r2)-1]
+	if last1["x"] != 60 {
+		t.Errorf("p1: expected x=60, got %d", last1["x"])
+	}
+	if last2["y"] != 10 {
+		t.Errorf("p2: expected y=10, got %d", last2["y"])
+	}
+	if last1["y"] != 0 {
+		t.Errorf("p1 should not have y key, got %d", last1["y"])
+	}
+}
+
+func TestCountBy_MultipleInstances(t *testing.T) {
+	// Two CountBy in the same program must not share state.
+	input1 := kitsune.FromSlice([]string{"a", "a", "a"})
+	input2 := kitsune.FromSlice([]string{"b", "b"})
+	p1 := kitsune.CountBy(input1, func(s string) string { return s })
+	p2 := kitsune.CountBy(input2, func(s string) string { return s })
+
+	r1, err := p1.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := p2.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	last1 := r1[len(r1)-1]
+	last2 := r2[len(r2)-1]
+	if last1["a"] != 3 {
+		t.Errorf("p1: expected a=3, got %d", last1["a"])
+	}
+	if last2["b"] != 2 {
+		t.Errorf("p2: expected b=2, got %d", last2["b"])
+	}
+	if last1["b"] != 0 {
+		t.Errorf("p1 should not have b key, got %d", last1["b"])
+	}
+}
+
 func TestMemoryCacheTTL(t *testing.T) {
 	cache := kitsune.MemoryCache(10)
 	ctx := context.Background()

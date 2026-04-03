@@ -222,7 +222,7 @@ Kitsune's `Key[T]` + `Ref[T]` + `Store` model is unique in the Go streaming
 ecosystem. The items below complete it into a first-class stateful stream
 processing system competitive with Apache Flink for single-process workloads.
 
-- [ ] **Keyed state (`MapWithKey`, `FlatMapWithKey`)** — the most impactful missing
+- [x] **Keyed state (`MapWithKey`, `FlatMapWithKey`)** — the most impactful missing
   feature. Currently `MapWith` binds to a single global state slot shared by all
   items. Keyed state partitions the `Ref` by a key extracted from each item,
   backed by `Store.Get("key:"+entityID)` under the hood:
@@ -247,14 +247,14 @@ processing system competitive with Apache Flink for single-process workloads.
   supports arbitrary string keys, so the implementation delta is entirely in the
   public API and `Ref` lookup path.
 
-- [ ] **State TTL / expiry** — without TTL, keyed state grows unboundedly as new
+- [x] **State TTL / expiry** — without TTL, keyed state grows unboundedly as new
   entity keys appear. Add an optional TTL parameter to `NewKey`:
   `kitsune.NewKey("session", SessionState{}, kitsune.StateTTL(30*time.Minute))`.
   `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed.
   `MemoryStore` needs a background reaper or lazy expiry on read; distributed
   backends (Redis, DynamoDB) get this via their native TTL mechanisms.
 
-- [ ] **Aggregating state operators (`CountBy`, `SumBy`)** — thin ergonomic wrappers
+- [x] **Aggregating state operators (`CountBy`, `SumBy`)** — thin ergonomic wrappers
   over `MapWithKey` for the most common accumulation patterns. Built on top of
   keyed state rather than buffering the entire stream, so they work on unbounded
   streams:

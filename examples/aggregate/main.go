@@ -1,8 +1,9 @@
 // Example: aggregate — terminal aggregations (Sum, Min, Max, MinMax, MinBy, MaxBy,
-// Find, Frequencies, FrequenciesBy, ReduceWhile, TakeRandom).
+// Find, Frequencies, FrequenciesBy, ReduceWhile, TakeRandom) plus streaming
+// aggregation with CountBy and SumBy.
 //
 // Demonstrates: numeric aggregates, keyed min/max, frequency counting,
-// early-termination fold, and random sampling.
+// early-termination fold, random sampling, and streaming count/sum by key.
 package main
 
 import (
@@ -115,4 +116,29 @@ func main() {
 	for _, p := range featured {
 		fmt.Printf("  • %s ($%.2f)\n", p.Name, p.Price)
 	}
+
+	// -------------------------------------------------------------------------
+	// CountBy: streaming count per category (emits snapshot after each item).
+	// -------------------------------------------------------------------------
+	fmt.Println("\n=== CountBy: product count per category ===")
+	countStream := kitsune.CountBy(
+		kitsune.FromSlice(catalog),
+		func(p Product) string { return p.Category },
+	)
+	snapshots, _ := countStream.Collect(ctx)
+	last := snapshots[len(snapshots)-1]
+	fmt.Printf("electronics=%d furniture=%d\n", last["electronics"], last["furniture"])
+
+	// -------------------------------------------------------------------------
+	// SumBy: running revenue total per category.
+	// -------------------------------------------------------------------------
+	fmt.Println("\n=== SumBy: revenue per category ===")
+	sumStream := kitsune.SumBy(
+		kitsune.FromSlice(catalog),
+		func(p Product) string { return p.Category },
+		func(p Product) float64 { return p.Price },
+	)
+	sumSnaps, _ := sumStream.Collect(ctx)
+	lastSum := sumSnaps[len(sumSnaps)-1]
+	fmt.Printf("electronics=$%.2f furniture=$%.2f\n", lastSum["electronics"], lastSum["furniture"])
 }

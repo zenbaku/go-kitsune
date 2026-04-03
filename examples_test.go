@@ -78,6 +78,8 @@ func TestExamples(t *testing.T) {
 		"balance",
 		// testclock / deterministic time
 		"testclock",
+		// per-entity keyed state
+		"mapwithkey",
 	}
 
 	for _, name := range examples {

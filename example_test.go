@@ -1034,3 +1034,154 @@ func ExampleWithClock() {
 	fmt.Println(collected)
 	// Output: [3]
 }
+
+func ExampleMapWithKey() {
+	// Track per-user session event counts.
+	type event struct {
+		userID string
+		action string
+	}
+	sessionKey := kitsune.NewKey("session-events", 0)
+
+	events := kitsune.FromSlice([]event{
+		{"alice", "login"},
+		{"bob", "login"},
+		{"alice", "click"},
+		{"alice", "logout"},
+		{"bob", "click"},
+	})
+
+	p := kitsune.MapWithKey(events,
+		func(e event) string { return e.userID },
+		sessionKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], e event) (string, error) {
+			n, err := ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + 1, nil })
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%s/%s:#%d", e.userID, e.action, n), nil
+		},
+	)
+	results, _ := p.Collect(context.Background())
+	for _, r := range results {
+		fmt.Println(r)
+	}
+	// Output:
+	// alice/login:#1
+	// bob/login:#1
+	// alice/click:#2
+	// alice/logout:#3
+	// bob/click:#2
+}
+
+func ExampleFlatMapWithKey() {
+	// Track per-user output counts with 1:N expansion.
+	// Each event expands into one output per "credit" the user has,
+	// and the per-user state tracks the running total emitted.
+	type event struct {
+		userID  string
+		credits int
+	}
+	totalKey := kitsune.NewKey("flatmap-total", 0)
+
+	events := kitsune.FromSlice([]event{
+		{"alice", 2},
+		{"bob", 1},
+		{"alice", 1},
+	})
+
+	p := kitsune.FlatMapWithKey(events,
+		func(e event) string { return e.userID },
+		totalKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], e event, yield func(string) error) error {
+			for i := 0; i < e.credits; i++ {
+				total, err := ref.UpdateAndGet(ctx, func(v int) (int, error) { return v + 1, nil })
+				if err != nil {
+					return err
+				}
+				if err := yield(fmt.Sprintf("%s:out#%d", e.userID, total)); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	)
+	results, _ := p.Collect(context.Background())
+	for _, r := range results {
+		fmt.Println(r)
+	}
+	// Output:
+	// alice:out#1
+	// alice:out#2
+	// bob:out#1
+	// alice:out#3
+}
+
+func ExampleStateTTL() {
+	// Session-like state that resets after a period of inactivity.
+	// Use a very short TTL so the example runs quickly.
+	ttl := 10 * time.Millisecond
+	sessionKey := kitsune.NewKey("session-ttl", "none", kitsune.StateTTL(ttl))
+
+	input := kitsune.FromSlice([]string{"req1", "req2"})
+	p := kitsune.MapWith(input, sessionKey,
+		func(ctx context.Context, ref *kitsune.Ref[string], req string) (string, error) {
+			prev, err := ref.Get(ctx)
+			if err != nil {
+				return "", err
+			}
+			if err := ref.Set(ctx, req); err != nil {
+				return "", err
+			}
+			if req == "req2" {
+				// Sleep past TTL before reading to demonstrate expiry.
+				time.Sleep(ttl + 5*time.Millisecond)
+				v, err := ref.Get(ctx)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("prev=%s expired=%v", prev, v == "none"), nil
+			}
+			return req, nil
+		},
+	)
+	results, _ := p.Collect(context.Background())
+	fmt.Println(results[0])
+	fmt.Println(results[1])
+	// Output:
+	// req1
+	// prev=req1 expired=true
+}
+
+func ExampleCountBy() {
+	type event struct{ typ string }
+	events := kitsune.FromSlice([]event{
+		{"click"}, {"view"}, {"click"}, {"click"}, {"view"},
+	})
+	p := kitsune.CountBy(events, func(e event) string { return e.typ })
+	results, _ := p.Collect(context.Background())
+	// Print only the final snapshot.
+	last := results[len(results)-1]
+	fmt.Printf("click=%d view=%d\n", last["click"], last["view"])
+	// Output:
+	// click=3 view=2
+}
+
+func ExampleSumBy() {
+	type txn struct {
+		account string
+		amount  float64
+	}
+	txns := kitsune.FromSlice([]txn{
+		{"alice", 10.0}, {"bob", 5.0}, {"alice", 20.0}, {"bob", 15.0},
+	})
+	p := kitsune.SumBy(txns,
+		func(t txn) string { return t.account },
+		func(t txn) float64 { return t.amount },
+	)
+	results, _ := p.Collect(context.Background())
+	last := results[len(results)-1]
+	fmt.Printf("alice=%.1f bob=%.1f\n", last["alice"], last["bob"])
+	// Output:
+	// alice=30.0 bob=20.0
+}

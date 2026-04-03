@@ -3,8 +3,10 @@ package kitsune
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zenbaku/go-kitsune/engine"
@@ -1577,4 +1579,76 @@ func ConsecutiveDedupBy[T any, K comparable](p *Pipeline[T], fn func(T) K) *Pipe
 		hasPrev = true
 		return true
 	})
+}
+
+// ---------------------------------------------------------------------------
+// CountBy / SumBy — streaming aggregation operators
+// ---------------------------------------------------------------------------
+
+// aggregateKeySeq generates unique state-key names for CountBy/SumBy instances
+// so that multiple uses in the same pipeline do not share state.
+var aggregateKeySeq atomic.Int64
+
+// CountBy counts occurrences of each key in the stream, emitting a full snapshot
+// of the count map after each input item. For periodic snapshots rather than
+// per-item output, compose with [Throttle]:
+//
+//	kitsune.Throttle(kitsune.CountBy(events, keyFn), time.Second)
+//
+// CountBy always runs at Concurrency(1) to guarantee consistent counts.
+func CountBy[T any](p *Pipeline[T], keyFn func(T) string, opts ...StageOption) *Pipeline[map[string]int64] {
+	id := aggregateKeySeq.Add(1)
+	stateKey := NewKey(fmt.Sprintf("__countby_%d__", id), make(map[string]int64))
+	return MapWith(p, stateKey, func(ctx context.Context, ref *Ref[map[string]int64], item T) (map[string]int64, error) {
+		k := keyFn(item)
+		if err := ref.Update(ctx, func(m map[string]int64) (map[string]int64, error) {
+			m[k]++
+			return m, nil
+		}); err != nil {
+			return nil, err
+		}
+		m, err := ref.Get(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// Copy to avoid aliasing — caller may retain the map.
+		snap := make(map[string]int64, len(m))
+		for k, v := range m {
+			snap[k] = v
+		}
+		return snap, nil
+	}, append([]StageOption{Concurrency(1)}, opts...)...)
+}
+
+// SumBy accumulates a numeric value by key, emitting a full snapshot of the
+// sum map after each input item. For periodic snapshots, compose with [Throttle].
+//
+// SumBy always runs at Concurrency(1).
+func SumBy[T any, V Numeric](
+	p *Pipeline[T],
+	keyFn func(T) string,
+	valueFn func(T) V,
+	opts ...StageOption,
+) *Pipeline[map[string]V] {
+	id := aggregateKeySeq.Add(1)
+	stateKey := NewKey(fmt.Sprintf("__sumby_%d__", id), make(map[string]V))
+	return MapWith(p, stateKey, func(ctx context.Context, ref *Ref[map[string]V], item T) (map[string]V, error) {
+		k := keyFn(item)
+		v := valueFn(item)
+		if err := ref.Update(ctx, func(m map[string]V) (map[string]V, error) {
+			m[k] += v
+			return m, nil
+		}); err != nil {
+			return nil, err
+		}
+		m, err := ref.Get(ctx)
+		if err != nil {
+			return nil, err
+		}
+		snap := make(map[string]V, len(m))
+		for k, v := range m {
+			snap[k] = v
+		}
+		return snap, nil
+	}, append([]StageOption{Concurrency(1)}, opts...)...)
 }
