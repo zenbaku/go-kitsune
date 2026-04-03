@@ -337,6 +337,42 @@ processing system competitive with Apache Flink for single-process workloads.
 
 ---
 
+## Operator parity: ReactiveX gaps
+
+A competitive evaluation against RxGo/ReactiveX identified operators present in
+the ReactiveX specification but missing from Kitsune. All have been added.
+
+- [x] **`StartWith[T]`** — prepend one or more items before a pipeline:
+  `kitsune.StartWith(numbers, 0)` emits `0` then all items from `numbers`.
+
+- [x] **`DefaultIfEmpty[T]`** — emit a default value when the upstream produces no
+  items; useful when downstream requires at least one result.
+
+- [x] **`Contains[T comparable]`** — terminal: returns `true` if any item equals
+  the given value; stops early on first match. Ergonomic specialisation of `Any`.
+
+- [x] **`ElementAt`** — terminal method: return the item at a 0-based index;
+  `(zero, false, nil)` if the stream is shorter than the requested index.
+
+- [x] **`ToMap[T, K, V]`** — terminal: collect the stream into `map[K]V` using
+  caller-supplied key and value functions; duplicate keys: last value wins.
+
+- [x] **`SequenceEqual[T comparable]`** — terminal: compare two finite pipelines
+  item-by-item; returns `true` only if both emit identical items in the same order.
+
+- [x] **`Timestamp[T]`** — tag each item with the wall-clock time it was observed;
+  emits `Timestamped[T]{Value, Time}`. Respects `WithClock` for deterministic tests.
+
+- [x] **`TimeInterval[T]`** — tag each item with the duration elapsed since the
+  previous item; emits `TimedInterval[T]{Value, Elapsed}`; first item has
+  `Elapsed == 0`. Always runs at `Concurrency(1)`. Respects `WithClock`.
+
+- [x] **`Amb[T]`** — race multiple pipeline factories; forward items exclusively
+  from whichever factory emits first, cancelling all others. Useful for redundant
+  sources, failover, and latency hedging.
+
+---
+
 ## Backlog / needs exploring
 
 Items that may be worth doing but require more design work or a concrete use case before committing.
