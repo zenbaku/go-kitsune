@@ -69,6 +69,12 @@ go run ./examples/circuitbreaker
 
 `task test:examples` builds and runs all of them as a smoke test. If you add a new example, add its directory name to the `TestExamples` list in `examples_test.go`.
 
+Prefer `go run` over `go build` for examples. If you do build manually, use `-o main` so the output is covered by the `.gitignore` pattern:
+
+```bash
+go build -o main ./examples/basic
+```
+
 ---
 
 ## Adding a new operator
