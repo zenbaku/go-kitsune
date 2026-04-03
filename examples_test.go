@@ -80,6 +80,8 @@ func TestExamples(t *testing.T) {
 		"testclock",
 		// per-entity keyed state
 		"mapwithkey",
+		// gap-based session windowing
+		"sessionwindow",
 	}
 
 	for _, name := range examples {

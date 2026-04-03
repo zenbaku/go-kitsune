@@ -418,6 +418,44 @@ func Window[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 	return Batch(p, math.MaxInt, append(opts, BatchTimeout(d))...)
 }
 
+// SessionWindow groups items into variable-length windows based on inactivity.
+// A new session begins with the first item after a flush (or at stream start).
+// The session is flushed as []T when gap elapses with no new arrivals.
+// Each incoming item resets the gap timer. If the upstream closes, the current
+// session is flushed immediately regardless of the gap timer state.
+//
+// Use [WithClock] for deterministic testing with [testkit.NewTestClock]:
+//
+//	clock := testkit.NewTestClock()
+//	sessions := kitsune.SessionWindow(clicks, 30*time.Second, kitsune.WithClock(clock))
+//	clock.Advance(30 * time.Second) // trigger flush without sleeping
+//
+// SessionWindow panics if gap <= 0.
+func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption) *Pipeline[[]T] {
+	if gap <= 0 {
+		panic("kitsune: SessionWindow requires gap > 0")
+	}
+	convert := func(items []any) any {
+		result := make([]T, len(items))
+		for i, item := range items {
+			result[i] = item.(T)
+		}
+		return result
+	}
+	cfg := buildStageConfig(opts)
+	n := &engine.Node{
+		Kind:             engine.SessionWindowNode,
+		Name:             cfg.name,
+		Inputs:           []engine.InputRef{{Node: p.node, Port: p.port}},
+		Buffer:           cfg.buffer,
+		ThrottleDuration: gap.Nanoseconds(),
+		BatchConvert:     convert,
+		Clock:            cfg.clock,
+	}
+	id := p.g.AddNode(n)
+	return &Pipeline[[]T]{g: p.g, node: id}
+}
+
 // SlidingWindow collects items into overlapping windows of a fixed size,
 // advancing by step items between successive windows.
 // The first window is emitted once size items have been received; each

@@ -46,7 +46,7 @@ Checked items are complete.
   should produce a sentinel value rather than a gap in the output:
   `kitsune.OnError(kitsune.Return(User{Name: "unknown"}))`.
 
-- [ ] **Session windows** — gap-based window that closes after a configurable
+- [x] **Session windows** — gap-based window that closes after a configurable
   period of inactivity rather than on a fixed wall-clock boundary:
   `kitsune.SessionWindow(p, gap time.Duration)`. Produces `[]T` slices like
   `Window` and `SlidingWindow`. Requires a per-item timer that resets on each
@@ -388,11 +388,11 @@ Items that may be worth doing but require more design work or a concrete use cas
   examples, the PR workflow, and the commit message convention. Lowers the
   barrier for first-time contributors.
 
-- [ ] **GitHub issue templates** — separate templates for bug reports (repro
+- [x] **GitHub issue templates** — separate templates for bug reports (repro
   steps, expected vs actual, Go version) and feature requests (use case,
   proposed API sketch). Reduces triage time and sets expectations for reporters.
 
-- [ ] **GitHub Discussions** — enable the Discussions tab as the canonical
+- [x] **GitHub Discussions** — enable the Discussions tab as the canonical
   place for "how do I…?" questions and design proposals. Keeps issues focused
   on confirmed bugs and actionable tasks.
 

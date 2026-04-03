@@ -156,6 +156,7 @@ const (
 	ExhaustMapNode              // like FlatMap but ignores upstream items while inner is active (first wins)
 	CombineLatestNode           // symmetric WithLatestFrom: either side triggers output
 	BalanceNode                 // round-robin fan-out to N outputs
+	SessionWindowNode           // gap-based window: flush when no item arrives within gap
 )
 
 // DefaultBuffer is the default channel buffer size between stages.

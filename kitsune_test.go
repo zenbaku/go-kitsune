@@ -6724,3 +6724,296 @@ func TestInterval_TestClock(t *testing.T) {
 		t.Errorf("got %v, want [0 1 2 3]", results)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SessionWindow tests — deterministic, no real sleeps beyond scheduling yields
+// ---------------------------------------------------------------------------
+
+// TestSessionWindow_Basic verifies that a single session is flushed when the
+// gap timer fires after all items have been received.
+func TestSessionWindow_Basic(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 2 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := sessions.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 1)
+	_ = ch.Send(context.Background(), 2)
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance past the gap to trigger flush.
+	clock.Advance(gap)
+	time.Sleep(10 * time.Millisecond)
+
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 session, got %d: %v", len(results), results)
+	}
+	if !slices.Equal(results[0], []int{1, 2, 3}) {
+		t.Errorf("session[0] = %v, want [1 2 3]", results[0])
+	}
+}
+
+// TestSessionWindow_MultipleSessions verifies that two distinct sessions are
+// emitted when the gap fires between them.
+func TestSessionWindow_MultipleSessions(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 2 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := sessions.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+
+	// First session.
+	_ = ch.Send(context.Background(), 1)
+	_ = ch.Send(context.Background(), 2)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance past gap to flush first session.
+	clock.Advance(gap)
+	time.Sleep(10 * time.Millisecond)
+
+	// Second session.
+	_ = ch.Send(context.Background(), 3)
+	_ = ch.Send(context.Background(), 4)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance past gap to flush second session.
+	clock.Advance(gap)
+	time.Sleep(10 * time.Millisecond)
+
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 sessions, got %d: %v", len(results), results)
+	}
+	if !slices.Equal(results[0], []int{1, 2}) {
+		t.Errorf("session[0] = %v, want [1 2]", results[0])
+	}
+	if !slices.Equal(results[1], []int{3, 4}) {
+		t.Errorf("session[1] = %v, want [3 4]", results[1])
+	}
+}
+
+// TestSessionWindow_FlushOnClose verifies that the current session is flushed
+// immediately when the upstream channel closes, without waiting for the gap.
+func TestSessionWindow_FlushOnClose(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 10 * time.Second // long gap — should not fire
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := sessions.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 1)
+	_ = ch.Send(context.Background(), 2)
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+
+	// Close without advancing the clock — flush must happen due to close.
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 session, got %d: %v", len(results), results)
+	}
+	if !slices.Equal(results[0], []int{1, 2, 3}) {
+		t.Errorf("session[0] = %v, want [1 2 3]", results[0])
+	}
+}
+
+// TestSessionWindow_Empty verifies that closing an empty stream produces no
+// sessions.
+func TestSessionWindow_Empty(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 2 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := sessions.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 sessions, got %d: %v", len(results), results)
+	}
+}
+
+// TestSessionWindow_ResetBehavior verifies that each new item resets the gap
+// timer. Advancing by half the gap twice should NOT flush if items arrive in
+// between; the session should only flush after a full gap of inactivity.
+func TestSessionWindow_ResetBehavior(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 4 * time.Second
+	const half = 2 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		items, err := sessions.Collect(context.Background())
+		resultCh <- items
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+
+	// Send item 1.
+	_ = ch.Send(context.Background(), 1)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance by half the gap — timer should NOT fire yet.
+	clock.Advance(half)
+	time.Sleep(5 * time.Millisecond)
+
+	// Send item 2 — this resets the timer.
+	_ = ch.Send(context.Background(), 2)
+	time.Sleep(5 * time.Millisecond)
+
+	// Advance by half the gap again — only half the gap has elapsed since item 2,
+	// so still no flush.
+	clock.Advance(half)
+	time.Sleep(5 * time.Millisecond)
+
+	// Verify no flush has happened yet by checking resultCh is empty.
+	select {
+	case earlyResult := <-resultCh:
+		t.Fatalf("unexpected early flush: %v", earlyResult)
+	default:
+	}
+
+	// Advance the remaining half gap — now a full gap since item 2, should flush.
+	clock.Advance(half)
+	time.Sleep(10 * time.Millisecond)
+
+	ch.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	results := <-resultCh
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 session, got %d: %v", len(results), results)
+	}
+	if !slices.Equal(results[0], []int{1, 2}) {
+		t.Errorf("session[0] = %v, want [1 2]", results[0])
+	}
+}
+
+// TestSessionWindow_ContextCancel verifies that cancelling the context
+// terminates the pipeline with an error.
+func TestSessionWindow_ContextCancel(t *testing.T) {
+	clock := testkit.NewTestClock()
+	const gap = 10 * time.Second
+
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, gap, kitsune.WithClock(clock))
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := sessions.Collect(ctx)
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(ctx, 1)
+	time.Sleep(5 * time.Millisecond)
+
+	cancel()
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected error after context cancel, got nil")
+	}
+}
+
+// TestSessionWindow_Panics verifies that SessionWindow panics for non-positive
+// gap values.
+func TestSessionWindow_Panics(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3})
+
+	t.Run("zero gap", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected SessionWindow(p, 0) to panic")
+			}
+		}()
+		kitsune.SessionWindow(src, 0)
+	})
+
+	t.Run("negative gap", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected SessionWindow(p, -1) to panic")
+			}
+		}()
+		kitsune.SessionWindow(src, -1*time.Second)
+	})
+}

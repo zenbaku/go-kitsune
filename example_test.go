@@ -1185,3 +1185,42 @@ func ExampleSumBy() {
 	// Output:
 	// alice=30.0 bob=20.0
 }
+
+func ExampleSessionWindow() {
+	clock := testkit.NewTestClock()
+
+	ch := kitsune.NewChannel[string](10)
+	src := ch.Source()
+	sessions := kitsune.SessionWindow(src, 5*time.Second, kitsune.WithClock(clock))
+
+	resultCh := make(chan [][]string, 1)
+	go func() {
+		items, _ := sessions.Collect(context.Background())
+		resultCh <- items
+	}()
+
+	// First session: two clicks close together.
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), "click")
+	_ = ch.Send(context.Background(), "scroll")
+	time.Sleep(5 * time.Millisecond)
+
+	// Gap expires — flush first session.
+	clock.Advance(5 * time.Second)
+	time.Sleep(10 * time.Millisecond)
+
+	// Second session: one click.
+	_ = ch.Send(context.Background(), "click")
+	time.Sleep(5 * time.Millisecond)
+
+	// Close channel — flush second session immediately.
+	ch.Close()
+
+	results := <-resultCh
+	for i, s := range results {
+		fmt.Printf("Session %d: %v\n", i+1, s)
+	}
+	// Output:
+	// Session 1: [click scroll]
+	// Session 2: [click]
+}

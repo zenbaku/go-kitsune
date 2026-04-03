@@ -407,6 +407,13 @@ func nodeRunner(ctx context.Context, n *Node, cfg RunConfig, chans map[ChannelKe
 	case ExhaustMapNode:
 		outCloser = func() { close(outCh) }
 		inner = func() error { return runExhaustMap(ctx, n, inCh, outCh, hook) }
+	case SessionWindowNode:
+		outCloser = func() { close(outCh) }
+		sessionClk := n.Clock
+		if sessionClk == nil {
+			sessionClk = RealClock{}
+		}
+		inner = func() error { return runSessionWindow(ctx, n, inCh, outbox, hook, name, sessionClk) }
 	default:
 		outCloser = func() {}
 		inner = func() error { return fmt.Errorf("kitsune: unknown node kind %d", n.Kind) }
@@ -2065,6 +2072,8 @@ func kindName(k NodeKind) string {
 		return "combinelatest"
 	case BalanceNode:
 		return "balance"
+	case SessionWindowNode:
+		return "sessionwindow"
 	default:
 		return "unknown"
 	}
@@ -2207,6 +2216,75 @@ func runDebounce(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hoo
 					return err
 				}
 				hasPending = false
+			}
+
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// runSessionWindow groups items into variable-length windows based on inactivity.
+// The window is flushed as a []T when no new item arrives within gap duration.
+// Each incoming item resets the gap timer. If upstream closes, the current
+// session is flushed immediately regardless of the gap timer state.
+func runSessionWindow(ctx context.Context, n *Node, inCh chan any, outbox Outbox, hook Hook, name string, clk Clock) error {
+	gap := time.Duration(n.ThrottleDuration)
+	convert := n.BatchConvert
+
+	hook.OnStageStart(ctx, name)
+	var count int64
+	defer func() { hook.OnStageDone(ctx, name, count, 0) }()
+
+	timer := clk.NewTimer(gap)
+	timer.Stop()
+	// Drain the channel in case Stop raced with a fire.
+	select {
+	case <-timer.C():
+	default:
+	}
+	defer timer.Stop()
+
+	var buf []any
+
+	flush := func() error {
+		if len(buf) == 0 {
+			return nil
+		}
+		out := convert(buf)
+		clear(buf)
+		buf = buf[:0]
+		// Stop and drain the timer.
+		if !timer.Stop() {
+			select {
+			case <-timer.C():
+			default:
+			}
+		}
+		hook.OnItem(ctx, name, 0, nil)
+		count++
+		return outbox.Send(ctx, out)
+	}
+
+	for {
+		select {
+		case item, ok := <-inCh:
+			if !ok {
+				return flush()
+			}
+			buf = append(buf, item)
+			// Reset the gap timer (stop + drain + reset, same as runDebounce).
+			if !timer.Stop() {
+				select {
+				case <-timer.C():
+				default:
+				}
+			}
+			timer.Reset(gap)
+
+		case <-timer.C():
+			if err := flush(); err != nil {
+				return err
 			}
 
 		case <-ctx.Done():
