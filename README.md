@@ -102,6 +102,7 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 | `Cycle[T](items []T)` | Infinite stream: loop over `items` forever; use `Take` to bound |
 | `Timer[T](delay, fn, opts…)` | Emit exactly one value after `delay` by calling `fn`; stops if context is cancelled |
 | `Concat[T](factories …func() *Pipeline[T])` | Run each factory sequentially, forwarding all items from each before starting the next |
+| `Amb[T](factories…)` | Race multiple pipeline factories; forward items exclusively from whichever factory emits first, cancelling all others |
 
 ### 1:1 Transforms
 
@@ -116,7 +117,11 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 | `DeadLetterSink[I](p, fn, opts…)` | Like `DeadLetter` for terminal sinks; returns `(*Pipeline[ErrItem[I]], *Runner)` |
 | `MapEvery[T](p, nth, fn)` | Apply `fn` to every nth item (0-indexed); all other items pass through unchanged |
 | `WithIndex[T](p)` | Pair each item with its 0-based stream position; emits `Pair[int, T]` |
+| `Timestamp[T](p, opts…)` | Pair each item with the time it was observed; emits `Timestamped[T]{Value, Time}`; use `WithClock` for deterministic tests |
+| `TimeInterval[T](p, opts…)` | Pair each item with the duration since the previous item; first item has `Elapsed == 0`; emits `TimedInterval[T]{Value, Elapsed}`; always `Concurrency(1)` |
 | `Intersperse[T](p, sep T)` | Insert `sep` between consecutive items |
+| `StartWith[T](p, items…)` | Prepend one or more items before the pipeline; emits the prefix then all items from `p` |
+| `DefaultIfEmpty[T](p, defaultVal)` | Pass items through unchanged; if `p` produces no items, emit `defaultVal` instead |
 | `MapIntersperse[T,O](p, sep O, fn)` | Apply `fn` to each item and insert `sep` between the results |
 
 ### 1:N Expansion
@@ -258,6 +263,10 @@ enriched   := kitsune.ZipWith(withEntity, withNames,
 | `MaxBy[T,K](ctx, p, key, less)` | `(T, bool, error)` | Item with the largest derived key |
 | `Frequencies[T comparable](ctx, p)` | `(map[T]int, error)` | Count occurrences of each distinct item |
 | `FrequenciesBy[T,K](ctx, p, key)` | `(map[K]int, error)` | Count occurrences of each distinct key |
+| `Contains[T comparable](ctx, p, value)` | `(bool, error)` | Returns `true` if any item equals `value`; stops early on first match |
+| `(p).ElementAt(ctx, index)` | `(T, bool, error)` | Returns the item at 0-based `index`; `(zero, false, nil)` if the stream is shorter |
+| `ToMap[T,K,V](ctx, p, key, value)` | `(map[K]V, error)` | Collect stream into `map[K]V`; duplicate keys: last value wins |
+| `SequenceEqual[T comparable](ctx, a, b)` | `(bool, error)` | Returns `true` if both pipelines emit the same items in the same order (finite streams) |
 | `CountBy[T](p, keyFn, opts…)` | `*Pipeline[map[string]int64]` | Count occurrences by key; emits a `map[string]int64` snapshot after each item; compose with `Throttle` for periodic output |
 | `SumBy[T,V](p, keyFn, valueFn, opts…)` | `*Pipeline[map[string]V]` | Accumulate a numeric value by key; emits a `map[string]V` snapshot after each item |
 | `ReduceWhile[T,S](ctx, p, seed, fn)` | `(S, error)` | Fold with early termination; `fn` returns `(newAcc, continue)` |
@@ -505,6 +514,8 @@ kitsune.ReleaseAll(results) // return every object to the pool when done
 |---|---|
 | `Lift[I,O](fn)` | Wrap a context-free `func(I)(O,error)` for use with `Map`/`FlatMap` |
 | `LiftPure[I,O](fn)` | Wrap a context-free, error-free `func(I) O` for use with `Map`/`FlatMap`; unlike `Lift`, the wrapped function never fails |
+| `Timestamped[T]` | Output type of `Timestamp`: `{Value T; Time time.Time}` |
+| `TimedInterval[T]` | Output type of `TimeInterval`: `{Value T; Elapsed time.Duration}` |
 | `Pair[A,B]` | Output type of `Zip` and `WithLatestFrom`: `{First A; Second B}` |
 | `ErrItem[I]` | Output type of `MapResult`/`DeadLetter` failed branch: `{Item I; Err error}` |
 | `StageError` | Error type returned by `Runner.Run`; carries `Stage`, `Attempt`, and `Cause` fields; unwrappable with `errors.As` |

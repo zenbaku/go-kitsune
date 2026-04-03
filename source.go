@@ -11,6 +11,136 @@ import (
 	"github.com/zenbaku/go-kitsune/engine"
 )
 
+// ---------------------------------------------------------------------------
+// Amb
+// ---------------------------------------------------------------------------
+
+// Amb subscribes to all pipeline factories concurrently and forwards items
+// exclusively from whichever factory emits first, cancelling all others.
+// If no factory emits before ctx is cancelled, Amb produces no items.
+// Each factory must create a new independent pipeline graph.
+//
+//	kitsune.Amb(
+//	    func() *Pipeline[Result] { return fetchFromPrimaryDB(ctx) },
+//	    func() *Pipeline[Result] { return fetchFromReplicaDB(ctx) },
+//	)
+func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
+	if len(factories) == 0 {
+		return Generate(func(_ context.Context, _ func(T) bool) error { return nil })
+	}
+	if len(factories) == 1 {
+		return Generate(func(ctx context.Context, yield func(T) bool) error {
+			err := factories[0]().ForEach(func(_ context.Context, item T) error {
+				if !yield(item) {
+					return context.Canceled
+				}
+				return nil
+			}).Run(ctx)
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		})
+	}
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		innerCtx, innerCancel := context.WithCancel(ctx)
+		defer innerCancel()
+
+		type item struct {
+			val     T
+			factory int
+		}
+
+		// Per-factory item channels.
+		chs := make([]chan item, len(factories))
+		for i := range chs {
+			chs[i] = make(chan item, engine.DefaultBuffer)
+		}
+
+		var (
+			wg      sync.WaitGroup
+			errOnce sync.Once
+			firstErr error
+		)
+
+		// Start each factory in its own goroutine.
+		for i, factory := range factories {
+			i, factory := i, factory
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := factory().ForEach(func(_ context.Context, v T) error {
+					select {
+					case chs[i] <- item{val: v, factory: i}:
+						return nil
+					case <-innerCtx.Done():
+						return innerCtx.Err()
+					}
+				}).Run(innerCtx)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					errOnce.Do(func() { firstErr = err })
+					innerCancel()
+				}
+				close(chs[i])
+			}()
+		}
+
+		// Close a merged channel once all goroutines finish.
+		merged := make(chan item, engine.DefaultBuffer)
+		go func() {
+			// Fan all per-factory channels into merged.
+			var fanWg sync.WaitGroup
+			for _, ch := range chs {
+				ch := ch
+				fanWg.Add(1)
+				go func() {
+					defer fanWg.Done()
+					for it := range ch {
+						select {
+						case merged <- it:
+						case <-innerCtx.Done():
+							return
+						}
+					}
+				}()
+			}
+			fanWg.Wait()
+			close(merged)
+		}()
+
+		// Determine winner: first factory to emit.
+		winner := -1
+		for it := range merged {
+			if winner == -1 {
+				winner = it.factory
+				// Cancel all others.
+				innerCancel()
+				// Restart inner context just for the winner's remaining items.
+				// (inner is already cancelled; we drain winner's buffered ch.)
+			}
+			if it.factory != winner {
+				continue
+			}
+			if !yield(it.val) {
+				return nil
+			}
+		}
+
+		// Drain remaining items from the winner's channel if any arrived
+		// after merged was closed but before we read them all.
+		if winner >= 0 {
+			for it := range chs[winner] {
+				if !yield(it.val) {
+					return nil
+				}
+			}
+		}
+
+		wg.Wait()
+		return firstErr
+	})
+}
+
 // From creates a Pipeline that reads from an existing channel.
 // The pipeline completes when the channel is closed.
 func From[T any](ch <-chan T) *Pipeline[T] {

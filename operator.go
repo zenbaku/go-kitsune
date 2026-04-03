@@ -843,6 +843,19 @@ type Pair[A, B any] struct {
 	Second B
 }
 
+// Timestamped pairs a value with the wall-clock time it was observed.
+type Timestamped[T any] struct {
+	Value T
+	Time  time.Time
+}
+
+// TimedInterval pairs a value with the duration elapsed since the previous item.
+// The first item always has Elapsed == 0.
+type TimedInterval[T any] struct {
+	Value   T
+	Elapsed time.Duration
+}
+
 // Zip pairs items from two same-graph pipelines by position, emitting a
 // [Pair] for each corresponding pair of items. Output stops as soon as
 // either input closes — the shorter pipeline determines the output length.
@@ -1689,4 +1702,98 @@ func SumBy[T any, V Numeric](
 		}
 		return snap, nil
 	}, append([]StageOption{Concurrency(1)}, opts...)...)
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp / TimeInterval
+// ---------------------------------------------------------------------------
+
+// Timestamp pairs each item with the time it was observed by this stage.
+// Use [WithClock] for deterministic testing.
+//
+//	kitsune.Timestamp(p)
+//	// → Timestamped{Value: item, Time: time.Now()} for each item
+func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped[T]] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = engine.RealClock{}
+	}
+	return Map(p, func(_ context.Context, item T) (Timestamped[T], error) {
+		return Timestamped[T]{Value: item, Time: clk.Now()}, nil
+	})
+}
+
+// TimeInterval pairs each item with the duration elapsed since the previous item.
+// The first item has Elapsed == 0. Always runs at Concurrency(1).
+// Use [WithClock] for deterministic testing.
+//
+//	kitsune.TimeInterval(p)
+//	// → TimedInterval{Value: item, Elapsed: elapsed} for each item
+func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInterval[T]] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = engine.RealClock{}
+	}
+	var last time.Time
+	started := false
+	return Map(p, func(_ context.Context, item T) (TimedInterval[T], error) {
+		now := clk.Now()
+		var d time.Duration
+		if started {
+			d = now.Sub(last)
+		}
+		started = true
+		last = now
+		return TimedInterval[T]{Value: item, Elapsed: d}, nil
+	}, append(opts, Concurrency(1))...)
+}
+
+// ---------------------------------------------------------------------------
+// StartWith / DefaultIfEmpty
+// ---------------------------------------------------------------------------
+
+// StartWith prepends items to p, emitting them before any item from p.
+//
+//	kitsune.StartWith(numbers, 0) // emits 0, then all numbers
+func StartWith[T any](p *Pipeline[T], items ...T) *Pipeline[T] {
+	if len(items) == 0 {
+		return p
+	}
+	prefix := make([]T, len(items))
+	copy(prefix, items)
+	return Concat(
+		func() *Pipeline[T] { return FromSlice(prefix) },
+		func() *Pipeline[T] { return p },
+	)
+}
+
+// DefaultIfEmpty emits all items from p unchanged. If p produces no items,
+// defaultVal is emitted instead. Useful when downstream requires at least one item.
+//
+//	kitsune.DefaultIfEmpty(results, Result{Name: "none"})
+func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		saw := false
+		stopped := false
+		err := p.ForEach(func(_ context.Context, item T) error {
+			saw = true
+			if !yield(item) {
+				stopped = true
+				return context.Canceled
+			}
+			return nil
+		}).Run(ctx)
+		if stopped {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !saw {
+			yield(defaultVal)
+		}
+		return nil
+	})
 }

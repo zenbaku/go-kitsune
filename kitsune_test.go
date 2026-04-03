@@ -6994,6 +6994,505 @@ func TestSessionWindow_ContextCancel(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Contains
+// ---------------------------------------------------------------------------
+
+func TestContains_Present(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	got, err := kitsune.Contains(context.Background(), p, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Error("expected true, got false")
+	}
+}
+
+func TestContains_Absent(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.Contains(context.Background(), p, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Error("expected false, got true")
+	}
+}
+
+func TestContains_Empty(t *testing.T) {
+	p := kitsune.FromSlice([]int{})
+	got, err := kitsune.Contains(context.Background(), p, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Error("expected false for empty stream, got true")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ElementAt
+// ---------------------------------------------------------------------------
+
+func TestElementAt_Valid(t *testing.T) {
+	p := kitsune.FromSlice([]string{"a", "b", "c"})
+	got, ok, err := p.ElementAt(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got != "b" {
+		t.Errorf("got %q, want %q", got, "b")
+	}
+}
+
+func TestElementAt_OutOfBounds(t *testing.T) {
+	p := kitsune.FromSlice([]string{"a", "b"})
+	_, ok, err := p.ElementAt(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for out-of-bounds index")
+	}
+}
+
+func TestElementAt_Zero(t *testing.T) {
+	p := kitsune.FromSlice([]int{10, 20, 30})
+	got, ok, err := p.ElementAt(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got != 10 {
+		t.Errorf("got %d, want 10", got)
+	}
+}
+
+func TestElementAt_Empty(t *testing.T) {
+	p := kitsune.FromSlice([]int{})
+	_, ok, err := p.ElementAt(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected ok=false for empty stream")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ToMap
+// ---------------------------------------------------------------------------
+
+func TestToMap_Basic(t *testing.T) {
+	type kv struct{ K, V string }
+	p := kitsune.FromSlice([]kv{{"a", "1"}, {"b", "2"}, {"c", "3"}})
+	m, err := kitsune.ToMap(context.Background(), p,
+		func(x kv) string { return x.K },
+		func(x kv) string { return x.V },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 3 || m["a"] != "1" || m["b"] != "2" || m["c"] != "3" {
+		t.Errorf("unexpected map: %v", m)
+	}
+}
+
+func TestToMap_DuplicateKeys(t *testing.T) {
+	type kv struct{ K, V int }
+	p := kitsune.FromSlice([]kv{{1, 10}, {2, 20}, {1, 99}})
+	m, err := kitsune.ToMap(context.Background(), p,
+		func(x kv) int { return x.K },
+		func(x kv) int { return x.V },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Last value for key 1 wins.
+	if m[1] != 99 {
+		t.Errorf("expected m[1]=99 (last wins), got %d", m[1])
+	}
+	if m[2] != 20 {
+		t.Errorf("expected m[2]=20, got %d", m[2])
+	}
+}
+
+func TestToMap_Empty(t *testing.T) {
+	p := kitsune.FromSlice([]int{})
+	m, err := kitsune.ToMap(context.Background(), p,
+		func(n int) int { return n },
+		func(n int) int { return n },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SequenceEqual
+// ---------------------------------------------------------------------------
+
+func TestSequenceEqual_Equal(t *testing.T) {
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]int{1, 2, 3})
+	ok, err := kitsune.SequenceEqual(context.Background(), a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("expected equal sequences to return true")
+	}
+}
+
+func TestSequenceEqual_DifferentValues(t *testing.T) {
+	a := kitsune.FromSlice([]int{1, 2, 3})
+	b := kitsune.FromSlice([]int{1, 2, 4})
+	ok, err := kitsune.SequenceEqual(context.Background(), a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("expected different values to return false")
+	}
+}
+
+func TestSequenceEqual_DifferentLengths(t *testing.T) {
+	t.Run("first shorter", func(t *testing.T) {
+		a := kitsune.FromSlice([]int{1, 2})
+		b := kitsune.FromSlice([]int{1, 2, 3})
+		ok, err := kitsune.SequenceEqual(context.Background(), a, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Error("expected false when first is shorter")
+		}
+	})
+	t.Run("second shorter", func(t *testing.T) {
+		a := kitsune.FromSlice([]int{1, 2, 3})
+		b := kitsune.FromSlice([]int{1, 2})
+		ok, err := kitsune.SequenceEqual(context.Background(), a, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Error("expected false when second is shorter")
+		}
+	})
+}
+
+func TestSequenceEqual_BothEmpty(t *testing.T) {
+	a := kitsune.FromSlice([]int{})
+	b := kitsune.FromSlice([]int{})
+	ok, err := kitsune.SequenceEqual(context.Background(), a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("expected two empty streams to be equal")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StartWith
+// ---------------------------------------------------------------------------
+
+func TestStartWith_Basic(t *testing.T) {
+	p := kitsune.FromSlice([]int{3, 4, 5})
+	results, err := kitsune.StartWith(p, 1, 2).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4, 5}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Errorf("results[%d]=%d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestStartWith_Empty(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	result := kitsune.StartWith(p) // no items
+	// Should return same pipeline reference (or at minimum, same items)
+	results, err := result.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results[0] != 1 || results[2] != 3 {
+		t.Errorf("unexpected results: %v", results)
+	}
+}
+
+func TestStartWith_EmptyOriginal(t *testing.T) {
+	p := kitsune.FromSlice([]int{})
+	results, err := kitsune.StartWith(p, 10, 20).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 20}
+	if len(results) != len(want) || results[0] != 10 || results[1] != 20 {
+		t.Errorf("got %v, want %v", results, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DefaultIfEmpty
+// ---------------------------------------------------------------------------
+
+func TestDefaultIfEmpty_NonEmpty(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	results, err := kitsune.DefaultIfEmpty(p, 99).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Errorf("results[%d]=%d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestDefaultIfEmpty_Empty(t *testing.T) {
+	p := kitsune.FromSlice([]int{})
+	results, err := kitsune.DefaultIfEmpty(p, 42).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != 42 {
+		t.Errorf("expected [42], got %v", results)
+	}
+}
+
+func TestDefaultIfEmpty_SingleItem(t *testing.T) {
+	p := kitsune.FromSlice([]int{7})
+	results, err := kitsune.DefaultIfEmpty(p, 99).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != 7 {
+		t.Errorf("expected [7], got %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timestamp
+// ---------------------------------------------------------------------------
+
+func TestTimestamp_PopulatesTime(t *testing.T) {
+	clock := testkit.NewTestClock()
+	base := clock.Now()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	results, err := kitsune.Timestamp(p, kitsune.WithClock(clock)).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for i, r := range results {
+		if r.Time.IsZero() {
+			t.Errorf("results[%d].Time is zero", i)
+		}
+		if r.Time.Before(base) {
+			t.Errorf("results[%d].Time=%v is before base=%v", i, r.Time, base)
+		}
+	}
+}
+
+func TestTimestamp_OrderPreserved(t *testing.T) {
+	clock := testkit.NewTestClock()
+	p := kitsune.FromSlice([]int{10, 20, 30})
+	results, err := kitsune.Timestamp(p, kitsune.WithClock(clock)).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range results {
+		want := (i + 1) * 10
+		if r.Value != want {
+			t.Errorf("results[%d].Value=%d, want %d", i, r.Value, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TimeInterval
+// ---------------------------------------------------------------------------
+
+func TestTimeInterval_Basic(t *testing.T) {
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	p := kitsune.TimeInterval(src, kitsune.WithClock(clock))
+
+	resultCh := make(chan []kitsune.TimedInterval[int], 1)
+	go func() {
+		items, _ := p.Collect(context.Background())
+		resultCh <- items
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 1)
+	time.Sleep(5 * time.Millisecond)
+
+	clock.Advance(100 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 2)
+	time.Sleep(5 * time.Millisecond)
+
+	clock.Advance(200 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), 3)
+	time.Sleep(5 * time.Millisecond)
+
+	ch.Close()
+	results := <-resultCh
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	// First item always has Elapsed == 0.
+	if results[0].Elapsed != 0 {
+		t.Errorf("first item Elapsed=%v, want 0", results[0].Elapsed)
+	}
+	// Second item: 100ms elapsed.
+	if results[1].Elapsed != 100*time.Millisecond {
+		t.Errorf("second item Elapsed=%v, want 100ms", results[1].Elapsed)
+	}
+	// Third item: 200ms elapsed.
+	if results[2].Elapsed != 200*time.Millisecond {
+		t.Errorf("third item Elapsed=%v, want 200ms", results[2].Elapsed)
+	}
+}
+
+func TestTimeInterval_Sequential(t *testing.T) {
+	// Verifies Concurrency(1) is enforced: all intervals are accurate.
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[int](10)
+	src := ch.Source()
+	p := kitsune.TimeInterval(src, kitsune.WithClock(clock))
+
+	ctx := context.Background()
+	resultCh := make(chan []kitsune.TimedInterval[int], 1)
+	go func() {
+		items, _ := p.Collect(ctx)
+		resultCh <- items
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	for i := 0; i < 5; i++ {
+		_ = ch.Send(ctx, i)
+		clock.Advance(10 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
+	}
+	ch.Close()
+	results := <-resultCh
+
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
+	}
+	if results[0].Elapsed != 0 {
+		t.Errorf("first item Elapsed=%v, want 0", results[0].Elapsed)
+	}
+	for i := 1; i < 5; i++ {
+		if results[i].Elapsed <= 0 {
+			t.Errorf("results[%d].Elapsed=%v, want > 0", i, results[i].Elapsed)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Amb
+// ---------------------------------------------------------------------------
+
+func TestAmb_FirstWins(t *testing.T) {
+	// Use a channel to control which factory emits first.
+	fast := make(chan int, 2)
+	slow := make(chan int, 2)
+
+	fast <- 1
+	fast <- 2
+	close(fast)
+
+	p := kitsune.Amb(
+		func() *kitsune.Pipeline[int] { return kitsune.From((<-chan int)(fast)) },
+		func() *kitsune.Pipeline[int] {
+			// slow channel: only emit after a delay
+			return kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+				select {
+				case v, ok := <-slow:
+					if ok {
+						yield(v)
+					}
+					return nil
+				case <-ctx.Done():
+					return nil
+				}
+			})
+		},
+	)
+
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should only contain items from fast factory.
+	for _, v := range results {
+		if v != 1 && v != 2 {
+			t.Errorf("got unexpected value %d (should be from fast factory)", v)
+		}
+	}
+	if len(results) == 0 {
+		t.Error("expected at least one result from fast factory")
+	}
+}
+
+func TestAmb_SingleFactory(t *testing.T) {
+	p := kitsune.Amb(
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2, 3}) },
+	)
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if len(results) != len(want) {
+		t.Fatalf("got %v, want %v", results, want)
+	}
+	for i, v := range results {
+		if v != want[i] {
+			t.Errorf("results[%d]=%d, want %d", i, v, want[i])
+		}
+	}
+}
+
+func TestAmb_Empty(t *testing.T) {
+	p := kitsune.Amb[int]()
+	results, err := p.Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty pipeline, got %v", results)
+	}
+}
+
 // TestSessionWindow_Panics verifies that SessionWindow panics for non-positive
 // gap values.
 func TestSessionWindow_Panics(t *testing.T) {

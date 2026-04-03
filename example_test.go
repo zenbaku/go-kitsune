@@ -1186,6 +1186,91 @@ func ExampleSumBy() {
 	// alice=30.0 bob=20.0
 }
 
+func ExampleContains() {
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	found, _ := kitsune.Contains(context.Background(), p, 3)
+	fmt.Println(found)
+	// Output: true
+}
+
+func ExampleToMap() {
+	type kv struct{ K, V string }
+	p := kitsune.FromSlice([]kv{{"a", "apple"}, {"b", "banana"}})
+	m, _ := kitsune.ToMap(context.Background(), p,
+		func(x kv) string { return x.K },
+		func(x kv) string { return x.V },
+	)
+	fmt.Println(m["a"], m["b"])
+	// Output: apple banana
+}
+
+func ExampleStartWith() {
+	p := kitsune.FromSlice([]int{3, 4, 5})
+	results, _ := kitsune.StartWith(p, 1, 2).Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 3 4 5]
+}
+
+func ExampleDefaultIfEmpty() {
+	empty := kitsune.FromSlice([]string{})
+	results, _ := kitsune.DefaultIfEmpty(empty, "none").Collect(context.Background())
+	fmt.Println(results)
+	// Output: [none]
+}
+
+func ExampleTimestamp() {
+	clock := testkit.NewTestClock()
+	p := kitsune.FromSlice([]int{1, 2})
+	results, _ := kitsune.Timestamp(p, kitsune.WithClock(clock)).Collect(context.Background())
+	for _, r := range results {
+		fmt.Printf("value=%d stamped=%v\n", r.Value, !r.Time.IsZero())
+	}
+	// Output:
+	// value=1 stamped=true
+	// value=2 stamped=true
+}
+
+func ExampleTimeInterval() {
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[string](10)
+	src := ch.Source()
+	p := kitsune.TimeInterval(src, kitsune.WithClock(clock))
+
+	resultCh := make(chan []kitsune.TimedInterval[string], 1)
+	go func() {
+		items, _ := p.Collect(context.Background())
+		resultCh <- items
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), "a")
+	time.Sleep(5 * time.Millisecond)
+
+	clock.Advance(1 * time.Second)
+	time.Sleep(5 * time.Millisecond)
+	_ = ch.Send(context.Background(), "b")
+	time.Sleep(5 * time.Millisecond)
+
+	ch.Close()
+	results := <-resultCh
+
+	fmt.Printf("a elapsed=0: %v\n", results[0].Elapsed == 0)
+	fmt.Printf("b elapsed=1s: %v\n", results[1].Elapsed == time.Second)
+	// Output:
+	// a elapsed=0: true
+	// b elapsed=1s: true
+}
+
+func ExampleAmb() {
+	// Only one factory — straightforward passthrough.
+	p := kitsune.Amb(
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2, 3}) },
+	)
+	results, _ := p.Collect(context.Background())
+	fmt.Println(results)
+	// Output: [1 2 3]
+}
+
 func ExampleSessionWindow() {
 	clock := testkit.NewTestClock()
 

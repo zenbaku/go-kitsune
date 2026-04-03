@@ -5,6 +5,7 @@ import (
 	"errors"
 	"iter"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -435,6 +436,66 @@ func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], seed S, fn func(
 // ---------------------------------------------------------------------------
 // TakeRandom
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Contains / ElementAt / ToMap / SequenceEqual
+// ---------------------------------------------------------------------------
+
+// Contains runs the pipeline and returns true if any item equals value.
+//
+//	kitsune.Contains(ctx, kitsune.FromSlice([]int{1, 2, 3}), 2) // → true
+func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error) {
+	return p.Any(ctx, func(item T) bool { return item == value }, opts...)
+}
+
+// ElementAt runs the pipeline and returns the item at the 0-based index.
+// The second return value is false if the stream is shorter than index+1.
+//
+//	kitsune.FromSlice([]string{"a","b","c"}).ElementAt(ctx, 1) // → "b", true
+func (p *Pipeline[T]) ElementAt(ctx context.Context, index int, opts ...RunOption) (T, bool, error) {
+	return p.Skip(index).First(ctx, opts...)
+}
+
+// ToMap runs the pipeline and collects items into a map[K]V.
+// If multiple items map to the same key, the last value wins.
+//
+//	kitsune.ToMap(ctx, users, func(u User) string { return u.ID }, func(u User) string { return u.Name })
+func ToMap[T any, K comparable, V any](
+	ctx context.Context,
+	p *Pipeline[T],
+	key func(T) K,
+	value func(T) V,
+	opts ...RunOption,
+) (map[K]V, error) {
+	m := make(map[K]V)
+	runner := p.ForEach(func(_ context.Context, item T) error {
+		m[key(item)] = value(item)
+		return nil
+	}, Concurrency(1))
+	if err := runner.Run(ctx, opts...); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// SequenceEqual runs both pipelines and returns true if they emit the same
+// items in the same order. Both pipelines must be finite.
+//
+//	kitsune.SequenceEqual(ctx,
+//	    kitsune.FromSlice([]int{1,2,3}),
+//	    kitsune.FromSlice([]int{1,2,3}),
+//	) // → true
+func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ...RunOption) (bool, error) {
+	aItems, err := a.Collect(ctx, opts...)
+	if err != nil {
+		return false, err
+	}
+	bItems, err := b.Collect(ctx, opts...)
+	if err != nil {
+		return false, err
+	}
+	return slices.Equal(aItems, bItems), nil
+}
 
 // TakeRandom runs the pipeline and returns n items chosen uniformly at random,
 // in a random order. If the pipeline produces fewer than n items, all items are
