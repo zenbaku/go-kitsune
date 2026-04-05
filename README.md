@@ -331,11 +331,11 @@ events, _ := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
 
 ```go
 var Validate kitsune.Stage[Order, Order] = func(p *kitsune.Pipeline[Order]) *kitsune.Pipeline[Order] {
-    return p.Filter(isValid).Tap(logRejected)
+    return kitsune.Filter(p, kitsune.FilterFunc(isValid))
 }
 
 orders.Through(Validate)        // existing Through API
-Validate.Apply(orders)          // Stage API — identical result
+Validate.Apply(orders)          // Stage.Apply — identical result
 kitsune.Then(Validate, enrich)  // compose with a downstream stage
 ```
 
@@ -347,7 +347,7 @@ A Stage factory function parameterised over `T` acts as generic middleware, one 
 // WithLogging works for Pipeline[string], Pipeline[Event], Pipeline[Result], etc.
 func WithLogging[T any](label string) kitsune.Stage[T, T] {
     return func(p *kitsune.Pipeline[T]) *kitsune.Pipeline[T] {
-        return p.Tap(func(item T) { slog.Info(label, "item", item) })
+        return kitsune.Tap(p, kitsune.TapFunc(func(item T) { slog.Info(label, "item", item) }))
     }
 }
 
@@ -391,7 +391,7 @@ results, _ := FullPipeline.Apply(kitsune.FromSlice(testFixtures)).Collect(ctx)
 
 // Production — accept pushes from HTTP handlers or event streams:
 src := kitsune.NewChannel[string](256)
-h   := FullPipeline.Apply(src.Source()).ForEach(store).RunAsync(ctx)
+h   := FullPipeline.Apply(src.Source()).ForEach(store).Build().RunAsync(ctx)
 // ... send items ...
 h.Wait()
 ```

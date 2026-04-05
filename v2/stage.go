@@ -27,6 +27,14 @@ func Then[I, M, O any](s Stage[I, M], next Stage[M, O]) Stage[I, O] {
 	}
 }
 
+// Apply runs this stage against p and returns the output pipeline.
+// It is equivalent to calling the stage as a function: s(p).
+//
+//	events, _ := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
+func (s Stage[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
+	return s(p)
+}
+
 // Through applies stage s to the pipeline and returns the result.
 //
 //	p.Through(normalize).Through(enrich).ForEach(store).Run(ctx)
