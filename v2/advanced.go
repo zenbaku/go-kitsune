@@ -226,42 +226,61 @@ func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 // MapResult
 // ---------------------------------------------------------------------------
 
-// Result holds either a successful value or an error from a fallible operation.
-// Use [MapResult] to propagate errors as values without halting the pipeline.
-type Result[T any] struct {
-	Value T
-	Err   error
+// ErrItem holds an input item alongside the error returned by its processing
+// function. Produced by [MapResult] on the failed output pipeline.
+type ErrItem[I any] struct {
+	Item I
+	Err  error
 }
 
-// MapResult applies fn to each item and wraps the outcome in a [Result].
-// Errors from fn are captured as Result.Err rather than halting the pipeline.
-func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) *Pipeline[Result[O]] {
+// MapResult applies fn to each item and routes results by outcome:
+// successful outputs go to the first (ok) pipeline; failures go to the second
+// (failed) pipeline as [ErrItem] values containing the original input and error.
+//
+//	ok, failed := kitsune.MapResult(p, fetchUser)
+//	// ok:     *Pipeline[User]        — successful lookups
+//	// failed: *Pipeline[ErrItem[ID]] — items that errored, with original input
+//
+// Both output pipelines must be consumed (same rule as [Partition]).
+func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) (*Pipeline[O], *Pipeline[ErrItem[I]]) {
 	track(p)
 	cfg := buildStageConfig(opts)
-	id := nextPipelineID()
-	meta := stageMeta{
-		id:     id,
+	okID := nextPipelineID()
+	errID := nextPipelineID()
+
+	okMeta := stageMeta{
+		id:     okID,
 		kind:   "map_result",
 		name:   orDefault(cfg.name, "map_result"),
 		buffer: cfg.buffer,
 		inputs: []int{p.id},
 	}
-	build := func(rc *runCtx) chan Result[O] {
-		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan Result[O])
+	errMeta := stageMeta{
+		id:     errID,
+		kind:   "map_result_err",
+		name:   orDefault(cfg.name, "map_result") + "_err",
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
+	}
+
+	sharedBuild := func(rc *runCtx) (chan O, chan ErrItem[I]) {
+		if existing := rc.getChan(okID); existing != nil {
+			return existing.(chan O), rc.getChan(errID).(chan ErrItem[I])
 		}
 		inCh := p.build(rc)
-		ch := make(chan Result[O], cfg.buffer)
-		m := meta
-		m.getChanLen = func() int { return len(ch) }
-		m.getChanCap = func() int { return cap(ch) }
-		rc.setChan(id, ch)
+		okC := make(chan O, cfg.buffer)
+		errC := make(chan ErrItem[I], cfg.buffer)
+		m := okMeta
+		m.getChanLen = func() int { return len(okC) }
+		m.getChanCap = func() int { return cap(okC) }
+		rc.setChan(okID, okC)
+		rc.setChan(errID, errC)
+		okBox := internal.NewBlockingOutbox(okC)
+		errBox := internal.NewBlockingOutbox(errC)
 		stage := func(ctx context.Context) error {
-			defer close(ch)
+			defer close(okC)
+			defer close(errC)
 			defer func() { go internal.DrainChan(inCh) }()
-
-			outbox := internal.NewBlockingOutbox(ch)
-
 			for {
 				select {
 				case item, ok := <-inCh:
@@ -271,9 +290,14 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 					itemCtx, cancelItem := itemContext(ctx, cfg)
 					val, err := fn(itemCtx, item)
 					cancelItem()
-					r := Result[O]{Value: val, Err: err}
-					if sendErr := outbox.Send(ctx, r); sendErr != nil {
-						return sendErr
+					if err != nil {
+						if sendErr := errBox.Send(ctx, ErrItem[I]{Item: item, Err: err}); sendErr != nil {
+							return sendErr
+						}
+					} else {
+						if sendErr := okBox.Send(ctx, val); sendErr != nil {
+							return sendErr
+						}
 					}
 				case <-ctx.Done():
 					return ctx.Err()
@@ -281,19 +305,28 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 			}
 		}
 		rc.add(stage, m)
-		return ch
+		return okC, errC
 	}
-	return newPipeline(id, meta, build)
+
+	okP := newPipeline(okID, okMeta, func(rc *runCtx) chan O {
+		o, _ := sharedBuild(rc)
+		return o
+	})
+	errP := newPipeline(errID, errMeta, func(rc *runCtx) chan ErrItem[I] {
+		_, e := sharedBuild(rc)
+		return e
+	})
+	return okP, errP
 }
 
 // ---------------------------------------------------------------------------
 // MapRecover
 // ---------------------------------------------------------------------------
 
-// MapRecover applies fn to each item, wrapping the result and any error in a
-// [Result], including recovering from panics in fn. Panics are converted to
-// errors and surfaced as Result.Err.
-func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) *Pipeline[Result[O]] {
+// MapRecover applies fn to each item. If fn returns an error or panics,
+// recover is called with the original input and the error to produce a
+// fallback output value. The output pipeline always emits one item per input.
+func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), recover func(context.Context, I, error) O, opts ...StageOption) *Pipeline[O] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
@@ -304,12 +337,12 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 		buffer: cfg.buffer,
 		inputs: []int{p.id},
 	}
-	build := func(rc *runCtx) chan Result[O] {
+	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan Result[O])
+			return existing.(chan O)
 		}
 		inCh := p.build(rc)
-		ch := make(chan Result[O], cfg.buffer)
+		ch := make(chan O, cfg.buffer)
 		m := meta
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
@@ -326,8 +359,11 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 					if !ok {
 						return nil
 					}
-					r := callRecover(ctx, fn, item, cfg)
-					if sendErr := outbox.Send(ctx, r); sendErr != nil {
+					val, err := callRecover(ctx, fn, item, cfg)
+					if err != nil {
+						val = recover(ctx, item, err)
+					}
+					if sendErr := outbox.Send(ctx, val); sendErr != nil {
 						return sendErr
 					}
 				case <-ctx.Done():
@@ -341,22 +377,22 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 	return newPipeline(id, meta, build)
 }
 
-// callRecover calls fn(ctx, item) and recovers from panics.
-func callRecover[I, O any](ctx context.Context, fn func(context.Context, I) (O, error), item I, cfg stageConfig) (r Result[O]) {
+// callRecover calls fn(ctx, item) and recovers from panics, returning the
+// value and error (panic values are converted to errors).
+func callRecover[I, O any](ctx context.Context, fn func(context.Context, I) (O, error), item I, cfg stageConfig) (val O, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			switch e := p.(type) {
 			case error:
-				r.Err = e
+				err = e
 			default:
-				r.Err = panicError{p}
+				err = panicError{p}
 			}
 		}
 	}()
 	itemCtx, cancel := itemContext(ctx, cfg)
 	defer cancel()
-	val, err := fn(itemCtx, item)
-	return Result[O]{Value: val, Err: err}
+	return fn(itemCtx, item)
 }
 
 // panicError wraps a panic value as an error.

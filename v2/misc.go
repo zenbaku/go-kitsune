@@ -1,7 +1,6 @@
 package kitsune
 
 import (
-	"cmp"
 	"context"
 	"sort"
 	"time"
@@ -27,6 +26,29 @@ func LiftPure[I, O any](fn func(I) O) func(context.Context, I) (O, error) {
 func LiftFallible[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, error) {
 	return func(_ context.Context, v I) (O, error) {
 		return fn(v)
+	}
+}
+
+// FilterFunc wraps a simple predicate into the signature expected by [Filter].
+// Use this when migrating code from a context-free predicate:
+//
+//	kitsune.Filter(p, kitsune.FilterFunc(func(n int) bool { return n > 0 }))
+func FilterFunc[T any](fn func(T) bool) func(context.Context, T) (bool, error) {
+	return func(_ context.Context, v T) (bool, error) {
+		return fn(v), nil
+	}
+}
+
+// RejectFunc wraps a simple predicate into the signature expected by [Reject].
+func RejectFunc[T any](fn func(T) bool) func(context.Context, T) (bool, error) {
+	return FilterFunc(fn)
+}
+
+// TapFunc wraps a simple side-effect function into the signature expected by [Tap].
+func TapFunc[T any](fn func(T)) func(context.Context, T) error {
+	return func(_ context.Context, v T) error {
+		fn(v)
+		return nil
 	}
 }
 
@@ -304,9 +326,9 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 	return newPipeline(id, meta, build)
 }
 
-// SortBy sorts items by their key K using the natural ordering of K.
-func SortBy[T any, K cmp.Ordered](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
-	return Sort(p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
+// SortBy sorts items by their key K using the provided less function.
+func SortBy[T any, K any](p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...StageOption) *Pipeline[T] {
+	return Sort(p, func(a, b T) bool { return less(keyFn(a), keyFn(b)) }, opts...)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,10 +385,10 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 					if !ok {
 						return nil
 					}
-					if err := aBox.Send(ctx, pair.Left); err != nil {
+					if err := aBox.Send(ctx, pair.First); err != nil {
 						return err
 					}
-					if err := bBox.Send(ctx, pair.Right); err != nil {
+					if err := bBox.Send(ctx, pair.Second); err != nil {
 						return err
 					}
 				case <-ctx.Done():

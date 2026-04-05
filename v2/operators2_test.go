@@ -259,12 +259,15 @@ func TestMinMax(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9, 2, 6})
 	less := func(a, b int) bool { return a < b }
-	min, max, err := kitsune.MinMax(ctx, p, less)
+	pair, ok, err := kitsune.MinMax(ctx, p, less)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if min != 1 || max != 9 {
-		t.Fatalf("min=%d max=%d, want 1 9", min, max)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if pair.First != 1 || pair.Second != 9 {
+		t.Fatalf("min=%d max=%d, want 1 9", pair.First, pair.Second)
 	}
 }
 
@@ -272,19 +275,29 @@ func TestMinMaxEmpty(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{})
 	less := func(a, b int) bool { return a < b }
-	_, _, err := kitsune.MinMax(ctx, p, less)
-	if err != kitsune.ErrEmpty {
-		t.Fatalf("want ErrEmpty, got %v", err)
+	_, ok, err := kitsune.MinMax(ctx, p, less)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for empty pipeline")
 	}
 }
 
 func TestMinBy(t *testing.T) {
 	ctx := context.Background()
-	type item struct{ name string; score int }
+	type item struct {
+		name  string
+		score int
+	}
 	p := kitsune.FromSlice([]item{{"a", 3}, {"b", 1}, {"c", 2}})
-	got, err := kitsune.MinBy(ctx, p, func(v item) int { return v.score })
+	less := func(a, b int) bool { return a < b }
+	got, ok, err := kitsune.MinBy(ctx, p, func(v item) int { return v.score }, less)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
 	}
 	if got.name != "b" {
 		t.Fatalf("got %+v, want b", got)
@@ -293,11 +306,18 @@ func TestMinBy(t *testing.T) {
 
 func TestMaxBy(t *testing.T) {
 	ctx := context.Background()
-	type item struct{ name string; score int }
+	type item struct {
+		name  string
+		score int
+	}
 	p := kitsune.FromSlice([]item{{"a", 3}, {"b", 1}, {"c", 2}})
-	got, err := kitsune.MaxBy(ctx, p, func(v item) int { return v.score })
+	less := func(a, b int) bool { return a < b }
+	got, ok, err := kitsune.MaxBy(ctx, p, func(v item) int { return v.score }, less)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
 	}
 	if got.name != "a" {
 		t.Fatalf("got %+v, want a", got)
@@ -389,11 +409,11 @@ func TestTakeRandomFewerThanN(t *testing.T) {
 
 func TestStage(t *testing.T) {
 	ctx := context.Background()
-	var double kitsune.Stage[int, int] = func(_ context.Context, v int) (int, error) {
-		return v * 2, nil
-	}
+	double := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	})
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	got, err := kitsune.Collect(ctx, kitsune.Map(p, double))
+	got, err := kitsune.Collect(ctx, double(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,12 +424,16 @@ func TestStage(t *testing.T) {
 
 func TestThen(t *testing.T) {
 	ctx := context.Background()
-	double := kitsune.Stage[int, int](func(_ context.Context, v int) (int, error) { return v * 2, nil })
-	stringify := kitsune.Stage[int, string](func(_ context.Context, v int) (string, error) { return string(rune('0' + v)), nil })
+	double := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	})
+	stringify := kitsune.Stage[int, string](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, v int) (string, error) { return string(rune('0' + v)), nil })
+	})
 	combined := kitsune.Then(double, stringify)
 
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	got, err := kitsune.Collect(ctx, kitsune.Map(p, combined))
+	got, err := kitsune.Collect(ctx, combined(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,8 +444,12 @@ func TestThen(t *testing.T) {
 
 func TestThrough(t *testing.T) {
 	ctx := context.Background()
-	double := kitsune.Stage[int, int](func(_ context.Context, v int) (int, error) { return v * 2, nil })
-	addOne := kitsune.Stage[int, int](func(_ context.Context, v int) (int, error) { return v + 1, nil })
+	double := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	})
+	addOne := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v + 1, nil })
+	})
 
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.Collect(ctx, p.Through(double).Through(addOne))

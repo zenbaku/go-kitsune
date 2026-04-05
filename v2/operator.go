@@ -1376,7 +1376,7 @@ func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] 
 						return nil
 					}
 					if !first {
-						if err := outbox.Send(ctx, Pair[T, T]{Left: prev, Right: item}); err != nil {
+						if err := outbox.Send(ctx, Pair[T, T]{First: prev, Second: item}); err != nil {
 							return err
 						}
 					}

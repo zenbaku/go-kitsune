@@ -33,20 +33,19 @@ func Collect[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) ([]T
 // First / Last
 // ---------------------------------------------------------------------------
 
-// ErrEmpty is returned by [First], [Last], and [ElementAt] when the pipeline
-// emits no items (or fewer than expected).
+// ErrEmpty is returned by [ElementAt] when the pipeline emits fewer items than
+// expected. [First] and [Last] return (zero, false, nil) for empty pipelines
+// rather than this error, matching v1 semantics.
 var ErrEmpty = errors.New("kitsune: pipeline produced no items")
 
 // First returns the first item emitted by the pipeline and cancels processing
-// immediately after. Returns [ErrEmpty] if no items are emitted.
-func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, error) {
+// immediately after. Returns (zero, false, nil) if the pipeline emits no items.
+func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var result T
 	var found bool
-	// Return context.Canceled from fn to immediately stop the ForEach stage
-	// without racing against the next item already buffered in the channel.
 	_ = p.ForEach(func(_ context.Context, v T) error {
 		result = v
 		found = true
@@ -56,14 +55,14 @@ func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, er
 
 	if !found {
 		var zero T
-		return zero, ErrEmpty
+		return zero, false, nil
 	}
-	return result, nil
+	return result, true, nil
 }
 
 // Last returns the last item emitted by the pipeline.
-// Returns [ErrEmpty] if no items are emitted.
-func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, error) {
+// Returns (zero, false, nil) if the pipeline emits no items.
+func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error) {
 	var result T
 	var found bool
 	err := p.ForEach(func(_ context.Context, v T) error {
@@ -73,13 +72,9 @@ func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, err
 	}).Run(ctx, opts...)
 	if err != nil {
 		var zero T
-		return zero, err
+		return zero, false, err
 	}
-	if !found {
-		var zero T
-		return zero, ErrEmpty
-	}
-	return result, nil
+	return result, found, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +176,9 @@ func Sum[T Numeric](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, 
 	return sum, err
 }
 
-// Min returns the minimum item. Returns [ErrEmpty] if no items are emitted.
-func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, error) {
+// Min returns the minimum item.
+// Returns (zero, false, nil) if the pipeline emits no items.
+func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error) {
 	var result T
 	found := false
 	err := p.ForEach(func(_ context.Context, v T) error {
@@ -194,60 +190,53 @@ func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opt
 	}).Run(ctx, opts...)
 	if err != nil {
 		var zero T
-		return zero, err
+		return zero, false, err
 	}
-	if !found {
-		var zero T
-		return zero, ErrEmpty
-	}
-	return result, nil
+	return result, found, nil
 }
 
-// Max returns the maximum item. Returns [ErrEmpty] if no items are emitted.
-func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, error) {
+// Max returns the maximum item.
+// Returns (zero, false, nil) if the pipeline emits no items.
+func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error) {
 	return Min(ctx, p, func(a, b T) bool { return less(b, a) }, opts...)
 }
 
 // MinMax returns both the minimum and maximum items in a single pass.
-// Returns [ErrEmpty] if no items are emitted.
-func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (min, max T, err error) {
+// Returns (zero, false, nil) if the pipeline emits no items.
+func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (Pair[T, T], bool, error) {
+	var result Pair[T, T]
 	found := false
-	err = p.ForEach(func(_ context.Context, v T) error {
+	err := p.ForEach(func(_ context.Context, v T) error {
 		if !found {
-			min = v
-			max = v
+			result.First = v
+			result.Second = v
 			found = true
 			return nil
 		}
-		if less(v, min) {
-			min = v
+		if less(v, result.First) {
+			result.First = v
 		}
-		if less(max, v) {
-			max = v
+		if less(result.Second, v) {
+			result.Second = v
 		}
 		return nil
 	}).Run(ctx, opts...)
 	if err != nil {
-		var zero T
-		return zero, zero, err
+		return Pair[T, T]{}, false, err
 	}
-	if !found {
-		var zero T
-		return zero, zero, ErrEmpty
-	}
-	return min, max, nil
+	return result, found, nil
 }
 
 // MinBy returns the item with the smallest key returned by keyFn.
-// Returns [ErrEmpty] if no items are emitted.
-func MinBy[T any, K interface{ ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~string }](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (T, error) {
-	return Min(ctx, p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
+// Returns (zero, false, nil) if the pipeline emits no items.
+func MinBy[T any, K any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...RunOption) (T, bool, error) {
+	return Min(ctx, p, func(a, b T) bool { return less(keyFn(a), keyFn(b)) }, opts...)
 }
 
 // MaxBy returns the item with the largest key returned by keyFn.
-// Returns [ErrEmpty] if no items are emitted.
-func MaxBy[T any, K interface{ ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~string }](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (T, error) {
-	return Max(ctx, p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
+// Returns (zero, false, nil) if the pipeline emits no items.
+func MaxBy[T any, K any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...RunOption) (T, bool, error) {
+	return Max(ctx, p, func(a, b T) bool { return less(keyFn(a), keyFn(b)) }, opts...)
 }
 
 // ---------------------------------------------------------------------------

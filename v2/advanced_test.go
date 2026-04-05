@@ -28,9 +28,12 @@ func TestCollect(t *testing.T) {
 
 func TestFirst(t *testing.T) {
 	ctx := context.Background()
-	v, err := kitsune.First(ctx, kitsune.FromSlice([]int{10, 20, 30}))
+	v, ok, err := kitsune.First(ctx, kitsune.FromSlice([]int{10, 20, 30}))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
 	}
 	if v != 10 {
 		t.Fatalf("got %d, want 10", v)
@@ -39,17 +42,23 @@ func TestFirst(t *testing.T) {
 
 func TestFirstEmpty(t *testing.T) {
 	ctx := context.Background()
-	_, err := kitsune.First(ctx, kitsune.FromSlice([]int{}))
-	if !errors.Is(err, kitsune.ErrEmpty) {
-		t.Fatalf("expected ErrEmpty, got %v", err)
+	_, ok, err := kitsune.First(ctx, kitsune.FromSlice([]int{}))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for empty pipeline")
 	}
 }
 
 func TestLast(t *testing.T) {
 	ctx := context.Background()
-	v, err := kitsune.Last(ctx, kitsune.FromSlice([]int{1, 2, 3}))
+	v, ok, err := kitsune.Last(ctx, kitsune.FromSlice([]int{1, 2, 3}))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true")
 	}
 	if v != 3 {
 		t.Fatalf("got %d, want 3", v)
@@ -266,48 +275,67 @@ func TestConcatMap(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapResult(t *testing.T) {
-	p := kitsune.FromSlice([]int{1, 2, 3})
-	results := collectAll(t, kitsune.MapResult(p, func(_ context.Context, v int) (int, error) {
-		if v == 2 {
-			return 0, errors.New("bad two")
-		}
-		return v * 10, nil
-	}))
+	ctx := context.Background()
+	boom := errors.New("bad two")
 
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
+	ok, failed := kitsune.MapResult(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, boom
+			}
+			return v * 10, nil
+		})
+
+	var okItems []int
+	var failedItems []kitsune.ErrItem[int]
+
+	r1 := ok.ForEach(func(_ context.Context, v int) error {
+		okItems = append(okItems, v)
+		return nil
+	}).Build()
+	r2 := failed.ForEach(func(_ context.Context, e kitsune.ErrItem[int]) error {
+		failedItems = append(failedItems, e)
+		return nil
+	}).Build()
+
+	merged, err := kitsune.MergeRunners(r1, r2)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if results[0].Err != nil || results[0].Value != 10 {
-		t.Errorf("result[0]: %+v", results[0])
+	if err := merged.Run(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if results[1].Err == nil {
-		t.Errorf("result[1]: expected error")
+
+	if len(okItems) != 2 {
+		t.Fatalf("expected 2 ok items, got %d: %v", len(okItems), okItems)
 	}
-	if results[2].Err != nil || results[2].Value != 30 {
-		t.Errorf("result[2]: %+v", results[2])
+	if len(failedItems) != 1 || failedItems[0].Item != 2 || !errors.Is(failedItems[0].Err, boom) {
+		t.Fatalf("unexpected failed items: %v", failedItems)
 	}
 }
 
 func TestMapRecover(t *testing.T) {
+	ctx := context.Background()
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	results := collectAll(t, kitsune.MapRecover(p, func(_ context.Context, v int) (int, error) {
-		if v == 2 {
-			panic("explode!")
-		}
-		return v * 10, nil
-	}))
-
+	results, err := kitsune.Collect(ctx, kitsune.MapRecover(p,
+		func(_ context.Context, v int) (string, error) {
+			if v == 2 {
+				panic("explode!")
+			}
+			return fmt.Sprintf("%d", v*10), nil
+		},
+		func(_ context.Context, _ int, _ error) string {
+			return "recovered"
+		},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
 	}
-	if results[0].Err != nil {
-		t.Errorf("result[0]: unexpected error: %v", results[0].Err)
-	}
-	if results[1].Err == nil {
-		t.Errorf("result[1]: expected panic to be caught as error")
-	}
-	if results[2].Err != nil {
-		t.Errorf("result[2]: unexpected error: %v", results[2].Err)
+	if results[0] != "10" || results[1] != "recovered" || results[2] != "30" {
+		t.Fatalf("got %v", results)
 	}
 }
 

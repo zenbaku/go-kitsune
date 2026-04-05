@@ -170,21 +170,116 @@ The three optimizations:
 
 A runnable example program per major feature, smoke-tested in CI:
 
-- [ ] `examples/basic` — FromSlice → Map → Filter → ForEach
-- [ ] `examples/channel` — `Channel[T]` push-based source
-- [ ] `examples/concurrent` — `Map` with `Concurrency` + `Ordered`
-- [ ] `examples/fanout` — `Partition` + `MergeRunners`
-- [ ] `examples/broadcast` — `BroadcastN` + `MergeRunners`
-- [ ] `examples/stages` — `Stage[I,O]`, `Then`, `Through`
-- [ ] `examples/caching` — `CacheBy` + `MemoryCache`
-- [ ] `examples/ratelimit` — `RateLimit` with backpressure
-- [ ] `examples/circuitbreaker` — `CircuitBreaker` with cooldown
-- [ ] `examples/switchmap` — `SwitchMap` cancellation semantics
-- [ ] `examples/ticker` — `Ticker` + `Take`
-- [ ] `examples/timeout` — `Timeout` per-item deadline
-- [ ] `examples/hooks` — `LogHook` + `MetricsHook` wiring
-- [ ] `examples/inspector` — live `BufferHook` dashboard (excluded from CI smoke tests)
-- [ ] `Taskfile.yml` — `task test`, `task test:examples`, `task test:all`
-- [ ] `.github/workflows/ci.yml` — fast race tests + examples smoke-test step
-- [ ] `examples_test.go` — `TestExamples` with `t.Parallel()` + `exec.Command("go run ...")` per example
-- [ ] Module version tag: `v2.0.0`
+- [x] `examples/basic` — FromSlice → Map → Filter → ForEach
+- [x] `examples/channel` — `Channel[T]` push-based source
+- [x] `examples/concurrent` — `Map` with `Concurrency` + `Ordered`
+- [x] `examples/fanout` — `Partition` + `MergeRunners`
+- [x] `examples/broadcast` — `BroadcastN` + `MergeRunners`
+- [x] `examples/stages` — `Stage[I,O]`, `Then`, `Through`
+- [x] `examples/caching` — `CacheBy` + `MemoryCache`
+- [x] `examples/ratelimit` — `RateLimit` with backpressure
+- [x] `examples/circuitbreaker` — `CircuitBreaker` with cooldown
+- [x] `examples/switchmap` — `SwitchMap` cancellation semantics
+- [x] `examples/ticker` — `Ticker` + `Take`; `done`-channel fix so `Take` terminates infinite sources cleanly
+- [x] `examples/timeout` — `Timeout` per-item deadline
+- [x] `examples/hooks` — `LogHook` + `MetricsHook` wiring
+- [x] `examples/inspector` — live `BufferHook` dashboard (excluded from CI smoke tests)
+- [x] `Taskfile.yml` — `task v2:test`, `task v2:test:examples`, `task v2:test:all`
+- [x] `.github/workflows/ci.yml` — v2 race tests + example smoke-test steps
+- [x] `examples_test.go` — `TestExamples` with `t.Parallel()` + `exec.Command("go run ...")` per example
+
+---
+
+## Backlog
+
+### P7 — API compatibility with v1
+
+v2's goal is a drop-in engine swap: same public API, typed channels underneath. These are the remaining divergences to fix. Each item notes what v1 has, what v2 currently has, and what the fix is.
+
+#### `Stage` type and `Through`
+
+- [x] **`Stage[I,O]`** — changed from `func(ctx, I) (O, error)` to `func(*Pipeline[I]) *Pipeline[O]` (pipeline transformer matching v1). `Through` updated to `func(s Stage[T,T]) *Pipeline[T]` (no opts). `Then` composes two transformers. `stages/main.go` example updated.
+
+#### Predicate / side-effect signatures
+
+- [x] **`Filter`/`Reject` adapters** — added `FilterFunc[T](fn func(T) bool)` and `RejectFunc[T]` in `misc.go`; v2's richer `func(ctx, T) (bool, error)` form is kept as the canonical signature.
+- [x] **`Tap` adapter** — added `TapFunc[T](fn func(T))` in `misc.go`.
+
+#### Terminals as methods
+
+- [x] `(p *Pipeline[T]) Collect`, `First`, `Last`, `Count`, `Any`, `All`, `Find`, `ReduceWhile` — added in `methods.go`. `ForEach` already existed as a method. `Sum`, `Min`, `Max`, `MinMax`, `Contains`, `Frequencies`, `SequenceEqual` cannot be added as methods (require extra type params or constrained `T`).
+
+#### `First` / `Last` / `Min` / `Max` / `MinMax` empty-stream semantics
+
+- [x] Changed all to return `(T, bool, error)` — `bool=false, err=nil` for empty stream. `ErrEmpty` kept for `ElementAt`.
+
+#### `MinBy` / `MaxBy` — restore `less` parameter
+
+- [x] Restored `less func(a, b K) bool`; dropped the `cmp.Ordered` constraint on `K`.
+
+#### `MinMax` — restore `Pair[T,T]` return type
+
+- [x] Now returns `(Pair[T,T], bool, error)`. `Pair` fields renamed `First`/`Second` (matching v1) from `Left`/`Right`.
+
+#### `Frequencies` / `FrequenciesBy` — restore as terminals
+
+- [x] Now `Frequencies(ctx, p) (map[T]int, error)` and `FrequenciesBy(ctx, p, keyFn) (map[K]int, error)`. Streaming operator variants kept as `FrequenciesStream` / `FrequenciesByStream`.
+
+#### `SortBy` — restore `less` parameter
+
+- [x] Restored `less func(a, b K) bool`; dropped the `cmp.Ordered` constraint.
+
+#### `MapResult` — restore branching return type
+
+- [x] Now returns `(*Pipeline[O], *Pipeline[ErrItem[I]])`. Added `ErrItem[I any]` type. Both branches share one stage and must be consumed together (same rule as `Partition`).
+
+#### `MapRecover` — restore `recover` parameter
+
+- [x] Now `MapRecover(p, fn, recover func(ctx, I, error) O) *Pipeline[O]`. `Result[T]` type retained for other uses.
+
+#### `GroupBy` — restore `map[K][]V` return type
+
+- [x] Now `GroupBy(ctx, p, keyFn) (map[K][]T, error)` (terminal). Ordered-slice variant kept as `GroupByOrdered`.
+
+---
+
+### P6 — v1 feature parity
+
+Gaps identified by deep comparison with v1. These are v1 features absent from v2, not intentional removals.
+
+#### Deduplication variants
+- [ ] **`ConsecutiveDedup[T comparable](p) *Pipeline[T]`** — emit only when value changes (stateless per-item comparison, not set-based); v2's `Dedupe` uses an in-memory set (global)
+- [ ] **`ConsecutiveDedupBy[T any, K comparable](p, keyFn func(T) K) *Pipeline[T]`** — emit only when the extracted key changes; distinct from `DedupeBy` which is set-based
+
+#### Aggregation shorthands
+- [ ] **`CountBy[T any](p, keyFn func(T) string, opts...) *Pipeline[map[string]int64]`** — streaming operator: emits a full snapshot of the count map after each item; key is always `string`; runs at `Concurrency(1)`
+- [ ] **`SumBy[T any, V Numeric](p, keyFn func(T) string, valueFn func(T) V, opts...) *Pipeline[map[string]V]`** — like `CountBy` but sums a numeric value per key; `V` must satisfy the `Numeric` constraint; compose with `Throttle` for periodic snapshots
+
+#### Intersperse variant
+- [ ] **`MapIntersperse[T, O any](p, sep O, fn func(ctx, T) (O, error)) *Pipeline[O]`** — apply `fn` to each item then insert `sep` between consecutive mapped outputs (not before the first or after the last)
+
+#### Time-based windowing
+- [ ] **`Window[T](p, duration time.Duration) *Pipeline[[]T]`** — tumbling time window; emits a slice per elapsed interval; v2's current `Window(n)` is count-based only; note: `Batch` with `BatchTimeout` is NOT equivalent — it produces batches of up to N items flushed by time, not fixed-duration time buckets
+
+#### Dead letter / error routing
+
+- [ ] **`ErrItem[I any]`** — `struct { Item I; Err error }`; carries the original input alongside the error; used as the element type of the error pipeline returned by `MapResult`, `DeadLetter`, and `DeadLetterSink`
+- [ ] **`MapResult[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — v1's version splits into two typed pipelines (success branch + `ErrItem` branch); v2's current `MapResult` returns a single `*Pipeline[Result[O]]` — semantically different; both branches must be consumed (same rule as `Partition`)
+- [ ] **`DeadLetter[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — like `MapResult` but respects `OnError(Retry(...))` in opts; items that exhaust all retries go to the `ErrItem` branch; items that never error go directly to the success branch without touching the error branch
+- [ ] **`DeadLetterSink[I any](p, fn func(ctx, I) error, opts...) (*Pipeline[ErrItem[I]], *Runner)`** — wraps a sink (ForEach-like fn) with dead-letter routing; returns the `ErrItem` pipeline and a `*Runner`; the caller must consume the `ErrItem` pipeline before calling `runner.Run`
+
+#### Stage fallback composition
+- [ ] **`Stage[I,O].Or(fallback Stage[I,O]) Stage[I,O]`** — returns a stage that calls the primary and, on error, calls `fallback` with the same input; composes with `Then`
+
+#### State system
+- [ ] **`Key[T any]`** — declares a named piece of typed run-scoped state; created with `NewKey[T](name string, initial T, opts ...KeyOption) Key[T]`; declare as package-level vars; supports `StateTTL(d)` option for lazy expiry
+- [ ] **`Ref[T any]`** — concurrent-safe handle to a `Key`'s current value; injected by `MapWith`/`FlatMapWith`; API: `Get(ctx) (T, error)`, `Set(ctx, T) error`, `Update(ctx, func(T) T) error`, `UpdateAndGet(ctx, func(T) T) (T, error)`, `GetOrSet(ctx, T) (T, error)`; in-memory by default (mutex), Store-backed when `WithStore` is configured
+- [ ] **`MapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I) (O, error), opts...) *Pipeline[O]`** — like `Map` but `fn` receives a `*Ref[S]` for mutable per-run state; state persists across items within a single `Run()`
+- [ ] **`FlatMapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I, yield func(O) error) error, opts...) *Pipeline[O]`** — like `FlatMap` but stateful
+- [ ] **`MapWithKey[I, O, S any](p, itemKeyFn func(I) string, key Key[S], fn func(ctx, *Ref[S], string, I) (O, error), opts...) *Pipeline[O]`** — variant where each item is routed to a per-item-key `Ref` shard; `itemKeyFn` partitions items into independent state cells
+- [ ] **`FlatMapWithKey[I, O, S any]`** — same as `MapWithKey` but flat-maps
+
+#### Enrich / bulk lookup
+- [ ] **`MapBatch[I, O any](p, size int, fn func(ctx, []I) ([]O, error), opts...) *Pipeline[O]`** — collects up to `size` items, passes the slice to `fn`, flattens the returned slice; internally `Batch` + `FlatMap`; supports `BatchTimeout`, `Concurrency`, `OnError`; `fn` must return exactly `len(input)` items or an error
+- [ ] **`LookupBy[T any, K comparable, V any](p, cfg LookupConfig[T, K, V], opts...) *Pipeline[Pair[T, V]]`** — batches items, deduplicates keys, calls `cfg.Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item: t, Value: v}`; items whose key is absent in the fetch result receive the zero value for `V`; `LookupConfig` has `Key func(T) K`, `Fetch func(ctx, []K) (map[K]V, error)`, `BatchSize int` (default 100)
+- [ ] **`Enrich[T any, K comparable, V, O any](p, cfg EnrichConfig[T, K, V, O], opts...) *Pipeline[O]`** — like `LookupBy` but lets the caller control the output type via `cfg.Combine func(T, V) O`; `EnrichConfig` adds `Combine` to the `LookupConfig` fields

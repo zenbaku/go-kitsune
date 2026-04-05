@@ -375,15 +375,15 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 
 // Pair holds one item from each of two pipelines.
 type Pair[A, B any] struct {
-	Left  A
-	Right B
+	First  A
+	Second B
 }
 
 // Zip pairs items from a and b positionally into [Pair] values.
 // The pipeline completes when either input completes.
 func Zip[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
 	return ZipWith(a, b, func(_ context.Context, av A, bv B) (Pair[A, B], error) {
-		return Pair[A, B]{Left: av, Right: bv}, nil
+		return Pair[A, B]{First: av, Second: bv}, nil
 	})
 }
 
@@ -470,7 +470,7 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 // pipelines have emitted at least one item.
 func CombineLatest[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
 	return CombineLatestWith(a, b, func(_ context.Context, av A, bv B) (Pair[A, B], error) {
-		return Pair[A, B]{Left: av, Right: bv}, nil
+		return Pair[A, B]{First: av, Second: bv}, nil
 	})
 }
 
@@ -607,7 +607,7 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 // emitted.
 func WithLatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[Pair[A, B]] {
 	return WithLatestFromWith(main, other, func(_ context.Context, a A, b B) (Pair[A, B], error) {
-		return Pair[A, B]{Left: a, Right: b}, nil
+		return Pair[A, B]{First: a, Second: b}, nil
 	})
 }
 

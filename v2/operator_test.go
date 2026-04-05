@@ -365,12 +365,11 @@ func TestDedupe(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGroupBy(t *testing.T) {
+	ctx := context.Background()
 	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	groups := collectAll(t, kitsune.GroupBy(p, func(s string) string { return s }))
-
-	byKey := make(map[string][]string)
-	for _, g := range groups {
-		byKey[g.Key] = g.Items
+	byKey, err := kitsune.GroupBy(ctx, p, func(s string) string { return s })
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(byKey["a"]) != 3 || len(byKey["b"]) != 2 || len(byKey["c"]) != 1 {
 		t.Fatalf("unexpected groups: %v", byKey)
@@ -378,12 +377,12 @@ func TestGroupBy(t *testing.T) {
 }
 
 func TestFrequencies(t *testing.T) {
+	ctx := context.Background()
 	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	got := collectAll(t, kitsune.Frequencies(p))
-	if len(got) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(got))
+	freq, err := kitsune.Frequencies(ctx, p)
+	if err != nil {
+		t.Fatal(err)
 	}
-	freq := got[0]
 	if freq["a"] != 3 || freq["b"] != 2 || freq["c"] != 1 {
 		t.Fatalf("unexpected frequencies: %v", freq)
 	}
@@ -528,9 +527,9 @@ func TestZip(t *testing.T) {
 	b := kitsune.FromSlice([]string{"a", "b", "c"})
 	got := collectAll(t, kitsune.Zip(a, b))
 	want := []kitsune.Pair[int, string]{
-		{Left: 1, Right: "a"},
-		{Left: 2, Right: "b"},
-		{Left: 3, Right: "c"},
+		{First: 1, Second: "a"},
+		{First: 2, Second: "b"},
+		{First: 3, Second: "c"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -594,8 +593,8 @@ func TestWithLatestFrom(t *testing.T) {
 		t.Fatalf("expected 3 pairs (main has 3 items), got %d: %v", len(got), got)
 	}
 	for _, p := range got {
-		if p.Right == "" {
-			t.Errorf("empty Right in pair: %v", p)
+		if p.Second == "" {
+			t.Errorf("empty Second in pair: %v", p)
 		}
 	}
 }

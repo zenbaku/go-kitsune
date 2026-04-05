@@ -321,16 +321,29 @@ type Group[K comparable, V any] struct {
 	Items []V
 }
 
-// GroupBy partitions items by key and emits one [Group] per distinct key when
-// the source completes. Order of groups matches first-seen key order.
-func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
+// GroupBy runs the pipeline and returns a map from key to slice of items.
+func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K][]T, error) {
+	groups := make(map[K][]T)
+	err := p.ForEach(func(_ context.Context, v T) error {
+		k := keyFn(v)
+		groups[k] = append(groups[k], v)
+		return nil
+	}).Run(ctx, opts...)
+	return groups, err
+}
+
+// GroupByOrdered partitions items by key and emits one [Group] per distinct key
+// when the source completes. Groups are emitted in first-seen key order.
+// Use this when you need to pipeline the grouped results further; for a simple
+// map result use [GroupBy].
+func GroupByOrdered[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "group_by",
-		name:   orDefault(cfg.name, "group_by"),
+		kind:   "group_by_ordered",
+		name:   orDefault(cfg.name, "group_by_ordered"),
 		buffer: cfg.buffer,
 		inputs: []int{p.id},
 	}
@@ -386,22 +399,40 @@ func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 // Frequencies / FrequenciesBy
 // ---------------------------------------------------------------------------
 
-// Frequencies counts how many times each item appears and emits a single
-// map[T]int64 when the source completes.
-func Frequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64] {
-	return FrequenciesBy(p, func(v T) T { return v }, opts...)
+// Frequencies runs the pipeline and returns a count of how many times each
+// item appeared.
+func Frequencies[T comparable](ctx context.Context, p *Pipeline[T], opts ...RunOption) (map[T]int, error) {
+	return FrequenciesBy(ctx, p, func(v T) T { return v }, opts...)
 }
 
-// FrequenciesBy counts how many times each key (returned by keyFn) appears and
-// emits a single map[K]int64 when the source completes.
-func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64] {
+// FrequenciesBy runs the pipeline and returns a count of how many times each
+// key (returned by keyFn) appeared.
+func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K]int, error) {
+	counts := make(map[K]int)
+	err := p.ForEach(func(_ context.Context, v T) error {
+		counts[keyFn(v)]++
+		return nil
+	}).Run(ctx, opts...)
+	return counts, err
+}
+
+// FrequenciesStream counts how many times each item appears and emits a single
+// map[T]int64 snapshot when the source completes. Use this when you need to
+// pipeline the result further; for a direct map result use [Frequencies].
+func FrequenciesStream[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64] {
+	return FrequenciesByStream(p, func(v T) T { return v }, opts...)
+}
+
+// FrequenciesByStream counts how many times each key (returned by keyFn) appears
+// and emits a single map[K]int64 snapshot when the source completes.
+func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "frequencies_by",
-		name:   orDefault(cfg.name, "frequencies_by"),
+		kind:   "frequencies_by_stream",
+		name:   orDefault(cfg.name, "frequencies_by_stream"),
 		buffer: cfg.buffer,
 		inputs: []int{p.id},
 	}
