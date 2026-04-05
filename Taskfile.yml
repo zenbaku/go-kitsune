@@ -158,6 +158,34 @@ tasks:
     cmds:
       - go run ./examples/inspector
 
+  # ---------------------------------------------------------------------------
+  # v2 tasks
+  # ---------------------------------------------------------------------------
+
+  v2:test:
+    desc: Run v2 tests (fast; skips example smoke tests)
+    dir: v2
+    cmds:
+      - go test -short -race -count=1 -timeout 60s ./...
+
+  v2:test:examples:
+    desc: Run v2 example smoke tests
+    dir: v2
+    cmds:
+      - go test -v -run TestExamples -timeout 120s -count=1 .
+
+  v2:test:all:
+    desc: Run all v2 tests including examples
+    cmds:
+      - task: v2:test
+      - task: v2:test:examples
+
+  v2:inspector:
+    desc: Launch the v2 buffer inspector demo
+    dir: v2
+    cmds:
+      - go run ./examples/inspector
+
   ci:
     desc: Full CI check (fmt, vet, race tests, tails)
     cmds:

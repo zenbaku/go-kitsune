@@ -177,13 +177,20 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
 		var stage stageFunc
+		done := rc.done
 		if internal.IsNoopHook(rc.hook) {
-			// Fast path: plain send in yield, cancellation checked post-send.
+			// Fast path: yield selects between the output channel and the pipeline
+			// done signal. The done channel is closed by early-exit stages (Take,
+			// TakeWhile) so infinite sources (Ticker, Interval, …) stop cleanly.
 			stage = func(ctx context.Context) error {
 				defer close(ch)
 				return fn(ctx, func(item T) bool {
-					ch <- item
-					return ctx.Err() == nil
+					select {
+					case ch <- item:
+						return ctx.Err() == nil
+					case <-done:
+						return false
+					}
 				})
 			}
 		} else {
@@ -194,6 +201,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 					case ch <- item:
 						return true
 					case <-ctx.Done():
+						return false
+					case <-done:
 						return false
 					}
 				})

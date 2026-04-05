@@ -7397,9 +7397,14 @@ func TestTimeInterval_Sequential(t *testing.T) {
 
 	time.Sleep(5 * time.Millisecond)
 	for i := 0; i < 5; i++ {
+		// Advance the clock *before* sending the item so the channel is empty
+		// while the clock changes — the goroutine cannot race-process an item
+		// that hasn't been sent yet.
+		if i > 0 {
+			clock.Advance(10 * time.Millisecond)
+		}
 		_ = ch.Send(ctx, i)
-		clock.Advance(10 * time.Millisecond)
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	ch.Close()
 	results := <-resultCh

@@ -76,10 +76,22 @@ type runCtx struct {
 	cacheTTL time.Duration
 	codec    internal.Codec
 	hook     internal.Hook
+
+	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
+	// sources (Ticker, Interval, Repeatedly, …) without cancelling the run
+	// context — which would disrupt downstream stages still draining.
+	done       chan struct{}
+	signalDone func()
 }
 
 func newRunCtx() *runCtx {
-	return &runCtx{chans: make(map[int]any)}
+	done := make(chan struct{})
+	var once sync.Once
+	return &runCtx{
+		chans:      make(map[int]any),
+		done:       done,
+		signalDone: func() { once.Do(func() { close(done) }) },
+	}
 }
 
 func (rc *runCtx) add(fn stageFunc, meta stageMeta) {

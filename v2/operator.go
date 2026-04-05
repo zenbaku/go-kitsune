@@ -1069,9 +1069,11 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer signalDone() // stop infinite sources when we exit early
 
 			count := 0
 			for {
@@ -1179,9 +1181,11 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer signalDone() // stop infinite sources when predicate stops
 
 			for {
 				select {
