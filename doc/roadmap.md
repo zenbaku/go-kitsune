@@ -183,18 +183,24 @@ Checked items are complete.
   +17% → -54%); MapLinear improved from 1,845 µs → 768 µs.
 
 - [x] **Generics at the engine layer (v2)** — `github.com/zenbaku/go-kitsune/v2`
-  replaces `chan any` with `chan T` at every stage boundary, eliminating the
-  2 allocs/item boxing cost. The new architecture uses typed goroutine closures
-  appended to a shared `*stageList` instead of an engine.Graph/NodeKind dispatch
-  layer. `combineStageLists()` allows pipelines from independent sources to be
-  joined by `Merge`/`Zip`/`CombineLatest` without any API change. All v1 operators
-  are ported: Map (serial/concurrent/ordered), FlatMap, Filter, Tap, Take, Drop,
-  TakeWhile, DropWhile, Batch, Unbatch, Window, SlidingWindow, SessionWindow, Scan,
-  Reduce, Distinct, DistinctBy, Dedupe, DedupeBy, GroupBy, Frequencies, Merge,
+  replaces `chan any` with `chan T` at every stage boundary, eliminating all
+  per-item boxing. The architecture is a **blueprint model**: each `Pipeline[T]`
+  carries a `build func(*runCtx) chan T` closure; channels are allocated fresh on
+  every `Run()` call via a memoising `runCtx`, making pipelines reusable. Stage
+  fusion is implemented as typed build-time composition: fast-path Map and Filter
+  stages set a `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc`; when
+  `ForEach` detects a single-consumer fast-path chain with `NoopHook` it calls
+  `fusionEntry` directly, composing the entire chain into one goroutine with zero
+  channel hops and zero boxing. Result: ~21 M/s, 47 allocs/run (0/item) for the
+  trivial Map→Filter→Drain benchmark vs v1's ~13 M/s / 2 allocs/item. All v1
+  operators ported: Map (serial/concurrent/ordered), FlatMap, Filter, Tap, Take,
+  Drop, TakeWhile, DropWhile, Batch, Unbatch, Window, SlidingWindow, SessionWindow,
+  Scan, Reduce, Distinct, DistinctBy, Dedupe, DedupeBy, GroupBy, Frequencies, Merge,
   Partition, Broadcast, Balance, Zip, ZipWith, CombineLatest, WithLatestFrom,
   SwitchMap, ExhaustMap, ConcatMap, MapResult, MapRecover, Throttle, Debounce,
   LiftPure, Timestamp, TimeInterval, Sort, SortBy, Unzip, StartWith, DefaultIfEmpty,
-  Contains, ElementAt, plus all terminal helpers. 68 tests pass under `-race`.
+  Contains, ElementAt, RateLimit, CircuitBreaker, Pool/MapPooled, MetricsHook, plus
+  all terminal helpers and the shared `hooks` module. 68+ tests pass under `-race`.
 
 ---
 

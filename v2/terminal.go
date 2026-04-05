@@ -2,9 +2,57 @@ package kitsune
 
 import (
 	"context"
+	"time"
 
 	"github.com/zenbaku/go-kitsune/v2/internal"
 )
+
+// forEachFastPath is the drain-protocol + micro-batching fast path for ForEach/Drain.
+// Skips hook calls, time.Now, and the per-item ctx.Done select.
+func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error) stageFunc {
+	return func(ctx context.Context) error {
+		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+
+		var buf [internal.ReceiveBatchSize]T
+		for {
+			item, ok := <-inCh
+			if !ok {
+				return nil
+			}
+			buf[0] = item
+			n := 1
+			closed := false
+		fillSink:
+			for n < internal.ReceiveBatchSize {
+				select {
+				case v, ok2 := <-inCh:
+					if !ok2 {
+						closed = true
+						break fillSink
+					}
+					buf[n] = v
+					n++
+				default:
+					break fillSink
+				}
+			}
+			for i := range n {
+				it := buf[i]
+				var zero T
+				buf[i] = zero
+				if err := fn(ctx, it); err != nil {
+					return err
+				}
+			}
+			if closed {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // ForEach — terminal stage
@@ -13,18 +61,77 @@ import (
 // ForEachRunner is a terminal stage that consumes all items from a pipeline
 // by calling fn for each one. It is created by [Pipeline.ForEach].
 type ForEachRunner[T any] struct {
-	p  *Pipeline[T]
-	fn func(context.Context, T) error
+	runner *Runner
 }
 
 // ForEach returns a [ForEachRunner] that calls fn for every item in the pipeline.
 // No processing occurs until [ForEachRunner.Run] is called.
 func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOption) *ForEachRunner[T] {
-	return &ForEachRunner[T]{p: p, fn: fn}
+	track(p)
+	cfg := buildStageConfig(opts)
+	meta := stageMeta{
+		id:          nextPipelineID(),
+		kind:        "sink",
+		name:        orDefault(cfg.name, "for_each"),
+		concurrency: 1,
+		inputs:      []int{p.id},
+	}
+
+	terminal := func(rc *runCtx) {
+		hook := rc.hook
+		if hook == nil {
+			hook = internal.NoopHook{}
+		}
+
+		// Typed build-time fusion: if the upstream set a fusionEntry AND is our sole
+		// consumer AND cfg + hook satisfy fast-path conditions, compose everything into
+		// one goroutine with zero inter-stage channel hops and zero boxing.
+		if p.fusionEntry != nil && p.consumerCount.Load() == 1 &&
+			isFastPathEligibleCfg(cfg) && internal.IsNoopHook(hook) {
+			stage := p.fusionEntry(rc, fn)
+			rc.add(stage, meta)
+			return
+		}
+
+		inCh := p.build(rc)
+		var stage stageFunc
+		if isFastPathEligible(cfg, hook) {
+			stage = forEachFastPath(inCh, fn)
+		} else {
+			stage = func(ctx context.Context) error {
+				defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+				hook.OnStageStart(ctx, meta.name)
+				var processed, errs int64
+				defer func() { hook.OnStageDone(ctx, meta.name, processed, errs) }()
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						start := time.Now()
+						err := fn(ctx, item)
+						dur := time.Since(start)
+						if err != nil {
+							errs++
+							hook.OnItem(ctx, meta.name, dur, err)
+							return err
+						}
+						processed++
+						hook.OnItem(ctx, meta.name, dur, nil)
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+		}
+		rc.add(stage, meta)
+	}
+
+	return &ForEachRunner[T]{runner: &Runner{terminal: terminal}}
 }
 
-// Build registers the ForEach terminal stage into the pipeline's stageList and
-// returns a [Runner] that can be combined with other runners via [MergeRunners].
+// Build returns a [Runner] that can be combined with other runners via [MergeRunners].
 // Use this when the pipeline forks (e.g., [Partition], [Broadcast]) and you need
 // to run multiple terminal stages together.
 //
@@ -34,73 +141,12 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 //	runner, _ := kitsune.MergeRunners(r1, r2)
 //	runner.Run(ctx)
 func (r *ForEachRunner[T]) Build() *Runner {
-	p := r.p
-	fn := r.fn
-	inCh := p.ch
-
-	meta := stageMeta{
-		kind:        "sink",
-		name:        "for_each",
-		concurrency: 1,
-		inputs:      []int{p.id},
-	}
-	termStage := func(runCtx context.Context) error {
-		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
-		for {
-			select {
-			case item, ok := <-inCh:
-				if !ok {
-					return nil
-				}
-				if err := fn(runCtx, item); err != nil {
-					return err
-				}
-			case <-runCtx.Done():
-				return runCtx.Err()
-			}
-		}
-	}
-	p.sl.add(termStage, meta)
-	return &Runner{sl: p.sl}
+	return r.runner
 }
 
-// Run registers the ForEach terminal stage into the pipeline's stageList and
-// executes the pipeline, blocking until completion.
+// Run executes the pipeline, blocking until completion.
 func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
-	p := r.p
-	fn := r.fn
-	inCh := p.ch
-
-	// Register the terminal stage into the shared stageList.
-	meta := stageMeta{
-		kind:        "sink",
-		name:        "for_each",
-		concurrency: 1,
-		inputs:      []int{p.id},
-	}
-	termStage := func(runCtx context.Context) error {
-		// On early exit, drain the input channel in a background goroutine
-		// so that the upstream source is never left blocked trying to send.
-		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
-		for {
-			select {
-			case item, ok := <-inCh:
-				if !ok {
-					return nil
-				}
-				if err := fn(runCtx, item); err != nil {
-					return err
-				}
-			case <-runCtx.Done():
-				return runCtx.Err()
-			}
-		}
-	}
-
-	p.sl.add(termStage, meta)
-
-	runner := &Runner{sl: p.sl}
-	return runner.Run(ctx, opts...)
+	return r.runner.Run(ctx, opts...)
 }
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,9 @@ package kitsune
 import (
 	"context"
 	"errors"
+	"math/rand"
+
+	"github.com/zenbaku/go-kitsune/v2/internal"
 )
 
 // ---------------------------------------------------------------------------
@@ -205,6 +208,106 @@ func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opt
 	return Min(ctx, p, func(a, b T) bool { return less(b, a) }, opts...)
 }
 
+// MinMax returns both the minimum and maximum items in a single pass.
+// Returns [ErrEmpty] if no items are emitted.
+func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (min, max T, err error) {
+	found := false
+	err = p.ForEach(func(_ context.Context, v T) error {
+		if !found {
+			min = v
+			max = v
+			found = true
+			return nil
+		}
+		if less(v, min) {
+			min = v
+		}
+		if less(max, v) {
+			max = v
+		}
+		return nil
+	}).Run(ctx, opts...)
+	if err != nil {
+		var zero T
+		return zero, zero, err
+	}
+	if !found {
+		var zero T
+		return zero, zero, ErrEmpty
+	}
+	return min, max, nil
+}
+
+// MinBy returns the item with the smallest key returned by keyFn.
+// Returns [ErrEmpty] if no items are emitted.
+func MinBy[T any, K interface{ ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~string }](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (T, error) {
+	return Min(ctx, p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
+}
+
+// MaxBy returns the item with the largest key returned by keyFn.
+// Returns [ErrEmpty] if no items are emitted.
+func MaxBy[T any, K interface{ ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr | ~float32 | ~float64 | ~string }](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (T, error) {
+	return Max(ctx, p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// ReduceWhile
+// ---------------------------------------------------------------------------
+
+// ReduceWhile folds items into a single value using fn until fn signals stop.
+// fn returns (newState, continueReducing). When continueReducing is false,
+// the current state is returned immediately without consuming further items.
+// If the source emits no items, initial is returned.
+func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...RunOption) (S, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	state := initial
+	_ = p.ForEach(func(_ context.Context, v T) error {
+		next, cont := fn(state, v)
+		state = next
+		if !cont {
+			cancel()
+			return context.Canceled
+		}
+		return nil
+	}).Run(ctx, opts...)
+	return state, nil
+}
+
+// ---------------------------------------------------------------------------
+// TakeRandom — reservoir sampling
+// ---------------------------------------------------------------------------
+
+// TakeRandom returns a random sample of up to n items from the pipeline using
+// reservoir sampling (Algorithm R). Each item has an equal probability of
+// being selected. The returned slice has min(n, pipelineSize) items.
+// Order of the returned items is not guaranteed.
+func TakeRandom[T any](ctx context.Context, p *Pipeline[T], n int, opts ...RunOption) ([]T, error) {
+	if n <= 0 {
+		err := p.ForEach(func(_ context.Context, _ T) error { return nil }).Run(ctx, opts...)
+		return nil, err
+	}
+
+	reservoir := make([]T, 0, n)
+	i := 0
+
+	err := p.ForEach(func(_ context.Context, v T) error {
+		i++
+		if len(reservoir) < n {
+			reservoir = append(reservoir, v)
+		} else {
+			// Algorithm R: replace a random element with decreasing probability.
+			j := rand.Intn(i)
+			if j < n {
+				reservoir[j] = v
+			}
+		}
+		return nil
+	}).Run(ctx, opts...)
+	return reservoir, err
+}
+
 // ---------------------------------------------------------------------------
 // ToMap
 // ---------------------------------------------------------------------------
@@ -224,20 +327,59 @@ func ToMap[T any, K comparable, V any](ctx context.Context, p *Pipeline[T], keyF
 // SequenceEqual
 // ---------------------------------------------------------------------------
 
-// SequenceEqual returns true if a and b emit the same items in the same order.
+// SequenceEqual returns true if a and b emit the same items in the same order
+// and have the same length.
 func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ...RunOption) (bool, error) {
-	merged := Zip(a, b)
+	track(a)
+	track(b)
+	// Build a combined runner that reads from both channels in lockstep.
+	// Reading a then b sequentially per pair is correct because SequenceEqual
+	// requires positional equality; no parallelism is needed.
 	equal := true
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	inputs := []int{a.id, b.id}
 
-	_ = merged.ForEach(func(_ context.Context, p Pair[T, T]) error {
-		if p.Left != p.Right {
-			equal = false
-			cancel()
+	terminal := func(rc *runCtx) {
+		aCh := a.build(rc)
+		bCh := b.build(rc)
+		stage := func(stageCtx context.Context) error {
+			defer func() {
+				go internal.DrainChan(aCh)
+				go internal.DrainChan(bCh)
+			}()
+			for {
+				var av T
+				var aok bool
+				select {
+				case av, aok = <-aCh:
+				case <-stageCtx.Done():
+					return stageCtx.Err()
+				}
+
+				var bv T
+				var bok bool
+				select {
+				case bv, bok = <-bCh:
+				case <-stageCtx.Done():
+					return stageCtx.Err()
+				}
+
+				if !aok && !bok {
+					return nil // both exhausted simultaneously — lengths match
+				}
+				if !aok || !bok || av != bv {
+					equal = false
+					return nil
+				}
+			}
 		}
-		return nil
-	}).Run(ctx, opts...)
+		rc.add(stage, stageMeta{kind: "sequence_equal", name: "sequence_equal", inputs: inputs})
+	}
+
+	runner := &Runner{terminal: terminal}
+	err := runner.Run(ctx, opts...)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return false, err
+	}
 	return equal, nil
 }
 

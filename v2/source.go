@@ -44,28 +44,51 @@ func sourceStage[T any](ch chan T, itemFn func(ctx context.Context, send func(T)
 // FromSlice creates a Pipeline that emits each element of the slice.
 func FromSlice[T any](items []T) *Pipeline[T] {
 	cfg := buildStageConfig(nil)
-	ch := make(chan T, cfg.buffer)
-	sl := newStageList()
+	id := nextPipelineID()
 	meta := stageMeta{
+		id:          id,
 		kind:        "source",
 		name:        "from_slice",
 		concurrency: 1,
 		buffer:      cfg.buffer,
-		getChanLen:  func() int { return len(ch) },
-		getChanCap:  func() int { return cap(ch) },
 	}
-
-	stage := sourceStage(ch, func(ctx context.Context, send func(T) error) error {
-		for _, item := range items {
-			if err := send(item); err != nil {
-				return err
-			}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
 		}
-		return nil
-	})
-
-	id := sl.add(stage, meta)
-	return &Pipeline[T]{ch: ch, sl: sl, id: id}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		var stage stageFunc
+		if internal.IsNoopHook(rc.hook) {
+			// Fast path: plain sends, no select per item. The downstream drain
+			// goroutine unblocks this send if the pipeline exits early.
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				for _, item := range items {
+					ch <- item
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+				}
+				return nil
+			}
+		} else {
+			stage = sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+				for _, item := range items {
+					if err := send(item); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,35 +99,42 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 // The pipeline completes when the channel is closed.
 func From[T any](src <-chan T) *Pipeline[T] {
 	cfg := buildStageConfig(nil)
-	ch := make(chan T, cfg.buffer)
-	sl := newStageList()
+	id := nextPipelineID()
 	meta := stageMeta{
+		id:          id,
 		kind:        "source",
 		name:        "from",
 		concurrency: 1,
 		buffer:      cfg.buffer,
-		getChanLen:  func() int { return len(ch) },
-		getChanCap:  func() int { return cap(ch) },
 	}
-
-	stage := sourceStage(ch, func(ctx context.Context, send func(T) error) error {
-		for {
-			select {
-			case item, ok := <-src:
-				if !ok {
-					return nil
-				}
-				if err := send(item); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
 		}
-	})
-
-	id := sl.add(stage, meta)
-	return &Pipeline[T]{ch: ch, sl: sl, id: id}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+			for {
+				select {
+				case item, ok := <-src:
+					if !ok {
+						return nil
+					}
+					if err := send(item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		})
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,32 +159,50 @@ func From[T any](src <-chan T) *Pipeline[T] {
 //	})
 func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pipeline[T] {
 	cfg := buildStageConfig(nil)
-	ch := make(chan T, cfg.buffer)
-	sl := newStageList()
+	id := nextPipelineID()
 	meta := stageMeta{
+		id:          id,
 		kind:        "source",
 		name:        "generate",
 		concurrency: 1,
 		buffer:      cfg.buffer,
-		getChanLen:  func() int { return len(ch) },
-		getChanCap:  func() int { return cap(ch) },
 	}
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-
-		return fn(ctx, func(item T) bool {
-			select {
-			case ch <- item:
-				return true
-			case <-ctx.Done():
-				return false
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		var stage stageFunc
+		if internal.IsNoopHook(rc.hook) {
+			// Fast path: plain send in yield, cancellation checked post-send.
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				return fn(ctx, func(item T) bool {
+					ch <- item
+					return ctx.Err() == nil
+				})
 			}
-		})
+		} else {
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				return fn(ctx, func(item T) bool {
+					select {
+					case ch <- item:
+						return true
+					case <-ctx.Done():
+						return false
+					}
+				})
+			}
+		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := sl.add(stage, meta)
-	return &Pipeline[T]{ch: ch, sl: sl, id: id}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------

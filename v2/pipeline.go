@@ -14,17 +14,24 @@ package kitsune
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zenbaku/go-kitsune/v2/internal"
 )
+
+// ---------------------------------------------------------------------------
+// stageFunc / stageMeta
+// ---------------------------------------------------------------------------
 
 // stageFunc is a goroutine body launched by Run.
 // The context originates from Runner.Run and is passed at execution time,
 // not at pipeline construction time.
 type stageFunc func(ctx context.Context) error
 
-// stageMeta holds introspection data for a single stage (for hooks and inspector).
+// stageMeta holds introspection data for a single stage.
+// Static fields (id, name, kind, inputs, …) are set at construction time.
+// getChanLen / getChanCap are set during build() when the channel is created.
 type stageMeta struct {
 	id          int
 	name        string
@@ -37,52 +44,110 @@ type stageMeta struct {
 	timeout     time.Duration
 	hasRetry    bool
 	hasSuperv   bool
-	getChanLen  func() int // returns current channel fill level
-	getChanCap  func() int // returns channel capacity
+	getChanLen func() int
+	getChanCap func() int
 }
 
-// stageList is shared across all Pipelines that originate from the same source graph.
-type stageList struct {
-	mu     sync.Mutex
-	stages []stageFunc
-	metas  []stageMeta
-	refs   *refRegistry
-	idSeq  int
+// ---------------------------------------------------------------------------
+// Global stage-ID counter
+// ---------------------------------------------------------------------------
+
+var globalIDSeq int64
+
+// nextPipelineID returns a process-unique ID for each constructed stage.
+// IDs are used for graph visualisation and runCtx memoisation.
+func nextPipelineID() int {
+	return int(atomic.AddInt64(&globalIDSeq, 1))
 }
 
-func newStageList() *stageList {
-	return &stageList{
-		refs: &refRegistry{
-			inits: make(map[string]func(internal.Store, internal.Codec) any),
-			vals:  make(map[string]any),
-		},
-	}
+// ---------------------------------------------------------------------------
+// runCtx — per-Run execution context
+// ---------------------------------------------------------------------------
+
+// runCtx is created fresh on every Runner.Run call.
+// As build functions are called recursively from the terminal back to sources,
+// each stage registers its stageFunc here and its output channel is memoised
+// by stage ID so that shared upstream stages are only built once per run.
+type runCtx struct {
+	stages   []stageFunc
+	metas    []stageMeta
+	chans    map[int]any // stage ID → chan T (type-erased for storage)
+	cache    internal.Cache
+	cacheTTL time.Duration
+	codec    internal.Codec
+	hook     internal.Hook
 }
 
-func (sl *stageList) add(fn stageFunc, meta stageMeta) int {
-	sl.mu.Lock()
-	defer sl.mu.Unlock()
-	meta.id = sl.idSeq
-	sl.idSeq++
-	sl.stages = append(sl.stages, fn)
-	sl.metas = append(sl.metas, meta)
-	return meta.id
+func newRunCtx() *runCtx {
+	return &runCtx{chans: make(map[int]any)}
 }
 
-func (sl *stageList) nextID() int {
-	sl.mu.Lock()
-	defer sl.mu.Unlock()
-	id := sl.idSeq
-	sl.idSeq++
-	return id
+func (rc *runCtx) add(fn stageFunc, meta stageMeta) {
+	rc.stages = append(rc.stages, fn)
+	rc.metas = append(rc.metas, meta)
 }
 
-// refRegistry holds state key factories and their resolved values for a pipeline run.
-// Will be populated during the state management phase.
+func (rc *runCtx) getChan(id int) any  { return rc.chans[id] }
+func (rc *runCtx) setChan(id int, ch any) { rc.chans[id] = ch }
+
+// ---------------------------------------------------------------------------
+// Pipeline[T]
+// ---------------------------------------------------------------------------
+
+// Pipeline[T] is a lazy, reusable pipeline blueprint.
+// It describes a computation but allocates no channels until Run is called.
+// Each call to Run materialises a fresh, independent channel graph, so the
+// same Pipeline[T] value may be run multiple times or used as the input to
+// multiple independent operators.
+//
+// It is an immutable handle — every operator returns a new Pipeline.
+// No processing occurs until [Runner.Run] is called.
+type Pipeline[T any] struct {
+	id   int
+	meta stageMeta // static description (name, kind, inputs, buffer size, …)
+
+	// build is called by Runner.Run to materialise this stage.
+	// It recursively calls build on upstream pipelines, allocates a fresh
+	// typed channel, registers the stage function into rc, and returns the
+	// channel so downstream stages can read from it.
+	// build is memoised via rc: if this stage was already built in the current
+	// Run, the existing channel is returned immediately without re-registering.
+	build func(rc *runCtx) chan T
+
+	// fusionEntry is non-nil for fast-path-eligible Map and Filter stages.
+	// A terminal (ForEach) may call this instead of build to compose the entire
+	// chain into a single goroutine with zero inter-stage channel hops and zero
+	// boxing.  fusionEntry receives the rc and a typed sink function; it
+	// recursively composes upstream fusionEntries and returns a single stageFunc
+	// that the terminal registers with rc.  The caller must first verify
+	// consumerCount == 1 to ensure no other stage is also consuming this pipeline.
+	fusionEntry func(rc *runCtx, sink func(context.Context, T) error) stageFunc
+
+	// consumerCount is incremented at construction time by every operator or
+	// terminal that consumes this pipeline (via track).  fusionEntry is safe to
+	// use only when consumerCount == 1 (single-consumer chain).
+	consumerCount atomic.Int32
+}
+
+func newPipeline[T any](id int, meta stageMeta, build func(*runCtx) chan T) *Pipeline[T] {
+	return &Pipeline[T]{id: id, meta: meta, build: build}
+}
+
+// ---------------------------------------------------------------------------
+// refRegistry — state management stub (populated during a future phase)
+// ---------------------------------------------------------------------------
+
 type refRegistry struct {
 	mu    sync.Mutex
 	inits map[string]func(internal.Store, internal.Codec) any
 	vals  map[string]any
+}
+
+func newRefRegistry() *refRegistry {
+	return &refRegistry{
+		inits: make(map[string]func(internal.Store, internal.Codec) any),
+		vals:  make(map[string]any),
+	}
 }
 
 func (r *refRegistry) register(name string, factory func(internal.Store, internal.Codec) any) {
@@ -108,47 +173,3 @@ func (r *refRegistry) get(name string) any {
 	defer r.mu.Unlock()
 	return r.vals[name]
 }
-
-// Pipeline[T] is a lazy data pipeline. Items flow from a source through
-// zero or more transformation stages and are consumed by a terminal.
-// It is an immutable handle — every operation returns a new Pipeline.
-// No processing occurs until [Runner.Run] is called.
-type Pipeline[T any] struct {
-	ch   chan T       // typed output channel of this stage
-	sl   *stageList  // shared with all upstream stages
-	id   int         // this stage's ID in sl.metas
-	port int         // output port (0 for single-output stages)
-}
-
-// newPipeline creates a new Pipeline connected to a typed channel.
-func newPipeline[T any](ch chan T, sl *stageList, id int) *Pipeline[T] {
-	return &Pipeline[T]{ch: ch, sl: sl, id: id}
-}
-
-// combineStageLists merges all unique stageLists into the first one and returns
-// the primary. If all inputs already share the same stageList, returns it directly.
-// This is used by multi-input operators (Merge, Zip, CombineLatest, etc.) so that
-// pipelines from independent sources can be connected.
-func combineStageLists(stageLists ...*stageList) *stageList {
-	if len(stageLists) == 0 {
-		return newStageList()
-	}
-	primary := stageLists[0]
-	seen := map[*stageList]bool{primary: true}
-	for _, sl := range stageLists[1:] {
-		if seen[sl] {
-			continue // already merged
-		}
-		seen[sl] = true
-		// combineStageLists is only called at pipeline construction time (single-threaded),
-		// so we don't need lock ordering — just lock sequentially.
-		primary.mu.Lock()
-		sl.mu.Lock()
-		primary.stages = append(primary.stages, sl.stages...)
-		primary.metas = append(primary.metas, sl.metas...)
-		sl.mu.Unlock()
-		primary.mu.Unlock()
-	}
-	return primary
-}
-

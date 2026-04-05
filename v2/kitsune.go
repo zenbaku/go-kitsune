@@ -116,16 +116,17 @@ func MemoryDedupSet() DedupSet { return internal.MemoryDedupSet() }
 
 // Runner holds a compiled pipeline for deferred execution.
 // No goroutines start until [Runner.Run] is called.
+// The same Runner (and the Pipeline[T] values it was built from) may be Run
+// multiple times; each call allocates a fresh, independent channel graph.
 type Runner struct {
-	sl *stageList
+	// terminal builds the full stage graph into rc when called.
+	// It is set by ForEachRunner.Build() / ForEachRunner.Run().
+	terminal func(rc *runCtx)
+	refs     *refRegistry // state management (future phase)
 }
 
 // ErrNoRunners is returned by [MergeRunners] when called with no arguments.
 var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runner")
-
-// ErrGraphMismatch is returned by [MergeRunners] when the provided runners do
-// not all share the same pipeline graph.
-var ErrGraphMismatch = errors.New("kitsune: MergeRunners requires all runners to share the same pipeline graph")
 
 // RunHandle is returned by [Runner.RunAsync]. It provides multiple ways to
 // observe the pipeline's completion and to pause/resume source stages.
@@ -166,24 +167,16 @@ func (h *RunHandle) Paused() bool { return h.gate.Paused() }
 
 // Run executes the pipeline. It blocks until the pipeline completes,
 // the context is cancelled, or an unhandled error occurs.
+// Run may be called multiple times; each call builds a fresh channel graph.
 func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	cfg := buildRunConfig(opts)
 
-	// Resolve codec.
 	codec := cfg.codec
 	if codec == nil {
 		codec = internal.JSONCodec{}
 	}
-
-	// Initialise state refs.
-	r.sl.refs.init(cfg.store, codec)
-
-	// Wrap the root context with a gate if one was provided.
-	runCtx := ctx
-	if cfg.gate != nil {
-		// The gate is respected inside source stages via gate.Wait; just use the
-		// parent context directly — sources receive and honour the gate themselves.
-		_ = cfg.gate // gate is stored in stageConfig of sources that need it
+	if r.refs != nil {
+		r.refs.init(cfg.store, codec)
 	}
 
 	hook := cfg.hook
@@ -191,17 +184,19 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		hook = internal.NoopHook{}
 	}
 
-	// Build GraphNode slice and notify any GraphHook.
-	r.sl.mu.Lock()
-	metas := make([]stageMeta, len(r.sl.metas))
-	copy(metas, r.sl.metas)
-	stages := make([]stageFunc, len(r.sl.stages))
-	copy(stages, r.sl.stages)
-	r.sl.mu.Unlock()
+	// Materialise the pipeline: build functions are called recursively,
+	// allocating fresh channels and registering stage functions into rc.
+	rc := newRunCtx()
+	rc.cache = cfg.defaultCache
+	rc.cacheTTL = cfg.defaultCacheTTL
+	rc.codec = codec
+	rc.hook = hook
+	r.terminal(rc)
 
+	// Notify GraphHook (static topology — channel sizes are at initial 0).
 	if gh, ok := hook.(internal.GraphHook); ok {
-		nodes := make([]internal.GraphNode, 0, len(metas))
-		for _, m := range metas {
+		nodes := make([]internal.GraphNode, 0, len(rc.metas))
+		for _, m := range rc.metas {
 			nodes = append(nodes, internal.GraphNode{
 				ID:             m.id,
 				Name:           m.name,
@@ -219,12 +214,12 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		gh.OnGraph(nodes)
 	}
 
-	// Notify BufferHook with a snapshot query.
+	// Notify BufferHook with a live query closure over the materialised channels.
 	if bh, ok := hook.(internal.BufferHook); ok {
-		metasCopy := metas
+		metas := rc.metas
 		bh.OnBuffers(func() []internal.BufferStatus {
-			out := make([]internal.BufferStatus, 0, len(metasCopy))
-			for _, m := range metasCopy {
+			out := make([]internal.BufferStatus, 0, len(metas))
+			for _, m := range metas {
 				if m.getChanLen == nil {
 					continue
 				}
@@ -238,20 +233,16 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		})
 	}
 
-	// Wrap stageFuncs for RunStages, skipping nil placeholders.
-	wrappers := make([]func(context.Context) error, 0, len(stages))
-	for _, s := range stages {
-		if s == nil {
-			continue
-		}
+	wrappers := make([]func(context.Context) error, len(rc.stages))
+	for i, s := range rc.stages {
 		s := s
-		wrappers = append(wrappers, func(ctx context.Context) error { return s(ctx) })
+		wrappers[i] = func(ctx context.Context) error { return s(ctx) }
 	}
 
 	if cfg.drainTimeout > 0 {
-		return runWithDrain(runCtx, cfg.drainTimeout, wrappers)
+		return runWithDrain(ctx, cfg.drainTimeout, wrappers)
 	}
-	return internal.RunStages(runCtx, wrappers)
+	return internal.RunStages(ctx, wrappers)
 }
 
 // runWithDrain executes stages with graceful drain semantics.
@@ -306,16 +297,35 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 //	err := runner.Run(ctx)
 //
 // MergeRunners returns [ErrNoRunners] if called with no arguments, or
-// [ErrGraphMismatch] if the runners do not share the same pipeline graph.
+// [ErrNoRunners] if called with no arguments.
+// MergeRunners combines multiple runners that share the same pipeline graph
+// into a single runner. Use this when a pipeline forks (e.g., via [Partition]
+// or [Broadcast]) into multiple terminal branches.
+//
+//	valid, invalid := kitsune.Partition(parsed, isValid)
+//	stored := valid.ForEach(storeEvent).Build()
+//	logged := invalid.ForEach(logRejection).Build()
+//	runner, _ := kitsune.MergeRunners(stored, logged)
+//	err := runner.Run(ctx)
+//
+// Returns [ErrNoRunners] if called with no arguments.
 func MergeRunners(runners ...*Runner) (*Runner, error) {
 	if len(runners) == 0 {
 		return nil, ErrNoRunners
 	}
-	sl := runners[0].sl
-	for _, r := range runners[1:] {
-		if r.sl != sl {
-			return nil, ErrGraphMismatch
-		}
+	// Collect all terminal functions into a single combined terminal.
+	// When Run is called, a single runCtx is shared, so shared upstream stages
+	// are built only once (memoised by stage ID).
+	terminals := make([]func(*runCtx), len(runners))
+	for i, r := range runners {
+		terminals[i] = r.terminal
 	}
-	return runners[0], nil
+	return &Runner{
+		terminal: func(rc *runCtx) {
+			for _, t := range terminals {
+				t(rc)
+			}
+		},
+		refs: runners[0].refs,
+	}, nil
 }

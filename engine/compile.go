@@ -6,25 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	kithooks "github.com/zenbaku/go-kitsune/hooks"
 )
 
 // ---------------------------------------------------------------------------
-// Interfaces — used by the public kitsune package to inject behavior
+// Hook interfaces — aliases from github.com/zenbaku/go-kitsune/hooks
+//
+// Using type aliases (=) means engine.Hook IS hooks.Hook — a tail that
+// implements hooks.Hook satisfies engine.Hook with no conversion needed.
 // ---------------------------------------------------------------------------
 
-// Hook receives lifecycle and per-item events during pipeline execution.
-type Hook interface {
-	OnStageStart(ctx context.Context, stage string)
-	OnItem(ctx context.Context, stage string, dur time.Duration, err error)
-	OnStageDone(ctx context.Context, stage string, processed int64, errors int64)
-}
-
-// NoopHook silently discards all events.
-type NoopHook struct{}
-
-func (NoopHook) OnStageStart(context.Context, string)                 {}
-func (NoopHook) OnItem(context.Context, string, time.Duration, error) {}
-func (NoopHook) OnStageDone(context.Context, string, int64, int64)    {}
+type Hook = kithooks.Hook
+type NoopHook = kithooks.NoopHook
+type OverflowHook = kithooks.OverflowHook
+type SupervisionHook = kithooks.SupervisionHook
+type SampleHook = kithooks.SampleHook
+type GraphHook = kithooks.GraphHook
+type BufferHook = kithooks.BufferHook
+type GraphNode = kithooks.GraphNode
+type BufferStatus = kithooks.BufferStatus
 
 // Store is the backend interface for pipeline state persistence.
 // Implementations must be safe for concurrent use.
@@ -175,64 +176,6 @@ const (
 	PanicRestart                      // treat panic as a restartable error
 	PanicSkip                         // recover and continue; the panicking item is lost
 )
-
-// SupervisionHook is an optional extension of Hook for restart events.
-// Checked via type assertion — existing Hook implementations need not implement this.
-type SupervisionHook interface {
-	OnStageRestart(ctx context.Context, stage string, attempt int, cause error)
-}
-
-// OverflowHook is an optional extension of Hook for drop events.
-// Checked via type assertion — existing Hook implementations need not implement this.
-type OverflowHook interface {
-	OnDrop(ctx context.Context, stage string, item any)
-}
-
-// SampleHook is an optional extension of Hook for item value sampling.
-// Called for approximately every 10th successful item exiting an instrumented
-// stage. The item value is the post-transform output (type-erased).
-// Checked via type assertion — existing Hook implementations need not implement this.
-type SampleHook interface {
-	OnItemSample(ctx context.Context, stage string, item any)
-}
-
-// GraphHook is an optional extension of Hook for graph topology.
-// Called once before execution begins with a snapshot of every compiled node.
-// Checked via type assertion — existing Hook implementations need not implement this.
-type GraphHook interface {
-	OnGraph(nodes []GraphNode)
-}
-
-// BufferStatus reports the current fill level of one stage's output channel.
-type BufferStatus struct {
-	Stage    string
-	Length   int // current number of items in the channel (len)
-	Capacity int // total channel capacity (cap)
-}
-
-// BufferHook is an optional extension of Hook for observing channel backpressure.
-// The engine calls OnBuffers once before execution with a query function that
-// returns a snapshot of all inter-stage channel occupancies when invoked.
-// Call the function periodically (e.g. every 250ms) to track fill levels over time.
-// Checked via type assertion — existing Hook implementations need not implement this.
-type BufferHook interface {
-	OnBuffers(query func() []BufferStatus)
-}
-
-// GraphNode is a snapshot of one pipeline stage passed to [GraphHook.OnGraph].
-type GraphNode struct {
-	ID             int           `json:"id"`
-	Name           string        `json:"name"`
-	Kind           string        `json:"kind"`
-	Inputs         []int         `json:"inputs"`
-	Concurrency    int           `json:"concurrency,omitempty"`
-	Buffer         int           `json:"buffer,omitempty"`
-	Overflow       int           `json:"overflow,omitempty"`
-	BatchSize      int           `json:"batch_size,omitempty"`
-	Timeout        time.Duration `json:"timeout,omitempty"`
-	HasRetry       bool          `json:"has_retry,omitempty"`
-	HasSupervision bool          `json:"has_supervision,omitempty"`
-}
 
 // CreateChannels allocates bounded channels for every non-sink output port.
 func CreateChannels(g *Graph) map[ChannelKey]chan any {

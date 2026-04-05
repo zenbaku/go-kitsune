@@ -97,27 +97,77 @@ These measurements reflect stage processing time (the duration the stage functio
 
 ---
 
-## Experimental typed engine
+## v2 typed engine
 
-The `engine/typed` package implements the same 3-stage pipeline (Map → Filter → Drain)
-using `chan T` instead of `chan any`, eliminating all per-item interface boxing.
+`go-kitsune/v2` replaces every `chan any` stage boundary with `chan T`, eliminating
+all per-item interface boxing. This section quantifies the allocation and throughput
+gains over v1.
 
 **Machine**: Apple M1, darwin/arm64, Go 1.26.1
-**Method**: `go test -bench=BenchmarkTyped -benchmem -count=5` in `bench/`, median of 5 runs
+**Method**: `go test -bench='BenchmarkRawGoroutines|BenchmarkKitsune$|BenchmarkKitsuneV2' -benchmem -count=5` in `bench/`, median of 5 runs
 
-| Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
+### Trivial workload (Map `n*2` → Filter `n%3 != 0` → Drain)
+
+| Implementation | ns/op (1M items) | items/sec | B/op | allocs/op | allocs/item |
 |---|---:|---:|---:|---:|---:|
-| Raw goroutines | 163 ms | ~6.12 M/s | 1 KB | 12 | — |
-| **Kitsune** | **75.7 ms** | **~13.2 M/s** | **15.3 MB** | **2,000,000** | **-54%** |
-| **Typed (experimental)** | **317 ms** | **~3.15 M/s** | **2 KB** | **43** | **+94%** |
+| Raw goroutines | 169 ms | ~5.9 M/s | 1 KB | 12 | ~0 |
+| Kitsune v1 | 76 ms | ~13.1 M/s | 15.3 MB | 1,999,685 | ~2 |
+| **Kitsune v2** | **47 ms** | **~21.3 M/s** | **4 KB** | **47** | **0** |
 
-**Kitsune is now 4.2× faster than the typed engine** and 2.16× faster than raw goroutines, despite 2M allocs/run vs 43, because:
-1. Stage fusion collapses Map → Filter → Drain into one goroutine (1 channel hop vs 3).
-2. The drain protocol removes the per-item 3-case `select` from the source — the source does plain `outCh <- item`. Downstream stages start a `for range inCh {}` drain goroutine on exit, unblocking the source without any per-item select overhead.
+**v2 is 1.6× faster than v1 and 3.6× faster than raw goroutines**, with a constant 47 allocations per run regardless of N. Three optimizations account for the gain:
 
-**Boxing is eliminated in typed** — 43 allocs is pipeline setup only (goroutine stacks, channels, sync structures). Zero per-item allocations.
+1. **Drain protocol** — fast-path stages use plain `outCh <- item` sends (no per-item `select`). Downstream drain goroutines unblock any stuck upstream on exit.
+2. **Receive-side micro-batching** — after one blocking receive, each fast-path stage drains up to 15 more items non-blocking into a stack-allocated `[16]T` buffer, amortising goroutine-handoff cost ~14×.
+3. **Typed build-time fusion** — `Pipeline[T]` carries a `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc` set at construction time on fast-path-eligible Map and Filter stages. When `ForEach` detects a single-consumer fast-path chain with `NoopHook`, it calls `fusionEntry` directly, composing the entire chain into **one goroutine with zero inter-stage channel hops and zero boxing**. Fan-out is detected via a `consumerCount` atomic incremented by every operator at construction time.
 
-**The remaining ~1.9x gap from typed to raw goroutines** (317 vs 163 ms) is the send-side `select` — the typed engine needs it to prevent deadlock on early downstream exit. The drain protocol used by Kitsune's `chan any` engine eliminates this overhead, but the typed engine has not been updated to use the same pattern.
+**Zero per-item allocations.** Unlike the previous type-erased fusion (which re-introduced ~2 allocs/item at the fusion boundary), typed composition preserves full type information through the closure chain — no `any` boxing anywhere in the hot path.
+
+### Light CPU (SHA-256 per item, ~300 ns work)
+
+| Implementation | items/sec | B/op | allocs/op |
+|---|---:|---:|---:|
+| Raw goroutines | ~3.7 M/s | 1 KB | 12 |
+| Kitsune v1 | ~6.6 M/s | 15.3 MB | ~19,813 |
+| **Kitsune v2** | **~6.7 M/s** | **4 KB** | **~47** |
+
+Stage cost dominates at ~300 ns/item; throughput converges. v2 still has zero per-item allocs.
+
+### I/O bound (1 µs sleep per item)
+
+| Implementation | items/sec | B/op | allocs/op |
+|---|---:|---:|---:|
+| Raw goroutines | ~312 K/s | 1 KB | 13 |
+| Kitsune v1 | ~345 K/s | 15.3 MB | ~19,686 |
+| **Kitsune v2** | **~350 K/s** | **4 KB** | **~47** |
+
+Framework overhead is negligible when stages block on I/O. v2 is marginally faster and dramatically cheaper on allocations.
+
+### Fast-path conditions
+
+A stage enters the fast path (drain protocol + micro-batching, eligible for typed fusion) when ALL hold:
+- `Concurrency(1)` (default)
+- No `Supervise(...)` policy
+- Default error handler (no explicit `OnError`, `Retry`, or `Skip`)
+- Default overflow (`Block`)
+- No per-item `Timeout`
+- `NoopHook` (no `WithHook(...)` run option)
+
+Additionally, typed fusion requires that the pipeline has exactly one consumer (`consumerCount == 1`). Fan-out pipelines (same `*Pipeline[T]` used by two operators) fall back to the channel path automatically.
+
+Adding any real hook (`LogHook`, `MetricsHook`, custom) disables the fast path and fusion for instrumented stages. The slow path is fully correct and adequate for I/O-bound workloads where stage latency dwarfs framework overhead.
+
+### Allocation budget (v2)
+
+All fast-path pipelines — fused or not — allocate a fixed setup overhead independent of N:
+
+| Pipeline | allocs/run (1M items) | allocs/item |
+|---|---:|---:|
+| `Map` → `Filter` → `ForEach` (fused) | 47 | **0** |
+| Single `Map` + `Drain` (no fusion) | ~47 | **0** |
+| `FlatMap` + `Drain` | ~47 | **0** |
+| Any pipeline with `WithHook(...)` | scales with N | ~1–2 |
+
+The 47 allocs/run are pure setup (goroutine stacks, channels, sync primitives). Per-item cost is zero for all fast-path cases — fused and non-fused alike.
 
 ---
 
@@ -145,7 +195,7 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 
 **`reugn/go-streams`** is ~1.38M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
 
-**When does Kitsune overhead matter?** At -54% overhead vs raw, Kitsune's fused fast path is strictly faster for CPU-trivial workloads. The remaining cost per item is `any`-boxing (~4 ns, 2 allocs/item) and the one blocking channel receive from Source to the fused chain.
+**When does Kitsune overhead matter?** At -54% overhead vs raw, Kitsune v1's fused fast path is strictly faster for CPU-trivial workloads. The remaining per-item cost is `any`-boxing (~4 ns, 2 allocs/item from `chan any`) and the one blocking channel receive from Source to the fused chain. **Kitsune v2 eliminates both**: typed fusion has zero boxing and the same single channel hop, reaching ~21 M/s vs v1's ~13 M/s on the same workload.
 
 To reproduce:
 
@@ -204,7 +254,7 @@ Kitsune is 8% **faster** than raw goroutines for I/O-bound work.
 | ~3 µs (I/O sleep) | -8% (faster) | Database queries, HTTP calls |
 | ~100 µs (network) | ~0% | Cross-datacenter RPC |
 
-**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, stage fusion, and receive-side micro-batching together eliminate more overhead than the `any`-boxing and errgroup machinery add. The only remaining cost vs hypothetical zero-overhead raw pipelines is `any`-boxing (2 allocs/item, ~4 ns) and the single blocking channel receive from Source to the fused chain.
+**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, stage fusion, and receive-side micro-batching together eliminate more overhead than the `any`-boxing and errgroup machinery add. For v1, the remaining per-item cost is `any`-boxing (2 allocs/item, ~4 ns) and one blocking channel receive from Source to the fused chain. **Kitsune v2 eliminates the boxing entirely** via typed build-time fusion, leaving only the single channel hop — this accounts for v2's additional 1.6× gain over v1.
 
 ---
 

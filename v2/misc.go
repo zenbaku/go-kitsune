@@ -1,6 +1,7 @@
 package kitsune
 
 import (
+	"cmp"
 	"context"
 	"sort"
 	"time"
@@ -34,57 +35,73 @@ func LiftFallible[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, 
 // ---------------------------------------------------------------------------
 
 // StartWith prepends one or more items to a pipeline before forwarding all
-// items from p.
+// items from p. Prefix items are always emitted before any item from p.
 func StartWith[T any](p *Pipeline[T], items ...T) *Pipeline[T] {
+	track(p)
 	if len(items) == 0 {
 		return p
 	}
-	prefix := FromSlice(items)
-	return Merge(prefix, p)
+	// Use the factory-based Concat so the prefix runs to completion before p
+	// starts, guaranteeing strict ordering.
+	itemsCopy := items // capture for closure
+	return Concat(
+		func() *Pipeline[T] { return FromSlice(itemsCopy) },
+		func() *Pipeline[T] { return p },
+	)
 }
 
 // DefaultIfEmpty emits defaultVal if p completes without emitting any items;
 // otherwise forwards all items from p unchanged.
 func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *Pipeline[T] {
+	track(p)
 	cfg := buildStageConfig(opts)
-	ch := make(chan T, cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "default_if_empty",
-		name:       orDefault(cfg.name, "default_if_empty"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "default_if_empty",
+		name:   orDefault(cfg.name, "default_if_empty"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inCh := p.build(rc)
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
 
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() { go internal.DrainChan(p.ch) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			emitted := false
 
-		outbox := internal.NewBlockingOutbox(ch)
-		emitted := false
-
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					if !emitted {
-						return outbox.Send(ctx, defaultVal)
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						if !emitted {
+							return outbox.Send(ctx, defaultVal)
+						}
+						return nil
 					}
-					return nil
+					emitted = true
+					if err := outbox.Send(ctx, item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				emitted = true
-				if err := outbox.Send(ctx, item); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := p.sl.add(stage, meta)
-	return newPipeline(ch, p.sl, id)
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -100,45 +117,55 @@ type Timestamped[T any] struct {
 // Timestamp tags each item with the time it exits this stage.
 // Respects [WithClock] for deterministic tests.
 func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped[T]] {
+	track(p)
 	cfg := buildStageConfig(opts)
-	ch := make(chan Timestamped[T], cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "timestamp",
-		name:       orDefault(cfg.name, "timestamp"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "timestamp",
+		name:   orDefault(cfg.name, "timestamp"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() { go internal.DrainChan(p.ch) }()
-
-		clk := cfg.clock
-		if clk == nil {
-			clk = internal.RealClock{}
+	build := func(rc *runCtx) chan Timestamped[T] {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan Timestamped[T])
 		}
-		outbox := internal.NewBlockingOutbox(ch)
+		inCh := p.build(rc)
+		ch := make(chan Timestamped[T], cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
 
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					return nil
+			clk := cfg.clock
+			if clk == nil {
+				clk = internal.RealClock{}
+			}
+			outbox := internal.NewBlockingOutbox(ch)
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					ts := Timestamped[T]{Value: item, Time: clk.Now()}
+					if err := outbox.Send(ctx, ts); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				ts := Timestamped[T]{Value: item, Time: clk.Now()}
-				if err := outbox.Send(ctx, ts); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := p.sl.add(stage, meta)
-	return newPipeline(ch, p.sl, id)
+	return newPipeline(id, meta, build)
 }
 
 // TimedInterval pairs an item with the elapsed time since the previous item.
@@ -151,54 +178,64 @@ type TimedInterval[T any] struct {
 // TimeInterval tags each item with the duration elapsed since the previous item.
 // Respects [WithClock] for deterministic tests.
 func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInterval[T]] {
+	track(p)
 	cfg := buildStageConfig(opts)
-	ch := make(chan TimedInterval[T], cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "time_interval",
-		name:       orDefault(cfg.name, "time_interval"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "time_interval",
+		name:   orDefault(cfg.name, "time_interval"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() { go internal.DrainChan(p.ch) }()
-
-		clk := cfg.clock
-		if clk == nil {
-			clk = internal.RealClock{}
+	build := func(rc *runCtx) chan TimedInterval[T] {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan TimedInterval[T])
 		}
-		outbox := internal.NewBlockingOutbox(ch)
-		var last time.Time
-		first := true
+		inCh := p.build(rc)
+		ch := make(chan TimedInterval[T], cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
 
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					return nil
+			clk := cfg.clock
+			if clk == nil {
+				clk = internal.RealClock{}
+			}
+			outbox := internal.NewBlockingOutbox(ch)
+			var last time.Time
+			first := true
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					now := clk.Now()
+					var elapsed time.Duration
+					if !first {
+						elapsed = now.Sub(last)
+					}
+					first = false
+					last = now
+					ti := TimedInterval[T]{Value: item, Elapsed: elapsed}
+					if err := outbox.Send(ctx, ti); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				now := clk.Now()
-				var elapsed time.Duration
-				if !first {
-					elapsed = now.Sub(last)
-				}
-				first = false
-				last = now
-				ti := TimedInterval[T]{Value: item, Elapsed: elapsed}
-				if err := outbox.Send(ctx, ti); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := p.sl.add(stage, meta)
-	return newPipeline(ch, p.sl, id)
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -208,53 +245,67 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 // Sort collects all items, sorts them using less, and emits them in sorted order.
 // The pipeline must be finite. Runs at Concurrency(1).
 func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *Pipeline[T] {
+	track(p)
 	cfg := buildStageConfig(opts)
-	ch := make(chan T, cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "sort",
-		name:       orDefault(cfg.name, "sort"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "sort",
+		name:   orDefault(cfg.name, "sort"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() { go internal.DrainChan(p.ch) }()
-
-		outbox := internal.NewBlockingOutbox(ch)
-		var buf []T
-
-		// Collect all items.
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					goto sortAndEmit
-				}
-				buf = append(buf, item)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
 		}
+		inCh := p.build(rc)
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
 
-	sortAndEmit:
-		sort.Slice(buf, func(i, j int) bool { return less(buf[i], buf[j]) })
-		for _, item := range buf {
-			if err := outbox.Send(ctx, item); err != nil {
+			outbox := internal.NewBlockingOutbox(ch)
+
+			// Collect all items.
+			buf, err := func() ([]T, error) {
+				var out []T
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return out, nil
+						}
+						out = append(out, item)
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+			}()
+			if err != nil {
 				return err
 			}
-		}
-		return nil
-	}
 
-	id := p.sl.add(stage, meta)
-	return newPipeline(ch, p.sl, id)
+			sort.Slice(buf, func(i, j int) bool { return less(buf[i], buf[j]) })
+			for _, item := range buf {
+				if err := outbox.Send(ctx, item); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // SortBy sorts items by their key K using the natural ordering of K.
-func SortBy[T any, K interface{ ~int | ~int64 | ~float64 | ~string }](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
+func SortBy[T any, K cmp.Ordered](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
 	return Sort(p, func(a, b T) bool { return keyFn(a) < keyFn(b) }, opts...)
 }
 
@@ -265,47 +316,77 @@ func SortBy[T any, K interface{ ~int | ~int64 | ~float64 | ~string }](p *Pipelin
 // Unzip splits a pipeline of [Pair][A, B] into two separate pipelines.
 // Both output pipelines must be consumed (e.g., via [MergeRunners]).
 func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A], *Pipeline[B]) {
+	track(p)
 	cfg := buildStageConfig(opts)
-	aCh := make(chan A, cfg.buffer)
-	bCh := make(chan B, cfg.buffer)
+	aID := nextPipelineID()
+	bID := nextPipelineID()
 
-	meta := stageMeta{
-		kind:       "unzip",
-		name:       orDefault(cfg.name, "unzip"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(aCh) },
-		getChanCap: func() int { return cap(aCh) },
+	aMeta := stageMeta{
+		id:     aID,
+		kind:   "unzip",
+		name:   orDefault(cfg.name, "unzip"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
+	}
+	bMeta := stageMeta{
+		id:     bID,
+		kind:   "unzip",
+		name:   orDefault(cfg.name, "unzip") + "_b",
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
 
-	stage := func(ctx context.Context) error {
-		defer close(aCh)
-		defer close(bCh)
-		defer func() { go internal.DrainChan(p.ch) }()
+	// sharedBuild creates both channels and the stage on the first call.
+	sharedBuild := func(rc *runCtx) (chan A, chan B) {
+		if existing := rc.getChan(aID); existing != nil {
+			return existing.(chan A), rc.getChan(bID).(chan B)
+		}
+		inCh := p.build(rc)
+		aCh := make(chan A, cfg.buffer)
+		bCh := make(chan B, cfg.buffer)
+		m := aMeta
+		m.getChanLen = func() int { return len(aCh) }
+		m.getChanCap = func() int { return cap(aCh) }
+		rc.setChan(aID, aCh)
+		rc.setChan(bID, bCh)
+		stage := func(ctx context.Context) error {
+			defer close(aCh)
+			defer close(bCh)
+			defer func() { go internal.DrainChan(inCh) }()
 
-		aBox := internal.NewBlockingOutbox(aCh)
-		bBox := internal.NewBlockingOutbox(bCh)
+			aBox := internal.NewBlockingOutbox(aCh)
+			bBox := internal.NewBlockingOutbox(bCh)
 
-		for {
-			select {
-			case pair, ok := <-p.ch:
-				if !ok {
-					return nil
+			for {
+				select {
+				case pair, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if err := aBox.Send(ctx, pair.Left); err != nil {
+						return err
+					}
+					if err := bBox.Send(ctx, pair.Right); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				if err := aBox.Send(ctx, pair.Left); err != nil {
-					return err
-				}
-				if err := bBox.Send(ctx, pair.Right); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return aCh, bCh
 	}
 
-	id := p.sl.add(stage, meta)
-	return newPipeline(aCh, p.sl, id), newPipeline(bCh, p.sl, id)
+	aP := newPipeline(aID, aMeta, func(rc *runCtx) chan A {
+		a, _ := sharedBuild(rc)
+		return a
+	})
+	bP := newPipeline(bID, bMeta, func(rc *runCtx) chan B {
+		_, b := sharedBuild(rc)
+		return b
+	})
+	return aP, bP
 }
 
 // ---------------------------------------------------------------------------

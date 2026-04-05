@@ -21,66 +21,73 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 	if len(pipelines) == 0 {
 		return FromSlice[T](nil)
 	}
-	stageLists := make([]*stageList, len(pipelines))
-	for i, p := range pipelines {
-		stageLists[i] = p.sl
+	for _, p := range pipelines {
+		track(p)
 	}
-	sl := combineStageLists(stageLists...)
-	ch := make(chan T, internal.DefaultBuffer)
 	inputs := make([]int, len(pipelines))
-	inChans := make([]<-chan T, len(pipelines))
 	for i, p := range pipelines {
 		inputs[i] = p.id
-		inChans[i] = p.ch
 	}
-
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "merge",
-		name:       "merge",
-		buffer:     internal.DefaultBuffer,
-		inputs:     inputs,
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "merge",
+		name:   "merge",
+		buffer: internal.DefaultBuffer,
+		inputs: inputs,
 	}
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() {
-			for _, ic := range inChans {
-				go internal.DrainChan(ic)
-			}
-		}()
-
-		outbox := internal.NewBlockingOutbox(ch)
-		var wg sync.WaitGroup
-
-		for _, ic := range inChans {
-			ic := ic
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for {
-					select {
-					case item, ok := <-ic:
-						if !ok {
-							return
-						}
-						if err := outbox.Send(ctx, item); err != nil {
-							return
-						}
-					case <-ctx.Done():
-						return
-					}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inChans := make([]chan T, len(pipelines))
+		for i, p := range pipelines {
+			inChans[i] = p.build(rc)
+		}
+		ch := make(chan T, internal.DefaultBuffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				for _, ic := range inChans {
+					go internal.DrainChan(ic)
 				}
 			}()
+
+			outbox := internal.NewBlockingOutbox(ch)
+			var wg sync.WaitGroup
+
+			for _, ic := range inChans {
+				ic := ic
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for {
+						select {
+						case item, ok := <-ic:
+							if !ok {
+								return
+							}
+							if err := outbox.Send(ctx, item); err != nil {
+								return
+							}
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+			}
+
+			wg.Wait()
+			return nil
 		}
-
-		wg.Wait()
-		return nil
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := sl.add(stage, meta)
-	return newPipeline(ch, sl, id)
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -91,51 +98,81 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 // to the first pipeline; items for which it returns false go to the second.
 // Both pipelines must be consumed (directly or via [MergeRunners]).
 func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*Pipeline[T], *Pipeline[T]) {
+	track(p)
 	cfg := buildStageConfig(opts)
-	trueC := make(chan T, cfg.buffer)
-	falseC := make(chan T, cfg.buffer)
+	id := nextPipelineID()
+	falseID := nextPipelineID()
 
-	meta := stageMeta{
-		kind:       "partition",
-		name:       orDefault(cfg.name, "partition"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(trueC) },
-		getChanCap: func() int { return cap(trueC) },
+	trueMeta := stageMeta{
+		id:     id,
+		kind:   "partition",
+		name:   orDefault(cfg.name, "partition"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
+	}
+	falseMeta := stageMeta{
+		id:     falseID,
+		kind:   "partition",
+		name:   orDefault(cfg.name, "partition") + "_false",
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
 	}
 
-	stage := func(ctx context.Context) error {
-		defer close(trueC)
-		defer close(falseC)
-		defer func() { go internal.DrainChan(p.ch) }()
+	// sharedBuild creates both channels and the stage on the first call.
+	// Subsequent calls return the already-built channels.
+	sharedBuild := func(rc *runCtx) (chan T, chan T) {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T), rc.getChan(falseID).(chan T)
+		}
+		inCh := p.build(rc)
+		trueC := make(chan T, cfg.buffer)
+		falseC := make(chan T, cfg.buffer)
+		m := trueMeta
+		m.getChanLen = func() int { return len(trueC) }
+		m.getChanCap = func() int { return cap(trueC) }
+		rc.setChan(id, trueC)
+		rc.setChan(falseID, falseC)
+		stage := func(ctx context.Context) error {
+			defer close(trueC)
+			defer close(falseC)
+			defer func() { go internal.DrainChan(inCh) }()
 
-		trueBox := internal.NewBlockingOutbox(trueC)
-		falseBox := internal.NewBlockingOutbox(falseC)
+			trueBox := internal.NewBlockingOutbox(trueC)
+			falseBox := internal.NewBlockingOutbox(falseC)
 
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					return nil
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					var err error
+					if pred(item) {
+						err = trueBox.Send(ctx, item)
+					} else {
+						err = falseBox.Send(ctx, item)
+					}
+					if err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				var err error
-				if pred(item) {
-					err = trueBox.Send(ctx, item)
-				} else {
-					err = falseBox.Send(ctx, item)
-				}
-				if err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return trueC, falseC
 	}
 
-	// One stage drives both output channels. Both Pipelines share the same ID.
-	id := p.sl.add(stage, meta)
-	return newPipeline(trueC, p.sl, id), newPipeline(falseC, p.sl, id)
+	trueP := newPipeline(id, trueMeta, func(rc *runCtx) chan T {
+		t, _ := sharedBuild(rc)
+		return t
+	})
+	falseP := newPipeline(falseID, falseMeta, func(rc *runCtx) chan T {
+		_, f := sharedBuild(rc)
+		return f
+	})
+	return trueP, falseP
 }
 
 // ---------------------------------------------------------------------------
@@ -151,58 +188,89 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 
 // BroadcastN fans out each item to n identical output pipelines.
 func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
+	track(p)
 	cfg := buildStageConfig(opts)
 
-	chans := make([]chan T, n)
-	for i := range chans {
-		chans[i] = make(chan T, cfg.buffer)
+	// Allocate IDs for all outputs at construction time.
+	ids := make([]int, n)
+	for i := range ids {
+		ids[i] = nextPipelineID()
 	}
 
-	meta := stageMeta{
-		kind:       "broadcast",
-		name:       orDefault(cfg.name, "broadcast"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(chans[0]) },
-		getChanCap: func() int { return cap(chans[0]) },
-	}
-
-	stage := func(ctx context.Context) error {
-		defer func() {
-			for _, c := range chans {
-				close(c)
-			}
-		}()
-		defer func() { go internal.DrainChan(p.ch) }()
-
-		outboxes := make([]internal.Outbox[T], len(chans))
-		for i, c := range chans {
-			outboxes[i] = internal.NewBlockingOutbox(c)
+	metas := make([]stageMeta, n)
+	for i := range metas {
+		name := orDefault(cfg.name, "broadcast")
+		if i > 0 {
+			name = name + "_" + string(rune('0'+i))
 		}
+		metas[i] = stageMeta{
+			id:     ids[i],
+			kind:   "broadcast",
+			name:   name,
+			buffer: cfg.buffer,
+			inputs: []int{p.id},
+		}
+	}
 
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					return nil
+	// sharedBuild creates all channels and the stage on the first call.
+	sharedBuild := func(rc *runCtx) []chan T {
+		if existing := rc.getChan(ids[0]); existing != nil {
+			chans := make([]chan T, n)
+			for i, id := range ids {
+				chans[i] = rc.getChan(id).(chan T)
+			}
+			return chans
+		}
+		inCh := p.build(rc)
+		chans := make([]chan T, n)
+		for i := range chans {
+			chans[i] = make(chan T, cfg.buffer)
+		}
+		m := metas[0]
+		m.getChanLen = func() int { return len(chans[0]) }
+		m.getChanCap = func() int { return cap(chans[0]) }
+		for i, id := range ids {
+			rc.setChan(id, chans[i])
+		}
+		stage := func(ctx context.Context) error {
+			defer func() {
+				for _, c := range chans {
+					close(c)
 				}
-				for _, ob := range outboxes {
-					if err := ob.Send(ctx, item); err != nil {
-						return err
+			}()
+			defer func() { go internal.DrainChan(inCh) }()
+
+			outboxes := make([]internal.Outbox[T], len(chans))
+			for i, c := range chans {
+				outboxes[i] = internal.NewBlockingOutbox(c)
+			}
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
 					}
+					for _, ob := range outboxes {
+						if err := ob.Send(ctx, item); err != nil {
+							return err
+						}
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return chans
 	}
-
-	// One stage drives all output channels; all Pipelines share the same ID.
-	id := p.sl.add(stage, meta)
 
 	out := make([]*Pipeline[T], n)
 	for i := range out {
-		out[i] = newPipeline(chans[i], p.sl, id)
+		i := i
+		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
+			return sharedBuild(rc)[i]
+		})
 	}
 	return out
 }
@@ -214,57 +282,89 @@ func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T
 // Balance distributes items across n output pipelines in round-robin order.
 // Each item goes to exactly one output. All n pipelines must be consumed.
 func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
+	track(p)
 	cfg := buildStageConfig(opts)
 
-	chans := make([]chan T, n)
-	for i := range chans {
-		chans[i] = make(chan T, cfg.buffer)
+	// Allocate IDs for all outputs at construction time.
+	ids := make([]int, n)
+	for i := range ids {
+		ids[i] = nextPipelineID()
 	}
 
-	meta := stageMeta{
-		kind:       "balance",
-		name:       orDefault(cfg.name, "balance"),
-		buffer:     cfg.buffer,
-		inputs:     []int{p.id},
-		getChanLen: func() int { return len(chans[0]) },
-		getChanCap: func() int { return cap(chans[0]) },
-	}
-
-	stage := func(ctx context.Context) error {
-		defer func() {
-			for _, c := range chans {
-				close(c)
-			}
-		}()
-		defer func() { go internal.DrainChan(p.ch) }()
-
-		outboxes := make([]internal.Outbox[T], len(chans))
-		for i, c := range chans {
-			outboxes[i] = internal.NewBlockingOutbox(c)
+	metas := make([]stageMeta, n)
+	for i := range metas {
+		name := orDefault(cfg.name, "balance")
+		if i > 0 {
+			name = name + "_" + string(rune('0'+i))
 		}
-
-		i := 0
-		for {
-			select {
-			case item, ok := <-p.ch:
-				if !ok {
-					return nil
-				}
-				if err := outboxes[i%len(outboxes)].Send(ctx, item); err != nil {
-					return err
-				}
-				i++
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		metas[i] = stageMeta{
+			id:     ids[i],
+			kind:   "balance",
+			name:   name,
+			buffer: cfg.buffer,
+			inputs: []int{p.id},
 		}
 	}
 
-	id := p.sl.add(stage, meta)
+	// sharedBuild creates all channels and the stage on the first call.
+	sharedBuild := func(rc *runCtx) []chan T {
+		if existing := rc.getChan(ids[0]); existing != nil {
+			chans := make([]chan T, n)
+			for i, id := range ids {
+				chans[i] = rc.getChan(id).(chan T)
+			}
+			return chans
+		}
+		inCh := p.build(rc)
+		chans := make([]chan T, n)
+		for i := range chans {
+			chans[i] = make(chan T, cfg.buffer)
+		}
+		m := metas[0]
+		m.getChanLen = func() int { return len(chans[0]) }
+		m.getChanCap = func() int { return cap(chans[0]) }
+		for i, id := range ids {
+			rc.setChan(id, chans[i])
+		}
+		stage := func(ctx context.Context) error {
+			defer func() {
+				for _, c := range chans {
+					close(c)
+				}
+			}()
+			defer func() { go internal.DrainChan(inCh) }()
+
+			outboxes := make([]internal.Outbox[T], len(chans))
+			for i, c := range chans {
+				outboxes[i] = internal.NewBlockingOutbox(c)
+			}
+
+			idx := 0
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if err := outboxes[idx%len(outboxes)].Send(ctx, item); err != nil {
+						return err
+					}
+					idx++
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return chans
+	}
 
 	out := make([]*Pipeline[T], n)
 	for i := range out {
-		out[i] = newPipeline(chans[i], p.sl, id)
+		i := i
+		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
+			return sharedBuild(rc)[i]
+		})
 	}
 	return out
 }
@@ -290,69 +390,75 @@ func Zip[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B]] {
 // ZipWith pairs items from a and b positionally and transforms them using fn.
 // The pipeline completes when either input completes.
 func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+	track(a)
+	track(b)
 	cfg := buildStageConfig(opts)
-	ch := make(chan O, cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "zip",
-		name:       orDefault(cfg.name, "zip"),
-		buffer:     cfg.buffer,
-		inputs:     []int{a.id, b.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "zip",
+		name:   orDefault(cfg.name, "zip"),
+		buffer: cfg.buffer,
+		inputs: []int{a.id, b.id},
 	}
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+		aCh := a.build(rc)
+		bCh := b.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				go internal.DrainChan(aCh)
+				go internal.DrainChan(bCh)
+			}()
 
-	aCh := a.ch
-	bCh := b.ch
+			outbox := internal.NewBlockingOutbox(ch)
 
-	// Combine stageLists so pipelines from independent sources run together.
-	sl := combineStageLists(a.sl, b.sl)
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() {
-			go internal.DrainChan(aCh)
-			go internal.DrainChan(bCh)
-		}()
-
-		outbox := internal.NewBlockingOutbox(ch)
-
-		for {
-			// Read from a first.
-			var av A
-			select {
-			case v, ok := <-aCh:
-				if !ok {
-					return nil
+			for {
+				// Read from a first.
+				var av A
+				select {
+				case v, ok := <-aCh:
+					if !ok {
+						return nil
+					}
+					av = v
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				av = v
-			case <-ctx.Done():
-				return ctx.Err()
-			}
 
-			// Then read from b.
-			var bv B
-			select {
-			case v, ok := <-bCh:
-				if !ok {
-					return nil
+				// Then read from b.
+				var bv B
+				select {
+				case v, ok := <-bCh:
+					if !ok {
+						return nil
+					}
+					bv = v
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				bv = v
-			case <-ctx.Done():
-				return ctx.Err()
-			}
 
-			result, err := fn(ctx, av, bv)
-			if err != nil {
-				return internal.WrapStageErr(cfg.name, err, 0)
-			}
-			if err := outbox.Send(ctx, result); err != nil {
-				return err
+				result, err := fn(ctx, av, bv)
+				if err != nil {
+					return internal.WrapStageErr(cfg.name, err, 0)
+				}
+				if err := outbox.Send(ctx, result); err != nil {
+					return err
+				}
 			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := sl.add(stage, meta)
-	return newPipeline(ch, sl, id)
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -372,116 +478,123 @@ func CombineLatest[A, B any](a *Pipeline[A], b *Pipeline[B]) *Pipeline[Pair[A, B
 // combining the latest values from each using fn. Emitting starts after both
 // have emitted at least one item.
 func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+	track(a)
+	track(b)
 	cfg := buildStageConfig(opts)
-	ch := make(chan O, cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "combine_latest",
-		name:       orDefault(cfg.name, "combine_latest"),
-		buffer:     cfg.buffer,
-		inputs:     []int{a.id, b.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "combine_latest",
+		name:   orDefault(cfg.name, "combine_latest"),
+		buffer: cfg.buffer,
+		inputs: []int{a.id, b.id},
 	}
-
-	aCh := a.ch
-	bCh := b.ch
-
-	sl := combineStageLists(a.sl, b.sl)
-
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() {
-			go internal.DrainChan(aCh)
-			go internal.DrainChan(bCh)
-		}()
-
-		// outbox is called outside any mutex (see CombineLatest deadlock analysis).
-		outbox := internal.NewBlockingOutbox(ch)
-
-		var mu sync.Mutex
-		var latA A
-		var latB B
-		var hasA, hasB bool
-
-		errCh := make(chan error, 2)
-
-		go func() {
-			for {
-				select {
-				case v, ok := <-aCh:
-					if !ok {
-						errCh <- nil
-						return
-					}
-					mu.Lock()
-					latA = v
-					hasA = true
-					ready := hasA && hasB
-					snapA, snapB := latA, latB
-					mu.Unlock()
-					// Send OUTSIDE the lock to prevent deadlock under backpressure.
-					if ready {
-						result, err := fn(ctx, snapA, snapB)
-						if err != nil {
-							errCh <- internal.WrapStageErr(cfg.name, err, 0)
-							return
-						}
-						if err := outbox.Send(ctx, result); err != nil {
-							errCh <- err
-							return
-						}
-					}
-				case <-ctx.Done():
-					errCh <- ctx.Err()
-					return
-				}
-			}
-		}()
-
-		go func() {
-			for {
-				select {
-				case v, ok := <-bCh:
-					if !ok {
-						errCh <- nil
-						return
-					}
-					mu.Lock()
-					latB = v
-					hasB = true
-					ready := hasA && hasB
-					snapA, snapB := latA, latB
-					mu.Unlock()
-					// Send OUTSIDE the lock to prevent deadlock under backpressure.
-					if ready {
-						result, err := fn(ctx, snapA, snapB)
-						if err != nil {
-							errCh <- internal.WrapStageErr(cfg.name, err, 0)
-							return
-						}
-						if err := outbox.Send(ctx, result); err != nil {
-							errCh <- err
-							return
-						}
-					}
-				case <-ctx.Done():
-					errCh <- ctx.Err()
-					return
-				}
-			}
-		}()
-
-		// Wait for both goroutines.
-		for i := 0; i < 2; i++ {
-			if err := <-errCh; err != nil {
-				return err
-			}
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
 		}
-		return nil
-	}
+		aCh := a.build(rc)
+		bCh := b.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				go internal.DrainChan(aCh)
+				go internal.DrainChan(bCh)
+			}()
 
-	id := sl.add(stage, meta)
-	return newPipeline(ch, sl, id)
+			// outbox is called outside any mutex (see CombineLatest deadlock analysis).
+			outbox := internal.NewBlockingOutbox(ch)
+
+			var mu sync.Mutex
+			var latA A
+			var latB B
+			var hasA, hasB bool
+
+			errCh := make(chan error, 2)
+
+			go func() {
+				for {
+					select {
+					case v, ok := <-aCh:
+						if !ok {
+							errCh <- nil
+							return
+						}
+						mu.Lock()
+						latA = v
+						hasA = true
+						ready := hasA && hasB
+						snapA, snapB := latA, latB
+						mu.Unlock()
+						// Send OUTSIDE the lock to prevent deadlock under backpressure.
+						if ready {
+							result, err := fn(ctx, snapA, snapB)
+							if err != nil {
+								errCh <- internal.WrapStageErr(cfg.name, err, 0)
+								return
+							}
+							if err := outbox.Send(ctx, result); err != nil {
+								errCh <- err
+								return
+							}
+						}
+					case <-ctx.Done():
+						errCh <- ctx.Err()
+						return
+					}
+				}
+			}()
+
+			go func() {
+				for {
+					select {
+					case v, ok := <-bCh:
+						if !ok {
+							errCh <- nil
+							return
+						}
+						mu.Lock()
+						latB = v
+						hasB = true
+						ready := hasA && hasB
+						snapA, snapB := latA, latB
+						mu.Unlock()
+						// Send OUTSIDE the lock to prevent deadlock under backpressure.
+						if ready {
+							result, err := fn(ctx, snapA, snapB)
+							if err != nil {
+								errCh <- internal.WrapStageErr(cfg.name, err, 0)
+								return
+							}
+							if err := outbox.Send(ctx, result); err != nil {
+								errCh <- err
+								return
+							}
+						}
+					case <-ctx.Done():
+						errCh <- ctx.Err()
+						return
+					}
+				}
+			}()
+
+			// Wait for both goroutines.
+			for i := 0; i < 2; i++ {
+				if err := <-errCh; err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -501,79 +614,86 @@ func WithLatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[P
 // WithLatestFromWith combines each item from main with the most recent item from
 // other using fn. Emitting starts after other has provided at least one item.
 func WithLatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+	track(main)
+	track(other)
 	cfg := buildStageConfig(opts)
-	ch := make(chan O, cfg.buffer)
+	id := nextPipelineID()
 	meta := stageMeta{
-		kind:       "with_latest_from",
-		name:       orDefault(cfg.name, "with_latest_from"),
-		buffer:     cfg.buffer,
-		inputs:     []int{main.id, other.id},
-		getChanLen: func() int { return len(ch) },
-		getChanCap: func() int { return cap(ch) },
+		id:     id,
+		kind:   "with_latest_from",
+		name:   orDefault(cfg.name, "with_latest_from"),
+		buffer: cfg.buffer,
+		inputs: []int{main.id, other.id},
 	}
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+		mainCh := main.build(rc)
+		otherCh := other.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				go internal.DrainChan(mainCh)
+				go internal.DrainChan(otherCh)
+			}()
 
-	mainCh := main.ch
-	otherCh := other.ch
+			outbox := internal.NewBlockingOutbox(ch)
 
-	sl := combineStageLists(main.sl, other.sl)
+			var mu sync.Mutex
+			var latOther B
+			var hasOther bool
 
-	stage := func(ctx context.Context) error {
-		defer close(ch)
-		defer func() {
-			go internal.DrainChan(mainCh)
-			go internal.DrainChan(otherCh)
-		}()
-
-		outbox := internal.NewBlockingOutbox(ch)
-
-		var mu sync.Mutex
-		var latOther B
-		var hasOther bool
-
-		// Background goroutine tracks the latest value from other.
-		go func() {
-			for {
-				select {
-				case v, ok := <-otherCh:
-					if !ok {
+			// Background goroutine tracks the latest value from other.
+			go func() {
+				for {
+					select {
+					case v, ok := <-otherCh:
+						if !ok {
+							return
+						}
+						mu.Lock()
+						latOther = v
+						hasOther = true
+						mu.Unlock()
+					case <-ctx.Done():
 						return
 					}
-					mu.Lock()
-					latOther = v
-					hasOther = true
-					mu.Unlock()
-				case <-ctx.Done():
-					return
 				}
-			}
-		}()
+			}()
 
-		for {
-			select {
-			case av, ok := <-mainCh:
-				if !ok {
-					return nil
+			for {
+				select {
+				case av, ok := <-mainCh:
+					if !ok {
+						return nil
+					}
+					mu.Lock()
+					ready := hasOther
+					bv := latOther
+					mu.Unlock()
+					if !ready {
+						continue
+					}
+					result, err := fn(ctx, av, bv)
+					if err != nil {
+						return internal.WrapStageErr(cfg.name, err, 0)
+					}
+					if err := outbox.Send(ctx, result); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				mu.Lock()
-				ready := hasOther
-				bv := latOther
-				mu.Unlock()
-				if !ready {
-					continue
-				}
-				result, err := fn(ctx, av, bv)
-				if err != nil {
-					return internal.WrapStageErr(cfg.name, err, 0)
-				}
-				if err := outbox.Send(ctx, result); err != nil {
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
 			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-
-	id := sl.add(stage, meta)
-	return newPipeline(ch, sl, id)
+	return newPipeline(id, meta, build)
 }
