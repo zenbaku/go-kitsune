@@ -142,6 +142,7 @@ See [`doc/inspector.md`](doc/inspector.md) for the full dashboard reference incl
 |---|---|
 | `Batch[T](p, size, opts…)` | Collect up to `size` items into a `[]T` slice; use `BatchTimeout` to flush partials |
 | `Window[T](p, duration, opts…)` | Time-based batching: flush accumulated items every `duration` |
+| `WindowByTime[T](p, duration)` | Fixed-duration tumbling windows: a new window starts every `duration` regardless of item arrival; partial window emitted when source completes |
 | `SlidingWindow[T](p, size, step)` | Overlapping (size > step) or tumbling (size == step) count-based windows emitted as `[]T` |
 
 ### Enrichment
@@ -325,6 +326,7 @@ events, _ := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
 |---|---|
 | `Stage[I, O any]` | Named function type `func(*Pipeline[I]) *Pipeline[O]`; zero runtime cost |
 | `(s) Apply(p *Pipeline[I]) *Pipeline[O]` | Run this stage against an input pipeline |
+| `(s) Or(fallback Stage[I,O]) Stage[I,O]` | Return a stage that tries `s` first; if the primary produces no output (error or empty), `fallback` is called with the same input |
 | `Then[A,B,C](first, second)` | Compose two stages into one; free function required (Go methods cannot introduce new type parameters) |
 
 `Stage[T, T]` is directly compatible with `.Through()`, no adapter needed:

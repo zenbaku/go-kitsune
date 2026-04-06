@@ -248,28 +248,33 @@ v2's goal is a drop-in engine swap: same public API, typed channels underneath. 
 Gaps identified by deep comparison with v1. These are v1 features absent from v2, not intentional removals.
 
 #### Deduplication variants
-- [ ] **`ConsecutiveDedup[T comparable](p) *Pipeline[T]`** — emit only when value changes (stateless per-item comparison, not set-based); v2's `Dedupe` uses an in-memory set (global)
-- [ ] **`ConsecutiveDedupBy[T any, K comparable](p, keyFn func(T) K) *Pipeline[T]`** — emit only when the extracted key changes; distinct from `DedupeBy` which is set-based
+- [x] **`ConsecutiveDedup[T comparable](p) *Pipeline[T]`** — emit only when value changes (stateless per-item comparison, not set-based); implemented in `compat.go` via closure-based `Filter`
+- [x] **`ConsecutiveDedupBy[T any, K comparable](p, keyFn func(T) K) *Pipeline[T]`** — emit only when the extracted key changes; same closure pattern
 
 #### Aggregation shorthands
-- [ ] **`CountBy[T any](p, keyFn func(T) string, opts...) *Pipeline[map[string]int64]`** — streaming operator: emits a full snapshot of the count map after each item; key is always `string`; runs at `Concurrency(1)`
-- [ ] **`SumBy[T any, V Numeric](p, keyFn func(T) string, valueFn func(T) V, opts...) *Pipeline[map[string]V]`** — like `CountBy` but sums a numeric value per key; `V` must satisfy the `Numeric` constraint; compose with `Throttle` for periodic snapshots
+- [x] **`CountBy[T any](p, keyFn func(T) string, opts...) *Pipeline[map[string]int64]`** — streaming operator: emits a full snapshot of the count map after each item; runs at `Concurrency(1)`
+- [x] **`SumBy[T any, V Numeric](p, keyFn func(T) string, valueFn func(T) V, opts...) *Pipeline[map[string]V]`** — like `CountBy` but sums a numeric value per key; compose with `Throttle` for periodic snapshots
 
 #### Intersperse variant
-- [ ] **`MapIntersperse[T, O any](p, sep O, fn func(ctx, T) (O, error)) *Pipeline[O]`** — apply `fn` to each item then insert `sep` between consecutive mapped outputs (not before the first or after the last)
+- [x] **`MapIntersperse[T, O any](p, sep O, fn func(ctx, T) (O, error)) *Pipeline[O]`** — apply `fn` to each item then insert `sep` between consecutive mapped outputs (not before the first or after the last)
 
 #### Time-based windowing
-- [ ] **`Window[T](p, duration time.Duration) *Pipeline[[]T]`** — tumbling time window; emits a slice per elapsed interval; v2's current `Window(n)` is count-based only; note: `Batch` with `BatchTimeout` is NOT equivalent — it produces batches of up to N items flushed by time, not fixed-duration time buckets
+- [x] **`WindowByTime[T](p, duration time.Duration) *Pipeline[[]T]`** — tumbling time window; emits a slice per elapsed interval; note: named `WindowByTime` (not `Window`) to avoid collision with the existing count-based `Window(p, n)`
 
 #### Dead letter / error routing
 
 - [x] **`ErrItem[I any]`** — done in P7; `struct { Item I; Err error }` in `advanced.go`
 - [x] **`MapResult[I, O any]`** — done in P7; returns `(*Pipeline[O], *Pipeline[ErrItem[I]])`
-- [ ] **`DeadLetter[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — like `MapResult` but respects `OnError(Retry(...))` in opts; items that exhaust all retries go to the `ErrItem` branch; items that never error go directly to the success branch without touching the error branch
-- [ ] **`DeadLetterSink[I any](p, fn func(ctx, I) error, opts...) (*Pipeline[ErrItem[I]], *Runner)`** — wraps a sink (ForEach-like fn) with dead-letter routing; returns the `ErrItem` pipeline and a `*Runner`; the caller must consume the `ErrItem` pipeline before calling `runner.Run`
+- [x] **`DeadLetter[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — like `MapResult` but respects `OnError(Retry(...))` in opts; items that exhaust all retries go to the `ErrItem` branch
+- [x] **`DeadLetterSink[I any](p, fn func(ctx, I) error, opts...) (*Pipeline[ErrItem[I]], *Runner)`** — wraps a sink with dead-letter routing; caller must consume the `ErrItem` pipeline before calling `runner.Run`
 
 #### Stage fallback composition
-- [ ] **`Stage[I,O].Or(fallback Stage[I,O]) Stage[I,O]`** — returns a stage that calls the primary and, on error, calls `fallback` with the same input; composes with `Then`
+- [x] **`Stage[I,O].Or(fallback Stage[I,O]) Stage[I,O]`** — returns a stage that tries the primary and, on no output, calls `fallback` with the same input; composes with `Then`
+
+#### Enrich / bulk lookup
+- [x] **`MapBatch[I, O any](p, size int, fn func(ctx, []I) ([]O, error), opts...) *Pipeline[O]`** — collects up to `size` items, passes the slice to `fn`, flattens results; built on `Batch` + `FlatMap`; supports `BatchTimeout`, `Concurrency`, `OnError`
+- [ ] **`LookupBy[T any, K comparable, V any](p, cfg LookupConfig[T, K, V], opts...) *Pipeline[Pair[T, V]]`** — batches items, deduplicates keys, calls `cfg.Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item: t, Value: v}`; items whose key is absent receive the zero value for `V`; `LookupConfig` has `Key func(T) K`, `Fetch func(ctx, []K) (map[K]V, error)`, `BatchSize int` (default 100)
+- [ ] **`Enrich[T any, K comparable, V, O any](p, cfg EnrichConfig[T, K, V, O], opts...) *Pipeline[O]`** — like `LookupBy` but calls `cfg.Combine func(T, V) O` to produce the output directly; `EnrichConfig` adds `Combine` to the `LookupConfig` fields
 
 #### State system
 - [ ] **`Key[T any]`** — declares a named piece of typed run-scoped state; created with `NewKey[T](name string, initial T, opts ...KeyOption) Key[T]`; declare as package-level vars; supports `StateTTL(d)` option for lazy expiry
@@ -278,8 +283,3 @@ Gaps identified by deep comparison with v1. These are v1 features absent from v2
 - [ ] **`FlatMapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I, yield func(O) error) error, opts...) *Pipeline[O]`** — like `FlatMap` but stateful
 - [ ] **`MapWithKey[I, O, S any](p, itemKeyFn func(I) string, key Key[S], fn func(ctx, *Ref[S], string, I) (O, error), opts...) *Pipeline[O]`** — variant where each item is routed to a per-item-key `Ref` shard; `itemKeyFn` partitions items into independent state cells
 - [ ] **`FlatMapWithKey[I, O, S any]`** — same as `MapWithKey` but flat-maps
-
-#### Enrich / bulk lookup
-- [ ] **`MapBatch[I, O any](p, size int, fn func(ctx, []I) ([]O, error), opts...) *Pipeline[O]`** — collects up to `size` items, passes the slice to `fn`, flattens the returned slice; internally `Batch` + `FlatMap`; supports `BatchTimeout`, `Concurrency`, `OnError`; `fn` must return exactly `len(input)` items or an error
-- [ ] **`LookupBy[T any, K comparable, V any](p, cfg LookupConfig[T, K, V], opts...) *Pipeline[Pair[T, V]]`** — batches items, deduplicates keys, calls `cfg.Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item: t, Value: v}`; items whose key is absent in the fetch result receive the zero value for `V`; `LookupConfig` has `Key func(T) K`, `Fetch func(ctx, []K) (map[K]V, error)`, `BatchSize int` (default 100)
-- [ ] **`Enrich[T any, K comparable, V, O any](p, cfg EnrichConfig[T, K, V, O], opts...) *Pipeline[O]`** — like `LookupBy` but lets the caller control the output type via `cfg.Combine func(T, V) O`; `EnrichConfig` adds `Combine` to the `LookupConfig` fields
