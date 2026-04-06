@@ -263,8 +263,8 @@ Gaps identified by deep comparison with v1. These are v1 features absent from v2
 
 #### Dead letter / error routing
 
-- [ ] **`ErrItem[I any]`** — `struct { Item I; Err error }`; carries the original input alongside the error; used as the element type of the error pipeline returned by `MapResult`, `DeadLetter`, and `DeadLetterSink`
-- [ ] **`MapResult[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — v1's version splits into two typed pipelines (success branch + `ErrItem` branch); v2's current `MapResult` returns a single `*Pipeline[Result[O]]` — semantically different; both branches must be consumed (same rule as `Partition`)
+- [x] **`ErrItem[I any]`** — done in P7; `struct { Item I; Err error }` in `advanced.go`
+- [x] **`MapResult[I, O any]`** — done in P7; returns `(*Pipeline[O], *Pipeline[ErrItem[I]])`
 - [ ] **`DeadLetter[I, O any](p, fn func(ctx, I) (O, error), opts...) (*Pipeline[O], *Pipeline[ErrItem[I]])`** — like `MapResult` but respects `OnError(Retry(...))` in opts; items that exhaust all retries go to the `ErrItem` branch; items that never error go directly to the success branch without touching the error branch
 - [ ] **`DeadLetterSink[I any](p, fn func(ctx, I) error, opts...) (*Pipeline[ErrItem[I]], *Runner)`** — wraps a sink (ForEach-like fn) with dead-letter routing; returns the `ErrItem` pipeline and a `*Runner`; the caller must consume the `ErrItem` pipeline before calling `runner.Run`
 
