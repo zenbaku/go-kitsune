@@ -16,14 +16,14 @@ import (
 // It implements [Hook], [OverflowHook], [SupervisionHook], [SampleHook],
 // [GraphHook], and [BufferHook].
 type RecordingHook struct {
-	mu      sync.Mutex
-	starts  []string
-	items   []itemRecord
-	dones   []doneRecord
-	drops   []any
+	mu       sync.Mutex
+	starts   []string
+	items    []itemRecord
+	dones    []doneRecord
+	drops    []any
 	restarts []restartRecord
-	samples []sampleRecord
-	graph   []internal.GraphNode
+	samples  []sampleRecord
+	graph    []internal.GraphNode
 }
 
 type itemRecord struct {

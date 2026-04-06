@@ -44,8 +44,8 @@ type stageMeta struct {
 	timeout     time.Duration
 	hasRetry    bool
 	hasSuperv   bool
-	getChanLen func() int
-	getChanCap func() int
+	getChanLen  func() int
+	getChanCap  func() int
 }
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ func (rc *runCtx) add(fn stageFunc, meta stageMeta) {
 	rc.metas = append(rc.metas, meta)
 }
 
-func (rc *runCtx) getChan(id int) any  { return rc.chans[id] }
+func (rc *runCtx) getChan(id int) any     { return rc.chans[id] }
 func (rc *runCtx) setChan(id int, ch any) { rc.chans[id] = ch }
 
 // ---------------------------------------------------------------------------

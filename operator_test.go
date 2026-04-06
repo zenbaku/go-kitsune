@@ -127,7 +127,7 @@ func TestFlatMapSerial(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got := collectAll(t, kitsune.FlatMap(p, func(_ context.Context, v int, yield func(int) error) error {
 		for i := 0; i < v; i++ {
-			if err := yield(v * 10 + i); err != nil {
+			if err := yield(v*10 + i); err != nil {
 				return err
 			}
 		}

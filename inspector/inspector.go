@@ -56,7 +56,7 @@ type Inspector struct {
 	bufferQuery func() []kithooks.BufferStatus // set by OnBuffers; nil until engine calls it
 
 	cancelCh     chan struct{} // swapped on restart; protected by mu
-	cancelClosed bool         // prevents double-close; protected by mu
+	cancelClosed bool          // prevents double-close; protected by mu
 	restartCh    chan struct{} // swapped on each restart; protected by mu
 	pauseCh      chan struct{} // swapped on each pause; protected by mu
 	resumeCh     chan struct{} // swapped on each resume; protected by mu

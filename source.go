@@ -589,8 +589,8 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 		}
 
 		var (
-			wg      sync.WaitGroup
-			errOnce sync.Once
+			wg       sync.WaitGroup
+			errOnce  sync.Once
 			firstErr error
 		)
 

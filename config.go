@@ -419,16 +419,16 @@ func ExponentialBackoff(initial, max time.Duration) Backoff {
 
 type skipHandler struct{}
 
-func (*skipHandler) Handle(error, int) internal.ErrorAction     { return internal.ActionSkip }
-func (*skipHandler) Backoff() func(attempt int) time.Duration   { return nil }
+func (*skipHandler) Handle(error, int) internal.ErrorAction   { return internal.ActionSkip }
+func (*skipHandler) Backoff() func(attempt int) time.Duration { return nil }
 
 type returnHandler struct {
 	val any
 }
 
-func (h *returnHandler) Handle(error, int) internal.ErrorAction     { return internal.ActionReturn }
-func (h *returnHandler) Backoff() func(attempt int) time.Duration   { return nil }
-func (h *returnHandler) ReturnValue() any                           { return h.val }
+func (h *returnHandler) Handle(error, int) internal.ErrorAction   { return internal.ActionReturn }
+func (h *returnHandler) Backoff() func(attempt int) time.Duration { return nil }
+func (h *returnHandler) ReturnValue() any                         { return h.val }
 
 type retryHandler struct {
 	max      int

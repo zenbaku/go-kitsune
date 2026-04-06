@@ -17,8 +17,8 @@ type StageMetrics struct {
 	Stage     string        `json:"stage"`
 	Processed int64         `json:"processed"`
 	Errors    int64         `json:"errors"`
-	Dropped   int64         `json:"dropped"`   // overflow drops
-	Restarts  int64         `json:"restarts"`  // supervision restarts
+	Dropped   int64         `json:"dropped"`    // overflow drops
+	Restarts  int64         `json:"restarts"`   // supervision restarts
 	TotalTime time.Duration `json:"total_time"` // sum of per-item processing durations
 }
 

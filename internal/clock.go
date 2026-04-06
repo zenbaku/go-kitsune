@@ -26,7 +26,7 @@ type Ticker interface {
 // RealClock is the default Clock implementation that delegates to the standard library.
 type RealClock struct{}
 
-func (RealClock) Now() time.Time                        { return time.Now() }
+func (RealClock) Now() time.Time                         { return time.Now() }
 func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 func (RealClock) NewTimer(d time.Duration) Timer {
@@ -41,11 +41,11 @@ func (RealClock) NewTicker(d time.Duration) Ticker {
 
 type realTimer struct{ t *time.Timer }
 
-func (r *realTimer) C() <-chan time.Time         { return r.t.C }
+func (r *realTimer) C() <-chan time.Time        { return r.t.C }
 func (r *realTimer) Stop() bool                 { return r.t.Stop() }
 func (r *realTimer) Reset(d time.Duration) bool { return r.t.Reset(d) }
 
 type realTicker struct{ t *time.Ticker }
 
 func (r *realTicker) C() <-chan time.Time { return r.t.C }
-func (r *realTicker) Stop()              { r.t.Stop() }
+func (r *realTicker) Stop()               { r.t.Stop() }

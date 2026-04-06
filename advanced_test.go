@@ -408,4 +408,3 @@ func TestSessionWindow(t *testing.T) {
 		t.Errorf("session 1: got %v", got[1])
 	}
 }
-

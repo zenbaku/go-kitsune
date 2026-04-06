@@ -25,7 +25,7 @@ func TestCacheBySkipsCallOnHit(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 1, 3, 2}) // 1 and 2 appear twice
 	got, err := kitsune.Collect(ctx,
 		kitsune.Map(p, double, kitsune.CacheBy(func(v int) string {
-			return string(rune('0'+v))
+			return string(rune('0' + v))
 		})),
 		kitsune.WithCache(cache, 0),
 	)
