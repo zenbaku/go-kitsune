@@ -1,68 +1,51 @@
-// Example: fanout — splitting a pipeline by condition.
+// Example: fanout — split a stream and run each branch concurrently.
 //
-// Demonstrates: Partition, Merge, MergeRunners
+// Demonstrates: Partition, ForEachRunner.Build, MergeRunners
 package main
 
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	kitsune "github.com/zenbaku/go-kitsune"
 )
 
-type Order struct {
-	ID     string
-	Amount float64
-}
-
 func main() {
-	orders := []Order{
-		{"A1", 25.00},
-		{"A2", 150.00},
-		{"A3", 10.00},
-		{"A4", 500.00},
-		{"A5", 75.00},
-	}
+	ctx := context.Background()
 
-	input := kitsune.FromSlice(orders)
+	nums := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 
-	// Split orders into high-value (≥100) and regular.
-	high, regular := kitsune.Partition(input, func(o Order) bool {
-		return o.Amount >= 100
-	})
+	// Partition splits the stream into two typed pipelines based on a predicate.
+	evens, odds := kitsune.Partition(nums, func(n int) bool { return n%2 == 0 })
 
-	// Process each branch independently.
-	var highResults, regularResults []string
+	var mu sync.Mutex
+	var evenResults, oddResults []int
 
-	highRunner := kitsune.Map(high, func(_ context.Context, o Order) (string, error) {
-		return fmt.Sprintf("[VIP] %s: $%.2f", o.ID, o.Amount), nil
-	}).ForEach(func(_ context.Context, s string) error {
-		highResults = append(highResults, s)
+	evenRunner := evens.ForEach(func(_ context.Context, n int) error {
+		mu.Lock()
+		evenResults = append(evenResults, n)
+		mu.Unlock()
 		return nil
-	})
+	}).Build()
 
-	regularRunner := kitsune.Map(regular, func(_ context.Context, o Order) (string, error) {
-		return fmt.Sprintf("[STD] %s: $%.2f", o.ID, o.Amount), nil
-	}).ForEach(func(_ context.Context, s string) error {
-		regularResults = append(regularResults, s)
+	oddRunner := odds.ForEach(func(_ context.Context, n int) error {
+		mu.Lock()
+		oddResults = append(oddResults, n)
+		mu.Unlock()
 		return nil
-	})
+	}).Build()
 
-	// Run both branches.
-	runner, err := kitsune.MergeRunners(highRunner, regularRunner)
+	// MergeRunners starts both branches from the same shared source and waits
+	// for both to finish. All branches must complete before Run returns.
+	merged, err := kitsune.MergeRunners(evenRunner, oddRunner)
 	if err != nil {
 		panic(err)
 	}
-	if err := runner.Run(context.Background()); err != nil {
+	if err := merged.Run(ctx); err != nil {
 		panic(err)
 	}
 
-	fmt.Println("High-value orders:")
-	for _, s := range highResults {
-		fmt.Println(" ", s)
-	}
-	fmt.Println("Regular orders:")
-	for _, s := range regularResults {
-		fmt.Println(" ", s)
-	}
+	fmt.Println("evens:", evenResults)
+	fmt.Println("odds: ", oddResults)
 }

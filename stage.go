@@ -1,53 +1,43 @@
 package kitsune
 
-import "context"
+// ---------------------------------------------------------------------------
+// Stage — composable pipeline transformer
+// ---------------------------------------------------------------------------
 
-// Stage[I, O] is a reusable, composable pipeline transformation.
-// A Stage is a first-class value that can be defined, stored, passed as an
-// argument, tested in isolation, and combined with other stages via [Then].
+// Stage is a composable pipeline transformer: a function that takes an input
+// pipeline and returns an output pipeline. Use [Then] to chain stages, and
+// [Pipeline.Through] to apply a same-type stage to a pipeline.
 //
-// Define one with a direct type conversion:
-//
-//	var ParseStage kitsune.Stage[string, Event] = func(p *kitsune.Pipeline[string]) *kitsune.Pipeline[Event] {
-//	    return kitsune.Map(p, parseEvent, kitsune.Concurrency(5))
+//	var parseEvent Stage[string, Event] = func(lines *Pipeline[string]) *Pipeline[Event] {
+//	    return Map(lines, func(ctx context.Context, line string) (Event, error) {
+//	        return json.Unmarshal(line)
+//	    })
 //	}
 //
-// Stage[T, T] (type-preserving) has the same signature that [Pipeline.Through] expects,
-// so they are directly interchangeable — no adapter needed.
+//	result := parseEvent(lines)
 type Stage[I, O any] func(*Pipeline[I]) *Pipeline[O]
 
-// Apply runs this stage against an input pipeline, returning the output pipeline.
+// Then chains two stages: the output of s becomes the input of next.
+//
+//	validate := kitsune.Then(parse, enrich)
+//	result := validate(inputPipeline)
+func Then[I, M, O any](s Stage[I, M], next Stage[M, O]) Stage[I, O] {
+	return func(p *Pipeline[I]) *Pipeline[O] {
+		return next(s(p))
+	}
+}
+
+// Apply runs this stage against p and returns the output pipeline.
+// It is equivalent to calling the stage as a function: s(p).
+//
+//	events, _ := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
 func (s Stage[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 	return s(p)
 }
 
-// Then composes two stages into a single stage that runs first, then second.
+// Through applies stage s to the pipeline and returns the result.
 //
-// Must be a free function: Go methods cannot introduce new type parameters,
-// so s1.Then(s2) is not possible when the output type of s1 differs from I.
-// For long chains, name intermediate compositions to keep code readable:
-//
-//	var AB   = kitsune.Then(a, b)
-//	var ABCD = kitsune.Then(AB, kitsune.Then(c, d))
-func Then[A, B, C any](first Stage[A, B], second Stage[B, C]) Stage[A, C] {
-	return func(p *Pipeline[A]) *Pipeline[C] {
-		return second(first(p))
-	}
-}
-
-// Or returns a Stage that tries primary and, on error, falls back to fallback.
-// If primary succeeds, its result is emitted. If primary returns an error,
-// fallback is called with the same item; its result (or error) is used instead.
-//
-//	cache := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
-func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ...StageOption) Stage[I, O] {
-	return func(p *Pipeline[I]) *Pipeline[O] {
-		return Map(p, func(ctx context.Context, item I) (O, error) {
-			result, err := primary(ctx, item)
-			if err != nil {
-				return fallback(ctx, item)
-			}
-			return result, nil
-		}, opts...)
-	}
+//	p.Through(normalize).Through(enrich).ForEach(store).Run(ctx)
+func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T] {
+	return s(p)
 }

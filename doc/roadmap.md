@@ -1,305 +1,205 @@
 # Roadmap
 
-Items are loosely grouped by theme and ordered within each group by impact.
-Checked items are complete.
+Active and near-term work is listed first. Completed milestones follow, grouped by theme.
 
 ---
 
-## Error handling & reliability
+## Active / Near-term
 
-- [x] **Structured errors** — errors returned by `Runner.Run` should carry the
-  originating stage name, attempt number, and underlying cause in a typed
-  `StageError` struct. Today the raw error gives no context about which stage
-  failed or how many retries were exhausted.
+- [ ] **`doc/internals.md` refresh** — update architecture diagrams and file paths for the build-closure model; the current doc still references `internal/engine/`
+- [ ] **Benchmarks cleanup** — strip any v1/v2 labelling from `doc/benchmarks.md`; present current engine numbers as "Kitsune"
+- [ ] **Hooks-only tails** — migrate `kotel`, `kdatadog`, `kprometheus` to import `github.com/zenbaku/go-kitsune/hooks` directly instead of the root module, so they work without depending on the pipeline engine
+- [ ] **`bench/` revival** — update `archive/bench` to remove the v2 replace directive and benchmark against the current root module only
 
-- [x] **Dead-letter routing** — items that fail permanently (retries exhausted or
-  `OnError(Skip())`) silently disappear. Added `DeadLetter` and `DeadLetterSink`
-  which embed retry via `ProcessItem` and route exhausted-failure items to a
-  second `ErrItem` pipeline using the existing `MapResult` two-port node.
+## Longer-term ideas
 
----
-
-## Operators: missing transforms
-
-- [x] **`SwitchMap[I, O]`** — like `FlatMap` but cancels the active inner pipeline
-  when a new upstream item arrives, then starts a fresh one. The defining pattern
-  for search-as-you-type, live queries, and any scenario where a new request
-  supersedes the previous one. Without it, users reach for `ConcatMap` (wrong
-  ordering semantics) or wire up their own cancellation. Engine implementation
-  needs a per-outer-item context that is cancelled on the next upstream receive.
-
-- [x] **`ExhaustMap[I, O]`** — like `FlatMap` but ignores new upstream items while
-  an inner pipeline is still active. The defining pattern for "submit once, wait
-  for completion" flows: form submissions, idempotent API calls, debounced writes.
-  Complements `SwitchMap` — together they cover the three meaningful concurrency
-  modes for inner pipelines (`FlatMap` = all concurrent, `ConcatMap` = all
-  sequential, `SwitchMap` = latest wins, `ExhaustMap` = first wins).
-
-- [x] **`LiftPure`** — ergonomic wrapper for context-free, error-free functions,
-  complementing the existing `Lift` (which wraps `func(I) (O, error)`):
-  `kitsune.LiftPure(func(n int) int { return n * 2 })`. Removes the most common
-  friction point when onboarding users who just want a simple transform.
-
-- [x] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a
-  caller-supplied default value instead of dropping it (`Skip`) or halting the
-  pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup
-  should produce a sentinel value rather than a gap in the output:
-  `kitsune.OnError(kitsune.Return(User{Name: "unknown"}))`.
-
-- [x] **Session windows** — gap-based window that closes after a configurable
-  period of inactivity rather than on a fixed wall-clock boundary:
-  `kitsune.SessionWindow(p, gap time.Duration)`. Produces `[]T` slices like
-  `Window` and `SlidingWindow`. Requires a per-item timer that resets on each
-  new item and fires when the gap elapses with no new arrivals.
+- [ ] **`ForEach` supervision** — supervision is wired into `mapSerial`; extend to `ForEach` slow path
+- [ ] **Per-item timeout in FlatMap** — `Timeout` option is implemented for `Map`; apply the same to `FlatMap`
+- [ ] **Distributed dedup** — document the `WithDedupSet` + Redis SETNX pattern more prominently; consider a `BloomDedupSet` reference implementation
 
 ---
 
-## API correctness & completeness
+## Completed milestones
 
-- [x] **`RestartOnPanic` must not restart on regular errors** — `RestartOnPanic`
-  and `RestartAlways` were identical: both restarted on errors and panics.
-  Fixed by adding a `PanicOnly` guard to the supervision loop.
+### Foundation & typed engine
 
-- [x] **`MapBatch` opts double-application** — `opts` were forwarded to both the
-  internal `Batch` and `FlatMap` stages. Fixed by extracting only `BatchTimeout`
-  for the collection stage and passing all opts to the processing stage.
+- [x] **`Pipeline[T]` blueprint model** — `Pipeline[T]` is a lazy description carrying a `build func(*runCtx) chan T` closure; channels are allocated fresh on every `Run()` via a memoising `runCtx`, making pipelines reusable and diamond-graph-safe. Replaced the prior `chan any` engine entirely, eliminating all per-item boxing. Result: ~21 M/s, 47 allocs/run (0/item) for the trivial Map→Filter→Drain benchmark.
 
-- [x] **`Dedupe` context and error propagation** — `Dedupe` used
-  `context.Background()` for store calls (cancellation not propagated) and
-  silently discarded `Add` errors. Rewritten as a `Map` node so the pipeline
-  context flows through and `Add` errors halt the pipeline.
+- [x] **`Runner` / `RunAsync` / `RunHandle`** — `Runner.Run` blocks until the pipeline completes; `Runner.RunAsync` returns a `RunHandle` with `Pause()`, `Resume()`, `Wait()`, `Done()`, and `Err()`. `MergeRunners` combines forked terminals into a single run so all branches drain together.
 
-- [x] **Mutable-state closures made explicit** — `SlidingWindow` and `Scan`
-  closed over mutable state with no synchronization, relying silently on the
-  default `Concurrency(1)`. Both now pass `Concurrency(1)` explicitly to their
-  inner operator. `ConsecutiveDedup`/`ConsecutiveDedupBy` are safe by engine
-  design (Filter is always single-goroutine); comments updated accordingly.
+- [x] **Stage options** — `Concurrency`, `Ordered`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `OnError`, `Supervise`, `WithSampleRate`, `WithDedupSet`
 
-- [x] **`Min` / `Max` / `MinMax` should be O(1) memory** — all three call
-  `p.Collect()` and buffer the entire stream before scanning for the extremum.
-  Rewritten using `Reduce` + an `optional[T]` accumulator to keep only the
-  current best candidate. `MinBy`/`MaxBy` use a `byAcc[T,K]` variant.
+- [x] **Run options** — `WithHook`, `WithStore`, `WithCodec`, `WithCache`, `WithDrain`, `WithPauseGate`
 
-- [x] **`Scan` and `Dedupe` should accept `StageOption`** — both now accept
-  `opts ...StageOption`. `Scan` appends `Concurrency(1)` last to enforce
-  sequential execution. `Dedupe` uses `WithDedupSet(s DedupSet)` to accept a
-  custom backend; the old positional `DedupSet` argument is removed.
+- [x] **Error handlers & backoff** — `Retry`, `RetryThen`, `Return`, `Skip`; `FixedBackoff`, `ExponentialBackoff`
 
-- [x] **`Frequencies` concurrency guard** — `Frequencies` and `FrequenciesBy`
-  accumulate into a plain map inside a `ForEach` closure. The closure always
-  runs at `Concurrency(1)` today because no opts are forwarded to `ForEach`,
-  but this is implicit. Enforce `Concurrency(1)` explicitly, matching the
-  pattern used in `Scan`.
+- [x] **Supervision** — `RestartAlways`, `RestartOnError`, `RestartOnPanic`
+
+- [x] **Hooks** — `GraphHook`, `BufferHook`, `SampleHook`, `SupervisionHook`, `OverflowHook`; `MultiHook`, `LogHook`; shared `github.com/zenbaku/go-kitsune/hooks` module so tails implement the interface once and satisfy both the engine and any tail-level consumer without conversion
 
 ---
 
-## Observability
+### Sources & composition helpers
 
-- [x] **Configurable `SampleHook` rate** — `OnItemSample` fires every 10th item,
-  hard-coded across all instrumented stage runners. Added `WithSampleRate(n int)`
-  `RunOption`. Pass a negative value to disable sampling entirely.
+- [x] **Push-based source** — `Channel[T]` with `Send`, `TrySend`, `Close`; the canonical pattern for bridging external event streams into a pipeline
 
-- [x] **Structured stage metadata in `GraphNode`** — `GraphNode` now exposes
-  `BatchSize`, `Timeout`, `HasRetry`, and `HasSupervision` in addition to the
-  existing `Kind`, `Name`, `Concurrency`, `Buffer`, and `Overflow` fields.
+- [x] **Time sources** — `Ticker`, `Interval`, `Timer`; respect `WithClock` for deterministic tests
 
----
+- [x] **Generative sources** — `Unfold`, `Iterate`, `Repeatedly`, `Cycle`; `Concat` (factory-based, strictly ordered)
 
-## Performance
+- [x] **`Amb[T]`** — race multiple pipeline factories; forward items exclusively from whichever factory emits first, cancelling all others. Useful for redundant sources, failover, and latency hedging.
 
-- [x] **`[]any` allocation pressure in FlatMap** — the old `FlatMap` signature
-  (`func(ctx, I) ([]O, error)`) allocated an intermediate `[]any` slice on every
-  call. `FlatMap` now takes a yield callback (`func(ctx, I, func(O) error) error`)
-  that emits items one at a time, eliminating the intermediate allocation entirely.
-  The engine fast-path (default error handler) yields directly to the outbox with
-  zero buffering. All internal operators (`Pairwise`, `Intersperse`, `SlidingWindow`,
-  `ChunkBy`, `ChunkWhile`, `Sort`, `SortBy`, `ConcatMap`, `FlatMapWith`) were
-  migrated to the new signature.
+- [x] **`Stage[I, O]`** — named function type (`func(*Pipeline[I]) *Pipeline[O]`); zero-cost pipeline transformer compatible with `Map`. `Then` composes two stages; `Pipeline.Through` is the method form. `Stage.Or(fallback)` tries the primary and, on no output, falls back with the same input.
 
-- [x] **JSON-only cache and store serialization** — `CacheBy`, `MapWith`, and all
-  `Store`-backed `Ref` operations serialize through `encoding/json`. There is no
-  binary-safe alternative. Added `Codec` interface and `WithCodec` `RunOption`;
-  a custom codec replaces `encoding/json` for both cache and store-backed `Ref`
-  serialization. `JSONCodec` remains the default for backward compatibility.
-
-- [x] **`Concurrency(1)` fast paths** — for `Map`, `FlatMap`, `Filter`, and `Sink`
-  at `Concurrency(1)` with no custom hook or error handler, a stripped-down loop
-  bypasses `time.Now()` / `time.Since()`, `ProcessItem()` retry dispatch,
-  `hook.OnItem()` interface dispatch, and `outbox.Send()` interface dispatch.
-  Also added `sync.Pool` reuse for ordered-concurrent `mapSlot` / `flatMapSlot`
-  structs (including their `done` channels), and `clear`+reslice batch-buffer
-  reuse in `runBatch`. Fast paths use `for range` on receive (no per-item
-  ctx.Done select) plus a single send-side `select`; cancellation is detected
-  via `ctx.Err()` after the loop exits.
-
-- [x] **Receive-side micro-batching** — fast-path dispatchers drain up to 15
-  additional items non-blocking after each blocking channel receive, processing
-  them as a local `[16]any` buffer. This trades 16 expensive goroutine-handoff
-  receives for 1 expensive + 15 cheap non-blocking checks, cutting per-item
-  channel overhead by ~14×. Gated on `!n.Supervision.HasSupervision()` so that
-  pre-fetched items are never silently lost on supervision restart.
-  Net result: MapLinear improved from 5,066 µs → 2,855 µs; 3-stage comparison
-  improved from ~1.69 M/s to ~2.96 M/s (overhead vs raw goroutines: 3.5x → 2.1x).
-
-- [x] **Stage fusion** — consecutive fusible stages (Map, Filter, Sink at
-  `Concurrency(1)` with default config and `NoopHook`) are detected at run time
-  and collapsed into a single goroutine with direct function calls, eliminating
-  all inter-stage channel hops between them. A fusible chain of length ≥ 2 reads
-  from the head's real input channel, calls each stage function inline with the
-  same receiveBatchSize drain, writes to the tail's output channel (or calls the
-  sink directly), and closes all bypassed channels on exit. FlatMap is excluded
-  from fusion (its 1:N expansion already has a zero-alloc fast path via yield
-  closure; fusing it would require per-item closure allocation). Net result:
-  3-stage comparison improved from ~2.96 M/s to ~5.31 M/s (overhead vs raw
-  goroutines: 2.1x → +17%); MapLinear improved from 2,855 µs → 1,845 µs.
-
-- [x] **Concurrent fast paths** — extended the fast-path pattern to
-  `runMapConcurrent` and `runFlatMapConcurrent` (unordered). When
-  `DefaultHandler + NoopHook` hold, worker goroutines skip per-item timing,
-  hook dispatch, `ProcessItem`/`wrapStageErr`, and atomic counter updates.
-  The inner-context `Done` arm is retained (needed for prompt worker exit when
-  a sibling worker errors). Result: `MapConcurrent` 6,129 → 4,534 µs (−26%),
-  `MapOrdered/unordered` 7,563 → 5,909 µs (−22%).
-
-- [x] **Chunked inter-stage transport** — achieved via two complementary
-  approaches rather than `chan []any`. (1) Receive-side micro-batching: each
-  fast-path dispatcher drains up to 15 non-blocking items after one blocking
-  receive, amortising goroutine-handoff cost without changing the channel type or
-  public API. (2) Stage fusion: consecutive fusible stages collapse into one
-  goroutine, eliminating channel hops entirely rather than batching across them.
-  Together these brought 3-stage overhead from ~3.1× to +17% vs raw goroutines.
-  The `chan []any` approach would have been sufficient for goal (1) but fusion
-  subsumes it for goal (2) at lower latency cost.
-
-- [x] **Drain protocol (send-side select elimination)** — replaced
-  `select { case ch <- v: case <-ctx.Done(): }` with plain `ch <- v` in all
-  fast-path stage runners and the fused chain runner. Safety is maintained by a
-  drain goroutine (`go func() { for range inCh {} }()`) deferred at stage exit —
-  which unblocks any upstream blocked on a plain send. `nodeRunner` also defers
-  drain goroutines for all non-Source stages, covering slow-path exits. A new
-  `runSourceFastPath` skips the per-item 3-case early-exit select, dispatched
-  when `NoopHook + blockingOutbox + no Gate`. Net result: 3-stage comparison
-  improved from 189 ms → 75.7 ms (~2.16× faster than raw goroutines, overhead
-  +17% → -54%); MapLinear improved from 1,845 µs → 768 µs.
-
-- [x] **Generics at the engine layer (v2)** — `github.com/zenbaku/go-kitsune/v2`
-  replaces `chan any` with `chan T` at every stage boundary, eliminating all
-  per-item boxing. The architecture is a **blueprint model**: each `Pipeline[T]`
-  carries a `build func(*runCtx) chan T` closure; channels are allocated fresh on
-  every `Run()` call via a memoising `runCtx`, making pipelines reusable. Stage
-  fusion is implemented as typed build-time composition: fast-path Map and Filter
-  stages set a `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc`; when
-  `ForEach` detects a single-consumer fast-path chain with `NoopHook` it calls
-  `fusionEntry` directly, composing the entire chain into one goroutine with zero
-  channel hops and zero boxing. Result: ~21 M/s, 47 allocs/run (0/item) for the
-  trivial Map→Filter→Drain benchmark vs v1's ~13 M/s / 2 allocs/item. All v1
-  operators ported: Map (serial/concurrent/ordered), FlatMap, Filter, Tap, Take,
-  Drop, TakeWhile, DropWhile, Batch, Unbatch, Window, SlidingWindow, SessionWindow,
-  Scan, Reduce, Distinct, DistinctBy, Dedupe, DedupeBy, GroupBy, Frequencies, Merge,
-  Partition, Broadcast, Balance, Zip, ZipWith, CombineLatest, WithLatestFrom,
-  SwitchMap, ExhaustMap, ConcatMap, MapResult, MapRecover, Throttle, Debounce,
-  LiftPure, Timestamp, TimeInterval, Sort, SortBy, Unzip, StartWith, DefaultIfEmpty,
-  Contains, ElementAt, RateLimit, CircuitBreaker, Pool/MapPooled, MetricsHook, plus
-  all terminal helpers and the shared `hooks` module. 68+ tests pass under `-race`.
+- [x] **`LiftPure` / `LiftFallible`** — ergonomic wrappers for context-free, error-free (`func(I) O`) and fallible (`func(I) (O, error)`) functions; removes the most common friction point when writing simple transforms
 
 ---
 
-## Multi-graph and composition
+### Error handling & reliability
 
-- [x] **Universal multi-stream operators** — `Merge`, `Zip`, `ZipWith`, and
-  `WithLatestFrom` all accept pipelines from independent graphs. Same-graph
-  inputs use the engine-native node (fast path); independent inputs fall back to
-  a `Generate`-based implementation that runs each pipeline concurrently.
-  `MergeIndependent` was removed — `Merge` subsumes it.
+- [x] **Structured errors** — errors returned by `Runner.Run` carry the originating stage name, attempt number, and underlying cause in a typed `StageError` struct.
 
-- [x] **`CombineLatest[A, B]`** — symmetric counterpart to `WithLatestFrom`:
-  either side emitting triggers an output, always paired with the latest value
-  from the other side. `WithLatestFrom` is asymmetric (only primary triggers);
-  `CombineLatest` is needed whenever both streams are equally authoritative —
-  price feeds, sensor fusion, derived UI state. Implementation mirrors
-  `WithLatestFrom` but with two background goroutines feeding into a shared
-  output channel, each reading the current latest from the other side before
-  emitting.
+- [x] **Dead-letter routing** — `DeadLetter[I, O]` wraps a function with retry; items that exhaust all retries route to a second `*Pipeline[ErrItem[I]]` branch. `DeadLetterSink` does the same for sink functions, returning the dead-letter pipeline and the runner separately so the caller can wire them before calling `Run`.
 
-- [x] **`Balance[T]`** — round-robin fan-out: each item goes to exactly one of N
-  output pipelines, distributing load evenly rather than copying it. `Broadcast`
-  replicates every item to all outputs; `Balance` is for parallelising work across
-  independent downstream branches where each item only needs one path. Completes
-  the fan-out vocabulary alongside `Broadcast` and `Partition`.
+- [x] **`ErrItem[I any]`** — `struct { Item I; Err error }` used by `DeadLetter`, `DeadLetterSink`, and `MapResult`.
 
 ---
 
-## State management
+### Operators
 
-Kitsune's `Key[T]` + `Ref[T]` + `Store` model is unique in the Go streaming
-ecosystem. The items below complete it into a first-class stateful stream
-processing system competitive with Apache Flink for single-process workloads.
+- [x] **`SwitchMap[I, O]`** — cancels the active inner pipeline when a new upstream item arrives, then starts a fresh one. The defining pattern for search-as-you-type and any scenario where a new request supersedes the previous one.
 
-- [x] **Keyed state (`MapWithKey`, `FlatMapWithKey`)** — the most impactful missing
-  feature. Currently `MapWith` binds to a single global state slot shared by all
-  items. Keyed state partitions the `Ref` by a key extracted from each item,
-  backed by `Store.Get("key:"+entityID)` under the hood:
+- [x] **`ExhaustMap[I, O]`** — ignores new upstream items while an inner pipeline is still active. The defining pattern for "submit once, wait for completion" flows: form submissions, idempotent API calls, debounced writes.
 
-  ```go
-  sessionKey := kitsune.NewKey("session", SessionState{})
-  kitsune.MapWithKey(events,
-      func(e Event) string { return e.UserID },
-      sessionKey,
-      func(ctx context.Context, ref *kitsune.Ref[SessionState], e Event) (Result, error) {
-          s, _ := ref.Get(ctx)  // state for this user only
-          s.EventCount++
-          ref.Set(ctx, s)
-          return Result{Count: s.EventCount}, nil
-      },
-  )
-  ```
+- [x] **`ConcatMap[I, O]`** — sequential inner pipelines; each inner pipeline completes before the next starts.
 
-  Enables per-user session tracking, per-device state machines, per-entity rate
-  limiting, and any pattern where state must be scoped to a key derived from the
-  item itself — without users managing maps manually. The `Store` interface already
-  supports arbitrary string keys, so the implementation delta is entirely in the
-  public API and `Ref` lookup path.
+- [x] **`MapResult[I, O]`** — returns `(*Pipeline[O], *Pipeline[ErrItem[I]])`; both branches share one stage and must be consumed together (same rule as `Partition`).
 
-- [x] **State TTL / expiry** — without TTL, keyed state grows unboundedly as new
-  entity keys appear. Add an optional TTL parameter to `NewKey`:
-  `kitsune.NewKey("session", SessionState{}, kitsune.StateTTL(30*time.Minute))`.
-  `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed.
-  `MemoryStore` needs a background reaper or lazy expiry on read; distributed
-  backends (Redis, DynamoDB) get this via their native TTL mechanisms.
+- [x] **`MapRecover[I, O]`** — `fn` is called for each item; `recover func(ctx, I, error) O` is called on error, producing a fallback value instead of propagating the error.
 
-- [x] **Aggregating state operators (`CountBy`, `SumBy`)** — thin ergonomic wrappers
-  over `MapWithKey` for the most common accumulation patterns. Built on top of
-  keyed state rather than buffering the entire stream, so they work on unbounded
-  streams:
+- [x] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a caller-supplied default value instead of dropping it (`Skip`) or halting the pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup should produce a sentinel rather than a gap.
 
-  ```go
-  kitsune.CountBy(events, func(e Event) string { return e.Type })
-  // → *Pipeline[map[string]int64], emitting a snapshot on each flush trigger
+- [x] **`MapBatch[I, O]`** — collects up to `size` items, passes the slice to `fn`, flattens results; supports `BatchTimeout`, `Concurrency`, `OnError`. Built on `Batch` + `FlatMap`.
 
-  kitsune.SumBy(transactions,
-      func(t Transaction) string { return t.AccountID },
-      func(t Transaction) float64 { return t.Amount },
-  )
-  // → *Pipeline[map[string]float64]
-  ```
+- [x] **`LookupBy[T, K, V]`** — batches items, deduplicates keys, calls `Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item, Value}`; items whose key is absent receive the zero value for `V`. `BatchSize` defaults to 100.
 
-  Flush trigger could be a time window, a count, or an explicit `Flush()` call.
-  Design should align with the session window and `Window` operators.
+- [x] **`Enrich[T, K, V, O]`** — like `LookupBy` but calls `Join func(T, V) O` to produce the output directly.
+
+- [x] **`SessionWindow`** — gap-based window that closes after a configurable period of inactivity: `kitsune.SessionWindow(p, gap time.Duration)`. Produces `[]T` slices like `Window` and `SlidingWindow`.
+
+- [x] **`ChunkBy` / `ChunkWhile`** — consecutive same-key grouping and consecutive predicate grouping, respectively.
+
+- [x] **`WindowByTime`** — tumbling time window; emits a `[]T` slice per elapsed interval. Named `WindowByTime` to avoid collision with the count-based `Window(p, n)`.
+
+- [x] **`ConsecutiveDedup` / `ConsecutiveDedupBy`** — emit only when the value (or extracted key) changes; stateless per-item comparison, not set-based. Safe by engine design at `Concurrency(1)`.
+
+- [x] **`CountBy` / `SumBy`** — streaming operators that emit a full snapshot of the count/sum map after each item; run at `Concurrency(1)`. Compose with `Throttle` or `Debounce` for periodic snapshots.
+
+- [x] **`MapIntersperse[T, O]`** — applies `fn` to each item then inserts `sep` between consecutive mapped outputs.
+
+- [x] **`RateLimit`** — token-bucket via `golang.org/x/time/rate`; `RateLimitWait` (backpressure) and `RateLimitDrop` (skip excess) modes; `Burst(n)`, `RateMode(m)` options.
+
+- [x] **`CircuitBreaker`** — Closed → Open → Half-Open state machine built on `Map`; `FailureThreshold(n)`, `CooldownDuration(d)`, `HalfOpenProbes(n)` options; emits `ErrCircuitOpen` when open.
+
+- [x] **`Pool[T]` / `MapPooled`** — `NewPool[T](newFn)`, `Pooled[T]` with `Release()`, `MapPooled[I,O]` acquires a slot → calls fn → emits `*Pooled[O]`; `ReleaseAll` bulk helper.
+
+- [x] **`TakeEvery` / `DropEvery` / `MapEvery`** — operate on every Nth item.
+
+- [x] **`WithIndex`** — tags each item with its 0-based position, emitting `Indexed[T]{Index, Value}`.
+
+- [x] **`Intersperse`** — inserts a separator value between consecutive items.
 
 ---
 
-## Testing infrastructure
+### API correctness & completeness
 
-- [x] **`kitsune/testkit` package** — added `testkit` with `MustCollect`,
-  `CollectAndExpect`, `CollectAndExpectUnordered`, and `RecordingHook`.
-  `RecordingHook` implements all six hook interfaces and provides typed
-  accessors (`Items`, `Errors`, `Drops`, `Restarts`, `Graph`, `Dones`).
+- [x] **`RestartOnPanic` must not restart on regular errors** — `RestartOnPanic` and `RestartAlways` were identical: both restarted on errors and panics. Fixed by adding a `PanicOnly` guard to the supervision loop.
 
-- [x] **Virtual time / `TestClock`** — testing `Window`, `Debounce`, `Throttle`,
-  `Ticker`, `Interval`, and `SessionWindow` currently requires real sleeps, making
-  time-based tests slow and flaky. Add a `Clock` interface threaded through
-  time-sensitive operators, with a `testkit.TestClock` implementation that
-  advances on demand:
+- [x] **`MapBatch` opts double-application** — `opts` were forwarded to both the internal `Batch` and `FlatMap` stages. Fixed by extracting only `BatchTimeout` for the collection stage and passing all opts to the processing stage.
+
+- [x] **`Dedupe` context and error propagation** — `Dedupe` used `context.Background()` for store calls and silently discarded `Add` errors. Rewritten as a `Map` node so the pipeline context flows through and `Add` errors halt the pipeline.
+
+- [x] **Mutable-state closures made explicit** — `SlidingWindow` and `Scan` closed over mutable state with no synchronization. Both now pass `Concurrency(1)` explicitly. `ConsecutiveDedup`/`ConsecutiveDedupBy` are safe by engine design.
+
+- [x] **`Min` / `Max` / `MinMax` are O(1) memory** — rewritten using `Reduce` + an `optional[T]` accumulator. `MinBy`/`MaxBy` use a `byAcc[T,K]` variant. All return `(T, bool, error)` — `bool=false, err=nil` for empty stream.
+
+- [x] **`MinMax` returns `Pair[T,T]`** — fields named `First`/`Second`.
+
+- [x] **`MinBy` / `MaxBy` / `SortBy` restore `less` parameter** — `less func(a, b K) bool` restored; dropped the `cmp.Ordered` constraint on `K`.
+
+- [x] **`Scan` and `Dedupe` accept `StageOption`** — `Scan` appends `Concurrency(1)` last to enforce sequential execution; `Dedupe` uses `WithDedupSet(s DedupSet)` to accept a custom backend.
+
+- [x] **`Frequencies` / `FrequenciesBy` concurrency guard** — enforce `Concurrency(1)` explicitly. Terminal forms: `Frequencies(ctx, p) (map[T]int, error)` and `FrequenciesBy(ctx, p, keyFn) (map[K]int, error)`. Streaming variants kept as `FrequenciesStream` / `FrequenciesByStream`.
+
+- [x] **`GroupBy` terminal** — `GroupBy(ctx, p, keyFn) (map[K][]T, error)`. Ordered-slice variant kept as `GroupByOrdered`.
+
+- [x] **Terminals as methods** — `Collect`, `First`, `Last`, `Count`, `Any`, `All`, `Find`, `ReduceWhile` added as methods on `*Pipeline[T]` alongside the existing `ForEach`.
+
+- [x] **`MapResult` branching return** — returns `(*Pipeline[O], *Pipeline[ErrItem[I]])`.
+
+---
+
+### Observability
+
+- [x] **Configurable `SampleHook` rate** — `OnItemSample` fired every 10th item, hard-coded. Added `WithSampleRate(n int)` `RunOption`; pass a negative value to disable sampling entirely.
+
+- [x] **Structured stage metadata in `GraphNode`** — exposes `BatchSize`, `Timeout`, `HasRetry`, and `HasSupervision` in addition to `Kind`, `Name`, `Concurrency`, `Buffer`, and `Overflow`.
+
+- [x] **`MetricsHook`** — lock-free atomic counters per stage (processed, errors, dropped, restarts, total processing time); `Stage(name)` / `Snapshot()` / `Reset()`; `Snapshot().JSON()`; `AvgLatency()` on `StageMetrics`; implements `Hook + OverflowHook + SupervisionHook`.
+
+- [x] **Hook engine wiring** — `OnStageStart`, `OnItem` (with timing), `OnStageDone` called by all stage runners; `LogHook` and all other hooks fire correctly.
+
+---
+
+### Performance
+
+- [x] **`[]any` allocation pressure in FlatMap** — `FlatMap` now takes a yield callback (`func(ctx, I, func(O) error) error`) that emits items one at a time, eliminating the intermediate slice allocation entirely. All internal operators were migrated to the new signature.
+
+- [x] **JSON-only cache and store serialization** — added `Codec` interface and `WithCodec` `RunOption`; a custom codec replaces `encoding/json` for both cache and store-backed `Ref` serialization. `JSONCodec` remains the default.
+
+- [x] **`Concurrency(1)` fast paths** — for `Map`, `FlatMap`, `Filter`, and `Sink` at `Concurrency(1)` with no custom hook or error handler, a stripped-down loop bypasses `time.Now()`, `ProcessItem()` retry dispatch, hook dispatch, and outbox dispatch. Added `sync.Pool` reuse for ordered-concurrent slot structs, and `clear`+reslice batch-buffer reuse in `runBatch`.
+
+- [x] **Receive-side micro-batching** — fast-path dispatchers drain up to 15 additional items non-blocking after each blocking channel receive, processing them as a local `[16]T` buffer. Trades 16 expensive goroutine-handoff receives for 1 expensive + 15 cheap non-blocking checks. Gated on `!n.Supervision.HasSupervision()` so pre-fetched items are never silently lost on supervision restart. Net result: MapLinear improved from 5,066 µs → 2,855 µs.
+
+- [x] **Stage fusion** — consecutive fusible stages (Map, Filter, Sink at `Concurrency(1)` with default config and `NoopHook`) are detected at run time and collapsed into a single goroutine. At the typed engine layer, `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc` is set at construction time; when `ForEach` detects a single-consumer fast-path chain it calls `fusionEntry` directly, composing the entire chain with zero channel hops and zero boxing. `consumerCount atomic.Int32` prevents fusion for shared (diamond) pipelines. Net result: 3-stage comparison improved from ~2.96 M/s to ~5.31 M/s.
+
+- [x] **Concurrent fast paths** — extended the fast-path pattern to `runMapConcurrent` and `runFlatMapConcurrent` (unordered). Result: `MapConcurrent` −26%, `MapOrdered/unordered` −22%.
+
+- [x] **Drain protocol (send-side select elimination)** — replaced `select { case ch <- v: case <-ctx.Done(): }` with plain `ch <- v` in all fast-path stage runners. Safety maintained by drain goroutines (`for range inCh {}`) deferred at stage exit. `nodeRunner` also defers drain goroutines for all non-Source stages. Net result: 3-stage comparison improved from 189 ms → 75.7 ms (~2.16× faster than raw goroutines).
+
+---
+
+### Multi-graph and composition
+
+- [x] **Universal multi-stream operators** — `Merge`, `Zip`, `ZipWith`, and `WithLatestFrom` all accept pipelines from independent graphs. Same-graph inputs use the engine-native node (fast path); independent inputs fall back to a `Generate`-based implementation that runs each pipeline concurrently.
+
+- [x] **`CombineLatest[A, B]`** — symmetric counterpart to `WithLatestFrom`: either side emitting triggers an output, always paired with the latest value from the other side.
+
+- [x] **`Balance[T]`** — round-robin fan-out: each item goes to exactly one of N output pipelines. Completes the fan-out vocabulary alongside `Broadcast` and `Partition`.
+
+---
+
+### State management
+
+- [x] **`Key[T]` + `Ref[T]` + `Store` model** — `NewKey[T](name, initial, opts...)` declares a named piece of typed run-scoped state. `Ref[T]` is the concurrent-safe handle injected into stage functions; API: `Get`, `Set`, `Update`, `UpdateAndGet`, `GetOrSet`. In-memory by default (mutex); Store-backed when `WithStore` is configured.
+
+- [x] **`MapWith` / `FlatMapWith`** — like `Map`/`FlatMap` but the function receives a `*Ref[S]` for mutable per-run state; runs at `Concurrency(1)`.
+
+- [x] **`MapWithKey` / `FlatMapWithKey`** — variant where each item is routed to a per-item-key `Ref` shard via `itemKeyFn func(I) string`; enables per-user session tracking, per-device state machines, per-entity rate limiting without users managing maps manually. The `Store` interface supports arbitrary string keys, so the implementation delta is entirely in the public API and `Ref` lookup path.
+
+- [x] **State TTL / expiry** — optional TTL parameter to `NewKey`: `kitsune.NewKey("session", SessionState{}, kitsune.StateTTL(30*time.Minute))`. `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed. `MemoryStore` uses lazy expiry on read; distributed backends (Redis, DynamoDB) get this via their native TTL mechanisms.
+
+- [x] **`CacheBy` wired into `Map`** — `rc.cache`/`rc.cacheTTL`/`rc.codec` threaded through `runCtx`; `Map`'s build closure wraps `fn` with cache lookup/write when `CacheBy` is set; stage-level `CacheBackend`/`CacheTTL` override runner defaults.
+
+- [x] **`WithDedupSet` wired into operators** — `DistinctBy` and `DedupeBy` check `cfg.dedupSet`; when set, uses the external backend with string keys; for `DedupeBy`, presence of a set upgrades consecutive dedup to global dedup.
+
+---
+
+### Testing infrastructure
+
+- [x] **`kitsune/testkit` package** — `MustCollect`, `CollectAndExpect`, `CollectAndExpectUnordered`, and `RecordingHook`. `RecordingHook` implements all hook interfaces and provides typed accessors (`Items`, `Errors`, `Drops`, `Restarts`, `Graph`, `Dones`).
+
+- [x] **Virtual time / `TestClock`** — `Clock` interface threaded through time-sensitive operators; `testkit.TestClock` advances on demand:
 
   ```go
   clock := testkit.NewTestClock()
@@ -308,144 +208,59 @@ processing system competitive with Apache Flink for single-process workloads.
   clock.Advance(5 * time.Second)  // triggers flush immediately, no sleep
   ```
 
-  Requires a non-trivial pass through the engine and time-based operators to
-  inject the clock interface, but is a prerequisite for Kitsune to be taken
-  seriously as a production library — teams cannot ship pipelines whose tests
-  sleep for real durations.
+---
+
+### Benchmarks & performance evidence
+
+- [x] **Benchmark vs raw goroutines** — 3-stage linear graph (Map → Filter → ForEach) at 1M items; comparisons against `sourcegraph/conc` and `reugn/go-streams`. Results published in `doc/benchmarks.md`.
+
+- [x] **Allocation benchmark suite** — `AllocsPerOp` tracking for `Map`, `FlatMap`, `Batch`, `RateLimit`, and `CircuitBreaker`; zero-alloc hot paths verified and regressions caught in CI.
 
 ---
 
-## Benchmarks & performance evidence
+### Ecosystem: tails
 
-- [x] **Benchmark vs raw goroutines** — measure the overhead of Kitsune's
-  engine against an equivalent hand-rolled goroutine/channel pipeline for a
-  3-stage linear graph (Map → Filter → ForEach) at 1M items. Include comparisons
-  against `sourcegraph/conc` and `reugn/go-streams`. The goal is a documented,
-  reproducible number (e.g., "X% overhead at 1M items/s") that engineers can
-  cite before adopting. Publish results in `doc/benchmarks.md` and keep the
-  benchmark programs in `bench/`.
-
-- [x] **Allocation benchmark suite** — extend `bench_test.go` with
-  `AllocsPerOp` tracking for the highest-traffic paths: `Map`, `FlatMap`,
-  `Batch`, `RateLimit`, and `CircuitBreaker`. Zero-alloc hot paths should be
-  verified and regressions caught in CI.
+- [x] **Azure Service Bus tail (`kazsb`)** — source and sink for Azure Service Bus queues and topics.
+- [x] **Azure Event Hubs tail (`kazeh`)** — consumer group–based source for Azure Event Hubs.
+- [x] **Elasticsearch / OpenSearch tail (`kes`)** — bulk-index sink and scroll/search source.
+- [x] **Google Cloud Storage tail (`kgcs`)** — object source (list + read) and sink (upload).
 
 ---
 
-## Ecosystem: tails
+### Operator parity: ReactiveX gaps
 
-- [x] **Azure Service Bus tail (`kazsb`)** — source and sink for Azure Service
-  Bus queues and topics. Covers the most common Azure messaging pattern and
-  fills the only major cloud provider gap in the tails ecosystem.
-
-- [x] **Azure Event Hubs tail (`kazeh`)** — source for Azure Event Hubs
-  (consumer group–based). Complements `kkafka` for teams on Azure.
-
-- [x] **Elasticsearch / OpenSearch tail (`kes`)** — bulk-index sink and
-  scroll/search source. A natural destination for enrichment pipelines and one
-  of the most-requested sinks in data engineering workflows.
-
-- [x] **Google Cloud Storage tail (`kgcs`)** — object source (list + read) and
-  sink (upload). Fills the gap left by the existing `ks3` tail for GCP users.
+- [x] **`StartWith[T]`** — prepend one or more items before a pipeline.
+- [x] **`DefaultIfEmpty[T]`** — emit a default value when the upstream produces no items.
+- [x] **`Contains[T comparable]`** — terminal: returns `true` if any item equals the given value; stops early on first match.
+- [x] **`ElementAt`** — terminal: return the item at a 0-based index; `(zero, false, nil)` if the stream is shorter than the index. `ErrEmpty` kept for this operator.
+- [x] **`ToMap[T, K, V]`** — terminal: collect the stream into `map[K]V`; duplicate keys: last value wins.
+- [x] **`SequenceEqual[T comparable]`** — terminal: compare two finite pipelines item-by-item.
+- [x] **`Timestamp[T]`** — tag each item with wall-clock time; emits `Timestamped[T]{Value, Time}`. Respects `WithClock`.
+- [x] **`TimeInterval[T]`** — tag each item with elapsed duration since the previous item; emits `TimedInterval[T]{Value, Elapsed}`; first item has `Elapsed == 0`. Respects `WithClock`.
 
 ---
 
-## Operator parity: ReactiveX gaps
+### API: Go 1.23 iterator protocol
 
-A competitive evaluation against RxGo/ReactiveX identified operators present in
-the ReactiveX specification but missing from Kitsune. All have been added.
+- [x] **`Pipeline[T]` as `iter.Seq[T]`** — `.Iter(ctx, opts…)` terminal exposes a pipeline as an `iter.Seq[T]` for range-over-func. Returns `(iter.Seq[T], func() error)`. Breaking out of the loop early cancels the pipeline and suppresses the resulting `context.Canceled`.
 
-- [x] **`StartWith[T]`** — prepend one or more items before a pipeline:
-  `kitsune.StartWith(numbers, 0)` emits `0` then all items from `numbers`.
+---
 
-- [x] **`DefaultIfEmpty[T]`** — emit a default value when the upstream produces no
-  items; useful when downstream requires at least one result.
+### API: dynamic flow control
 
-- [x] **`Contains[T comparable]`** — terminal: returns `true` if any item equals
-  the given value; stops early on first match. Ergonomic specialisation of `Any`.
+- [x] **`RunHandle.Pause()` / `RunHandle.Resume()`** — a source-only `Gate` blocks sources from emitting while downstream stages continue draining in-flight items naturally. `RunAsync` creates a gate automatically; `WithPauseGate(g)` provides external gate control for synchronous `Run`. `Gate.Wait` is lock + nil-check only when open — zero channel ops on the fast path.
 
-- [x] **`ElementAt`** — terminal method: return the item at a 0-based index;
-  `(zero, false, nil)` if the stream is shorter than the requested index.
+---
 
-- [x] **`ToMap[T, K, V]`** — terminal: collect the stream into `map[K]V` using
-  caller-supplied key and value functions; duplicate keys: last value wins.
+### Community & discoverability
 
-- [x] **`SequenceEqual[T comparable]`** — terminal: compare two finite pipelines
-  item-by-item; returns `true` only if both emit identical items in the same order.
-
-- [x] **`Timestamp[T]`** — tag each item with the wall-clock time it was observed;
-  emits `Timestamped[T]{Value, Time}`. Respects `WithClock` for deterministic tests.
-
-- [x] **`TimeInterval[T]`** — tag each item with the duration elapsed since the
-  previous item; emits `TimedInterval[T]{Value, Elapsed}`; first item has
-  `Elapsed == 0`. Always runs at `Concurrency(1)`. Respects `WithClock`.
-
-- [x] **`Amb[T]`** — race multiple pipeline factories; forward items exclusively
-  from whichever factory emits first, cancelling all others. Useful for redundant
-  sources, failover, and latency hedging.
+- [x] **`CONTRIBUTING.md`** — dev setup, running tests and examples, PR workflow, commit message convention.
+- [x] **GitHub issue templates** — separate templates for bug reports and feature requests.
+- [x] **GitHub Discussions** — canonical place for "how do I…?" questions and design proposals.
+- [x] **Fuzz testing** — `go test -fuzz` targets for the scheduler, overflow logic, and context cancellation paths; run as a nightly CI job.
 
 ---
 
 ## Backlog / needs exploring
 
-Items that may be worth doing but require more design work or a concrete use case before committing.
-
-- [ ] **Per-item span propagation** — the `kotel` tail creates one span per
-  stage. True per-item tracing would require span contexts to travel with items
-  across stage boundaries, which the engine does not currently support. Three
-  approaches were considered: (a) an internal item envelope carrying a
-  `trace.SpanContext` — transparent to users but adds an allocation per hop and
-  breaks down semantically at `Batch`/`FlatMap`/`Merge`; (b) user-wrapped
-  `Traced[T]` items — zero engine cost but pollutes every stage signature;
-  (c) an optional `ContextCarrier` interface on items — opt-in with no cost for
-  non-carrier items, but requires propagation across type-changing stages.
-  The most common motivation (propagating an incoming `traceparent` from Kafka
-  or HTTP) is already achievable today by passing a trace-enriched context to
-  `runner.Run`. Revisit if a concrete use case emerges that current stage-level
-  spans cannot address.
-
----
-
-## API: Go 1.23 iterator protocol
-
-- [x] **`Pipeline[T]` as `iter.Seq[T]`** — pipelines can already be _created_
-  from `iter.Seq[T]` via `FromIter`. Added the reverse: `.Iter(ctx, opts…)`
-  terminal that exposes a `Pipeline[T]` as an `iter.Seq[T]` for range-over-func.
-  Returns `(iter.Seq[T], func() error)` — iterator for the loop, error function
-  to call after. Breaking out of the loop early cancels the pipeline and suppresses
-  the resulting `context.Canceled`; the caller's own context cancellation is
-  propagated normally.
-
----
-
-## API: dynamic flow control
-
-- [x] **`RunHandle.Pause()` / `RunHandle.Resume()`** — a source-only gate
-  blocks sources from emitting while downstream stages continue draining
-  in-flight items naturally. Implemented via a channel-based `Gate` type in
-  the engine (`engine/gate.go`). `RunAsync` creates a gate automatically and
-  exposes it on `RunHandle`. `WithPauseGate(g)` provides external gate control
-  for synchronous `Run`. `Gate.Wait` is lock + nil-check only when open —
-  zero channel ops on the fast path. The live inspector exposes `PauseCh()`
-  and `ResumeCh()` so the UI Pause/Resume button can be wired to a `Gate`.
-
----
-
-## Community & discoverability
-
-- [x] **`CONTRIBUTING.md`** — document dev setup, how to run tests and
-  examples, the PR workflow, and the commit message convention. Lowers the
-  barrier for first-time contributors.
-
-- [x] **GitHub issue templates** — separate templates for bug reports (repro
-  steps, expected vs actual, Go version) and feature requests (use case,
-  proposed API sketch). Reduces triage time and sets expectations for reporters.
-
-- [x] **GitHub Discussions** — enable the Discussions tab as the canonical
-  place for "how do I…?" questions and design proposals. Keeps issues focused
-  on confirmed bugs and actionable tasks.
-
-- [x] **Fuzz testing for the pipeline engine** — added `go test -fuzz` targets
-  for the scheduler, overflow logic, and context cancellation paths. Focus on
-  concurrent interleavings that unit tests cannot cover deterministically. Run
-  as a nightly CI job rather than in every PR.
+- [ ] **Per-item span propagation** — the `kotel` tail creates one span per stage. True per-item tracing would require span contexts to travel with items across stage boundaries. Three approaches considered: (a) internal item envelope carrying `trace.SpanContext` — transparent but adds an allocation per hop and breaks semantically at `Batch`/`FlatMap`/`Merge`; (b) user-wrapped `Traced[T]` items — zero engine cost but pollutes every stage signature; (c) optional `ContextCarrier` interface on items — opt-in with no cost for non-carrier items, but requires propagation across type-changing stages. The most common motivation (propagating an incoming `traceparent` from Kafka or HTTP) is already achievable by passing a trace-enriched context to `runner.Run`. Revisit if a concrete use case emerges that current stage-level spans cannot address.

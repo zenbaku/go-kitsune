@@ -39,3 +39,6 @@ Thumbs.db
 # Temporary / scratch files
 *.tmp
 *.bak
+
+# Claude Code
+.claude

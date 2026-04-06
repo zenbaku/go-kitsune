@@ -1,14 +1,26 @@
+// Package testkit provides testing utilities for go-kitsune v2 pipelines.
+//
+// The primary export is [TestClock], a virtual clock for testing time-sensitive
+// operators (Throttle, Debounce, SessionWindow, Batch with BatchTimeout, Ticker,
+// Interval, Timer) without real sleeps.
+//
+// Usage:
+//
+//	clock := testkit.NewTestClock()
+//	p := kitsune.Batch(source, 10, kitsune.BatchTimeout(5*time.Second), kitsune.WithClock(clock))
+//	// ... feed items ...
+//	clock.Advance(5 * time.Second) // fires the batch timer immediately
 package testkit
 
 import (
 	"sync"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // TestClock is a virtual clock for deterministic testing of time-sensitive pipelines.
-// Advance virtual time explicitly with Advance; timers and tickers fire based on
+// Advance virtual time explicitly with [Advance]; timers and tickers fire based on
 // virtual time, not wall-clock time.
 type TestClock struct {
 	mu      sync.Mutex
@@ -33,6 +45,8 @@ func (c *TestClock) Now() time.Time {
 
 // Advance moves virtual time forward by d, firing all timers and tickers
 // whose deadlines have been reached, in chronological order.
+// Fires happen OUTSIDE the mutex to prevent deadlock when callers are blocked
+// on timer/ticker channels.
 func (c *TestClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
@@ -62,6 +76,7 @@ func (c *TestClock) Advance(d time.Duration) {
 	}
 	c.mu.Unlock()
 
+	// Fire outside the mutex.
 	for _, ch := range timerChs {
 		select {
 		case ch <- now:
@@ -76,14 +91,8 @@ func (c *TestClock) Advance(d time.Duration) {
 	}
 }
 
-// After returns a channel that receives the current virtual time after d.
-func (c *TestClock) After(d time.Duration) <-chan time.Time {
-	t := c.NewTimer(d)
-	return t.C()
-}
-
 // NewTimer creates a new virtual timer that fires after d virtual time has passed.
-func (c *TestClock) NewTimer(d time.Duration) engine.Timer {
+func (c *TestClock) NewTimer(d time.Duration) internal.Timer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := make(chan time.Time, 1)
@@ -97,7 +106,7 @@ func (c *TestClock) NewTimer(d time.Duration) engine.Timer {
 }
 
 // NewTicker creates a new virtual ticker that fires every d virtual time.
-func (c *TestClock) NewTicker(d time.Duration) engine.Ticker {
+func (c *TestClock) NewTicker(d time.Duration) internal.Ticker {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := make(chan time.Time, 1)
@@ -109,6 +118,11 @@ func (c *TestClock) NewTicker(d time.Duration) engine.Ticker {
 	}
 	c.tickers = append(c.tickers, tk)
 	return tk
+}
+
+// After returns a channel that receives virtual time after d.
+func (c *TestClock) After(d time.Duration) <-chan time.Time {
+	return c.NewTimer(d).C()
 }
 
 type testTimer struct {
@@ -135,7 +149,6 @@ func (t *testTimer) Reset(d time.Duration) bool {
 	t.clock.mu.Lock()
 	defer t.clock.mu.Unlock()
 	wasActive := !t.stopped && !t.fired
-	// Drain the channel if it has a value.
 	select {
 	case <-t.ch:
 	default:

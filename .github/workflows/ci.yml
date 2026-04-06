@@ -62,9 +62,3 @@ jobs:
 
       - name: tails/kotel — OpenTelemetry tests
         run: cd tails/kotel && go test -race -count=1 -timeout 30s ./...
-
-      - name: v2 — race tests
-        run: cd v2 && go test -short -race -count=1 -timeout 60s ./...
-
-      - name: v2 — example smoke tests
-        run: cd v2 && go test -v -run TestExamples -timeout 120s -count=1 .

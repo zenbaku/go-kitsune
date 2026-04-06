@@ -1,82 +1,54 @@
-// Example: switchmap — search-as-you-type with cancellation of stale queries.
+// Example: switchmap — cancel in-progress work when a newer item arrives.
 //
-// Demonstrates: SwitchMap cancelling active inner pipelines when new upstream
-// items arrive, so only the latest request's results reach the output.
+// Demonstrates: SwitchMap cancellation semantics vs FlatMap/ConcatMap
 package main
 
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	kitsune "github.com/zenbaku/go-kitsune"
 )
 
-// simulateSearch pretends to call a backend search API.
-// It sleeps briefly to simulate latency, then yields matching results.
-func simulateSearch(ctx context.Context, query string, yield func(string) error) error {
-	// Simulate variable latency: shorter queries resolve faster.
-	latency := time.Duration(50-len(query)*5) * time.Millisecond
-	if latency < 5*time.Millisecond {
-		latency = 5 * time.Millisecond
-	}
-	select {
-	case <-time.After(latency):
-	case <-ctx.Done():
-		// Cancelled — a newer query superseded us.
-		return ctx.Err()
-	}
+func main() {
+	ctx := context.Background()
 
-	// Produce results only if we weren't cancelled.
-	corpus := []string{
-		"apple", "application", "apply", "apt",
-		"banana", "band", "bandana",
-		"cherry", "chart", "charm",
-	}
-	for _, word := range corpus {
-		if strings.HasPrefix(word, query) {
-			if err := yield(fmt.Sprintf("[%s] → %s", query, word)); err != nil {
-				return err
-			}
+	// Each "search query" triggers a slow lookup. With SwitchMap, arriving a
+	// new query cancels the still-running previous one — only the last query's
+	// result is emitted. This models type-ahead search or live-reload.
+
+	queries := kitsune.FromSlice([]string{"g", "go", "gol", "golang"})
+
+	search := func(ctx context.Context, query string, emit func(string) error) error {
+		// Simulate a slow network call; check ctx so we respect cancellation.
+		select {
+		case <-time.After(30 * time.Millisecond):
+			return emit(fmt.Sprintf("results for %q", query))
+		case <-ctx.Done():
+			return nil // cancelled by a newer query
 		}
 	}
-	return nil
-}
 
-func main() {
-	// Simulate keystrokes: "a", "ap", "app", "appl", "apple"
-	// Each new keystroke should cancel the previous search.
-	keystrokes := kitsune.FromSlice([]string{"a", "ap", "app", "appl", "apple"})
-
-	results, err := kitsune.SwitchMap(keystrokes, simulateSearch).Collect(context.Background())
+	fmt.Println("=== SwitchMap (only last query completes) ===")
+	results, err := kitsune.Collect(ctx, kitsune.SwitchMap(queries, search))
 	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		return
+		panic(err)
 	}
+	fmt.Println("received:", results)
+	// Only "golang" result arrives because prior queries are cancelled.
 
-	fmt.Println("=== SwitchMap: search-as-you-type ===")
-	fmt.Println("(Only results from queries that weren't superseded reach here)")
-	fmt.Println()
-	for _, r := range results {
-		fmt.Println(" ", r)
-	}
-	if len(results) == 0 {
-		fmt.Println("  (all intermediate queries were cancelled — only final query survived)")
-	}
+	// --- Compare: FlatMap emits all results (no cancellation) ---
 
-	// Demonstrate with a single slow query to show results do arrive.
-	fmt.Println()
-	fmt.Println("=== SwitchMap: single query (no cancellation) ===")
-	single, err := kitsune.SwitchMap(
-		kitsune.FromSlice([]string{"ban"}),
-		simulateSearch,
-	).Collect(context.Background())
+	fmt.Println("\n=== FlatMap (all queries complete) ===")
+	allResults, err := kitsune.Collect(ctx,
+		kitsune.FlatMap(kitsune.FromSlice([]string{"g", "go", "gol", "golang"}),
+			func(_ context.Context, query string, emit func(string) error) error {
+				time.Sleep(5 * time.Millisecond)
+				return emit(fmt.Sprintf("results for %q", query))
+			}))
 	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		return
+		panic(err)
 	}
-	for _, r := range single {
-		fmt.Println(" ", r)
-	}
+	fmt.Println("received:", allResults)
 }

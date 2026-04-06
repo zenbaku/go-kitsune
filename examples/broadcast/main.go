@@ -1,58 +1,48 @@
-// Example: broadcast — send every item to multiple consumers.
+// Example: broadcast — fan-out a single stream to N independent consumers.
 //
-// Demonstrates: Broadcast (fan-out to all), Merge, MergeRunners.
+// Demonstrates: BroadcastN, MergeRunners
 package main
 
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	kitsune "github.com/zenbaku/go-kitsune"
 )
 
 func main() {
-	orders := kitsune.FromSlice([]int{100, 200, 300})
+	ctx := context.Background()
 
-	// Broadcast every order to 3 independent consumers.
-	copies := kitsune.Broadcast(orders, 3)
+	events := kitsune.FromSlice([]string{"login", "purchase", "logout", "search", "purchase"})
 
-	// Each consumer does different work on the same data.
-	analytics := kitsune.Map(copies[0], func(_ context.Context, n int) (string, error) {
-		return fmt.Sprintf("analytics: order $%d", n), nil
-	})
-	billing := kitsune.Map(copies[1], func(_ context.Context, n int) (string, error) {
-		return fmt.Sprintf("billing: charge $%d", n), nil
-	})
-	audit := kitsune.Map(copies[2], func(_ context.Context, n int) (string, error) {
-		return fmt.Sprintf("audit: logged $%d", n), nil
-	})
+	// BroadcastN fans the stream out to 3 independent channels. Each consumer
+	// sees every item. The source is consumed at the speed of the slowest consumer.
+	branches := kitsune.BroadcastN(events, 3)
 
-	// Run all three branches.
-	r1 := analytics.ForEach(func(_ context.Context, s string) error { fmt.Println(" ", s); return nil })
-	r2 := billing.ForEach(func(_ context.Context, s string) error { fmt.Println(" ", s); return nil })
-	r3 := audit.ForEach(func(_ context.Context, s string) error { fmt.Println(" ", s); return nil })
+	var mu sync.Mutex
+	counts := make([]int, 3)
 
-	runner, err := kitsune.MergeRunners(r1, r2, r3)
+	runners := make([]*kitsune.Runner, 3)
+	for i, branch := range branches {
+		i, branch := i, branch
+		runners[i] = branch.ForEach(func(_ context.Context, s string) error {
+			mu.Lock()
+			counts[i]++
+			mu.Unlock()
+			return nil
+		}).Build()
+	}
+
+	merged, err := kitsune.MergeRunners(runners...)
 	if err != nil {
 		panic(err)
 	}
-	if err := runner.Run(context.Background()); err != nil {
+	if err := merged.Run(ctx); err != nil {
 		panic(err)
 	}
 
-	// --- Broadcast + Merge: recombine after independent transforms ---
-	fmt.Println("\n=== Broadcast → transform → Merge ===")
-	nums := kitsune.FromSlice([]int{1, 2, 3})
-	branches := kitsune.Broadcast(nums, 2)
-
-	doubled := kitsune.Map(branches[0], func(_ context.Context, n int) (int, error) { return n * 2, nil })
-	tripled := kitsune.Map(branches[1], func(_ context.Context, n int) (int, error) { return n * 3, nil })
-
-	merged := kitsune.Merge(doubled, tripled)
-	results, err := merged.Collect(context.Background())
-	if err != nil {
-		panic(err)
+	for i, c := range counts {
+		fmt.Printf("consumer %d received %d items\n", i, c)
 	}
-	fmt.Println("All results:", results)
-	// Contains [2,4,6] and [3,6,9] interleaved (order not guaranteed).
 }

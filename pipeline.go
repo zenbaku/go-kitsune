@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/v2/internal"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,7 @@ type runCtx struct {
 	cacheTTL time.Duration
 	codec    internal.Codec
 	hook     internal.Hook
+	refs     *refRegistry // keyed state, populated during build phase
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
 	// sources (Ticker, Interval, Repeatedly, …) without cancelling the run
@@ -89,6 +90,7 @@ func newRunCtx() *runCtx {
 	var once sync.Once
 	return &runCtx{
 		chans:      make(map[int]any),
+		refs:       newRefRegistry(),
 		done:       done,
 		signalDone: func() { once.Do(func() { close(done) }) },
 	}

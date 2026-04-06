@@ -25,7 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/engine"
+	kithooks "github.com/zenbaku/go-kitsune/hooks"
 )
 
 //go:embed ui.html
@@ -49,11 +49,11 @@ type Inspector struct {
 	mu      sync.Mutex
 	stages  map[string]*stageState
 	order   []string // insertion order for deterministic table rendering
-	graph   []engine.GraphNode
+	graph   []kithooks.GraphNode
 	logBuf  []logEntry
 	clients map[chan sseMsg]struct{}
 
-	bufferQuery func() []engine.BufferStatus // set by OnBuffers; nil until engine calls it
+	bufferQuery func() []kithooks.BufferStatus // set by OnBuffers; nil until engine calls it
 
 	cancelCh     chan struct{} // swapped on restart; protected by mu
 	cancelClosed bool         // prevents double-close; protected by mu
@@ -231,7 +231,7 @@ func (i *Inspector) Close() error {
 // ---------------------------------------------------------------------------
 
 // OnGraph implements engine.GraphHook.
-func (i *Inspector) OnGraph(nodes []engine.GraphNode) {
+func (i *Inspector) OnGraph(nodes []kithooks.GraphNode) {
 	i.mu.Lock()
 	i.graph = nodes
 	i.mu.Unlock()
@@ -241,7 +241,7 @@ func (i *Inspector) OnGraph(nodes []engine.GraphNode) {
 }
 
 // OnBuffers implements engine.BufferHook.
-func (i *Inspector) OnBuffers(query func() []engine.BufferStatus) {
+func (i *Inspector) OnBuffers(query func() []kithooks.BufferStatus) {
 	i.mu.Lock()
 	i.bufferQuery = query
 	i.mu.Unlock()
@@ -480,7 +480,7 @@ func (i *Inspector) broadcastLoop() {
 			}
 
 			// Query buffer fill levels (nil before engine calls OnBuffers).
-			buffers := make(map[string]engine.BufferStatus)
+			buffers := make(map[string]kithooks.BufferStatus)
 			if query != nil {
 				for _, bs := range query() {
 					buffers[bs.Stage] = bs
@@ -567,7 +567,7 @@ func (i *Inspector) buildSnapshot() map[string]stageSnapshot {
 		return nil
 	}
 
-	buffers := make(map[string]engine.BufferStatus)
+	buffers := make(map[string]kithooks.BufferStatus)
 	if query != nil {
 		for _, bs := range query() {
 			buffers[bs.Stage] = bs
@@ -581,7 +581,7 @@ func (i *Inspector) buildSnapshot() map[string]stageSnapshot {
 	return snap
 }
 
-func snapStageWithBuffer(s *stageState, buf engine.BufferStatus) stageSnapshot {
+func snapStageWithBuffer(s *stageState, buf kithooks.BufferStatus) stageSnapshot {
 	items := s.items.Load()
 	errs := s.errors.Load()
 	ns := s.totalNs.Load()

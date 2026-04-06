@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,16 +24,14 @@ type stageConfig struct {
 	concurrency  int
 	ordered      bool
 	buffer       int
-	overflow     int // engine.OverflowBlock/DropNewest/DropOldest
-	errorHandler engine.ErrorHandler
+	overflow     internal.Overflow
+	errorHandler internal.ErrorHandler
 	batchTimeout time.Duration
-	supervision  engine.SupervisionPolicy
+	supervision  internal.SupervisionPolicy
 	cacheConfig  *stageCacheConfig
 	timeout      time.Duration
 	dedupSet     DedupSet
-	cbConfig     *cbConfig
-	rlConfig     *rateLimitConfig
-	clock        engine.Clock
+	clock        internal.Clock
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -51,14 +49,14 @@ type runConfig struct {
 	defaultCacheTTL time.Duration
 	sampleRate      int // 0 = default (10); negative = disabled
 	codec           Codec
-	gate            *engine.Gate
+	gate            *Gate
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
 	cfg := stageConfig{
 		concurrency:  1,
-		buffer:       engine.DefaultBuffer,
-		errorHandler: engine.DefaultHandler{},
+		buffer:       internal.DefaultBuffer,
+		errorHandler: internal.DefaultHandler{},
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -67,37 +65,11 @@ func buildStageConfig(opts []StageOption) stageConfig {
 }
 
 func buildRunConfig(opts []RunOption) runConfig {
-	cfg := runConfig{hook: engine.NoopHook{}}
+	cfg := runConfig{hook: internal.NoopHook{}}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	return cfg
-}
-
-// newNode creates a standard engine.Node from a stage config and pipeline position.
-func newNode[T any](kind engine.NodeKind, fn any, p *Pipeline[T], opts []StageOption) *engine.Node {
-	cfg := buildStageConfig(opts)
-	if cfg.cacheConfig != nil && kind != engine.Map {
-		panic("kitsune: CacheBy is only supported on Map stages")
-	}
-	if cfg.timeout > 0 && kind != engine.Map && kind != engine.FlatMap && kind != engine.SwitchMapNode && kind != engine.ExhaustMapNode {
-		panic("kitsune: Timeout is only supported on Map and FlatMap stages")
-	}
-	_, hasRetry := cfg.errorHandler.(*retryHandler)
-	return &engine.Node{
-		Kind:         kind,
-		Name:         cfg.name,
-		Fn:           fn,
-		Inputs:       []engine.InputRef{{Node: p.node, Port: p.port}},
-		Concurrency:  cfg.concurrency,
-		Ordered:      cfg.ordered,
-		Buffer:       cfg.buffer,
-		Overflow:     cfg.overflow,
-		ErrorHandler: cfg.errorHandler,
-		Supervision:  cfg.supervision,
-		HasRetry:     hasRetry,
-		Timeout:      cfg.timeout.Nanoseconds(),
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +122,7 @@ func BatchTimeout(d time.Duration) StageOption {
 // WithClock sets the time source for time-sensitive stages (Window, Batch, Throttle, Debounce)
 // and source operators (Ticker, Interval, Timer).
 // Use testkit.NewTestClock() for deterministic, sleep-free tests.
-func WithClock(c engine.Clock) StageOption {
+func WithClock(c internal.Clock) StageOption {
 	return func(cfg *stageConfig) { cfg.clock = c }
 }
 
@@ -175,16 +147,16 @@ func Timeout(d time.Duration) StageOption {
 // ---------------------------------------------------------------------------
 
 // OverflowStrategy controls what happens when a stage's output buffer is full.
-type OverflowStrategy int
+type OverflowStrategy = internal.Overflow
 
 const (
 	// Block waits until space is available (backpressure). This is the default.
-	Block OverflowStrategy = iota
+	Block OverflowStrategy = internal.OverflowBlock
 	// DropNewest discards the incoming item when the buffer is full.
 	// The pipeline continues without blocking.
-	DropNewest
+	DropNewest OverflowStrategy = internal.OverflowDropNewest
 	// DropOldest evicts the oldest buffered item to make room for the new one.
-	DropOldest
+	DropOldest OverflowStrategy = internal.OverflowDropOldest
 )
 
 // Overflow sets the overflow strategy for a stage's output buffer (default: [Block]).
@@ -195,7 +167,7 @@ const (
 // When [Ordered] is also set, dropped items create gaps but remaining items stay
 // in their original relative order.
 func Overflow(s OverflowStrategy) StageOption {
-	return func(c *stageConfig) { c.overflow = int(s) }
+	return func(c *stageConfig) { c.overflow = s }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,11 +231,11 @@ func RestartAlways(maxRestarts int, b Backoff) SupervisionPolicy {
 // See [RestartOnError], [RestartOnPanic], [RestartAlways] for convenience constructors.
 func Supervise(policy SupervisionPolicy) StageOption {
 	return func(c *stageConfig) {
-		c.supervision = engine.SupervisionPolicy{
+		c.supervision = internal.SupervisionPolicy{
 			MaxRestarts: policy.MaxRestarts,
 			Window:      policy.Window,
 			Backoff:     policy.Backoff,
-			OnPanic:     engine.PanicAction(policy.OnPanic),
+			OnPanic:     internal.PanicAction(policy.OnPanic),
 			PanicOnly:   policy.PanicOnly,
 		}
 	}
@@ -296,16 +268,7 @@ func CacheBackend(cache Cache) CacheOpt {
 // Filter, etc.) panics at pipeline construction time.
 //
 // By default the runner's cache backend and TTL ([WithCache]) are used.
-// Override either per-stage with [CacheBackend] and [CacheTTL]:
-//
-//	// use runner defaults
-//	kitsune.Map(p, fetchUser,
-//	    kitsune.CacheBy(func(e Event) string { return e.UserID }),
-//	)
-//	// per-stage TTL override
-//	kitsune.Map(p, fetchUser,
-//	    kitsune.CacheBy(func(e Event) string { return e.UserID }, kitsune.CacheTTL(5*time.Minute)),
-//	)
+// Override either per-stage with [CacheBackend] and [CacheTTL].
 func CacheBy[I any](keyFn func(I) string, opts ...CacheOpt) StageOption {
 	cfg := &stageCacheConfig{keyFn: keyFn}
 	for _, opt := range opts {
@@ -396,7 +359,7 @@ func WithPauseGate(g *Gate) RunOption {
 
 // ErrorHandler configures how a stage responds to errors from its processing function.
 type ErrorHandler struct {
-	h engine.ErrorHandler
+	h internal.ErrorHandler
 }
 
 // Backoff computes a wait duration for a given retry attempt (0-indexed).
@@ -404,7 +367,7 @@ type Backoff func(attempt int) time.Duration
 
 // Halt returns an ErrorHandler that stops the pipeline on the first error.
 // This is the default behavior.
-func Halt() ErrorHandler { return ErrorHandler{h: engine.DefaultHandler{}} }
+func Halt() ErrorHandler { return ErrorHandler{h: internal.DefaultHandler{}} }
 
 // Skip returns an ErrorHandler that drops the failing item and continues.
 func Skip() ErrorHandler { return ErrorHandler{h: &skipHandler{}} }
@@ -428,7 +391,7 @@ func Return[T any](val T) ErrorHandler {
 // Retry returns an ErrorHandler that retries up to n times with the given
 // backoff strategy, then halts.
 func Retry(n int, b Backoff) ErrorHandler {
-	return ErrorHandler{h: &retryHandler{max: n, bo: b, fallback: engine.DefaultHandler{}}}
+	return ErrorHandler{h: &retryHandler{max: n, bo: b, fallback: internal.DefaultHandler{}}}
 }
 
 // RetryThen returns an ErrorHandler that retries up to n times, then
@@ -456,26 +419,26 @@ func ExponentialBackoff(initial, max time.Duration) Backoff {
 
 type skipHandler struct{}
 
-func (*skipHandler) Handle(error, int) engine.ErrorAction     { return engine.ActionSkip }
-func (*skipHandler) Backoff() func(attempt int) time.Duration { return nil }
+func (*skipHandler) Handle(error, int) internal.ErrorAction     { return internal.ActionSkip }
+func (*skipHandler) Backoff() func(attempt int) time.Duration   { return nil }
 
 type returnHandler struct {
 	val any
 }
 
-func (h *returnHandler) Handle(error, int) engine.ErrorAction     { return engine.ActionReturn }
-func (h *returnHandler) Backoff() func(attempt int) time.Duration { return nil }
-func (h *returnHandler) ReturnValue() any                         { return h.val }
+func (h *returnHandler) Handle(error, int) internal.ErrorAction     { return internal.ActionReturn }
+func (h *returnHandler) Backoff() func(attempt int) time.Duration   { return nil }
+func (h *returnHandler) ReturnValue() any                           { return h.val }
 
 type retryHandler struct {
 	max      int
 	bo       Backoff
-	fallback engine.ErrorHandler
+	fallback internal.ErrorHandler
 }
 
-func (h *retryHandler) Handle(err error, attempt int) engine.ErrorAction {
+func (h *retryHandler) Handle(err error, attempt int) internal.ErrorAction {
 	if attempt < h.max {
-		return engine.ActionRetry
+		return internal.ActionRetry
 	}
 	return h.fallback.Handle(err, 0)
 }
@@ -483,7 +446,7 @@ func (h *retryHandler) Handle(err error, attempt int) engine.ErrorAction {
 func (h *retryHandler) Backoff() func(int) time.Duration { return h.bo }
 
 func (h *retryHandler) ReturnValue() any {
-	if r, ok := h.fallback.(engine.Returner); ok {
+	if r, ok := h.fallback.(internal.Returner); ok {
 		return r.ReturnValue()
 	}
 	return nil

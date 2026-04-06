@@ -40,6 +40,7 @@ require (
 	github.com/prometheus/procfs v0.8.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
+	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.23.0 // indirect
@@ -54,3 +55,5 @@ require (
 )
 
 replace github.com/zenbaku/go-kitsune => ../..
+
+replace github.com/zenbaku/go-kitsune/hooks => ../../hooks

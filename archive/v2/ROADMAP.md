@@ -273,13 +273,13 @@ Gaps identified by deep comparison with v1. These are v1 features absent from v2
 
 #### Enrich / bulk lookup
 - [x] **`MapBatch[I, O any](p, size int, fn func(ctx, []I) ([]O, error), opts...) *Pipeline[O]`** — collects up to `size` items, passes the slice to `fn`, flattens results; built on `Batch` + `FlatMap`; supports `BatchTimeout`, `Concurrency`, `OnError`
-- [ ] **`LookupBy[T any, K comparable, V any](p, cfg LookupConfig[T, K, V], opts...) *Pipeline[Pair[T, V]]`** — batches items, deduplicates keys, calls `cfg.Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item: t, Value: v}`; items whose key is absent receive the zero value for `V`; `LookupConfig` has `Key func(T) K`, `Fetch func(ctx, []K) (map[K]V, error)`, `BatchSize int` (default 100)
-- [ ] **`Enrich[T any, K comparable, V, O any](p, cfg EnrichConfig[T, K, V, O], opts...) *Pipeline[O]`** — like `LookupBy` but calls `cfg.Combine func(T, V) O` to produce the output directly; `EnrichConfig` adds `Combine` to the `LookupConfig` fields
+- [x] **`LookupBy[T any, K comparable, V any](p, cfg LookupConfig[T, K, V], opts...) *Pipeline[Pair[T, V]]`** — batches items, deduplicates keys, calls `cfg.Fetch(ctx, []K) (map[K]V, error)`, emits `Pair{Item: t, Value: v}`; items whose key is absent receive the zero value for `V`; `LookupConfig` has `Key func(T) K`, `Fetch func(ctx, []K) (map[K]V, error)`, `BatchSize int` (default 100)
+- [x] **`Enrich[T any, K comparable, V, O any](p, cfg EnrichConfig[T, K, V, O], opts...) *Pipeline[O]`** — like `LookupBy` but calls `cfg.Join func(T, V) O` to produce the output directly; `EnrichConfig` adds `Join` to the `LookupConfig` fields
 
 #### State system
-- [ ] **`Key[T any]`** — declares a named piece of typed run-scoped state; created with `NewKey[T](name string, initial T, opts ...KeyOption) Key[T]`; declare as package-level vars; supports `StateTTL(d)` option for lazy expiry
-- [ ] **`Ref[T any]`** — concurrent-safe handle to a `Key`'s current value; injected by `MapWith`/`FlatMapWith`; API: `Get(ctx) (T, error)`, `Set(ctx, T) error`, `Update(ctx, func(T) T) error`, `UpdateAndGet(ctx, func(T) T) (T, error)`, `GetOrSet(ctx, T) (T, error)`; in-memory by default (mutex), Store-backed when `WithStore` is configured
-- [ ] **`MapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I) (O, error), opts...) *Pipeline[O]`** — like `Map` but `fn` receives a `*Ref[S]` for mutable per-run state; state persists across items within a single `Run()`
-- [ ] **`FlatMapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I, yield func(O) error) error, opts...) *Pipeline[O]`** — like `FlatMap` but stateful
-- [ ] **`MapWithKey[I, O, S any](p, itemKeyFn func(I) string, key Key[S], fn func(ctx, *Ref[S], string, I) (O, error), opts...) *Pipeline[O]`** — variant where each item is routed to a per-item-key `Ref` shard; `itemKeyFn` partitions items into independent state cells
-- [ ] **`FlatMapWithKey[I, O, S any]`** — same as `MapWithKey` but flat-maps
+- [x] **`Key[T any]`** — declares a named piece of typed run-scoped state; created with `NewKey[T](name string, initial T, opts ...KeyOption) Key[T]`; declare as package-level vars; supports `StateTTL(d)` option for lazy expiry
+- [x] **`Ref[T any]`** — concurrent-safe handle to a `Key`'s current value; injected by `MapWith`/`FlatMapWith`; API: `Get(ctx) (T, error)`, `Set(ctx, T) error`, `Update(ctx, func(T) T) error`, `UpdateAndGet(ctx, func(T) T) (T, error)`, `GetOrSet(ctx, T) (T, error)`; in-memory by default (mutex), Store-backed when `WithStore` is configured
+- [x] **`MapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I) (O, error), opts...) *Pipeline[O]`** — like `Map` but `fn` receives a `*Ref[S]` for mutable per-run state; state persists across items within a single `Run()`; runs at `Concurrency(1)`
+- [x] **`FlatMapWith[I, O, S any](p, key Key[S], fn func(ctx, *Ref[S], I, yield func(O) error) error, opts...) *Pipeline[O]`** — like `FlatMap` but stateful; runs at `Concurrency(1)`
+- [x] **`MapWithKey[I, O, S any](p, itemKeyFn func(I) string, key Key[S], fn func(ctx, *Ref[S], I) (O, error), opts...) *Pipeline[O]`** — variant where each item is routed to a per-item-key `Ref` shard; `itemKeyFn` partitions items into independent state cells; runs at `Concurrency(1)`
+- [x] **`FlatMapWithKey[I, O, S any]`** — same as `MapWithKey` but flat-maps; runs at `Concurrency(1)`

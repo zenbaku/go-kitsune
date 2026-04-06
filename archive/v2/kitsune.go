@@ -122,7 +122,6 @@ type Runner struct {
 	// terminal builds the full stage graph into rc when called.
 	// It is set by ForEachRunner.Build() / ForEachRunner.Run().
 	terminal func(rc *runCtx)
-	refs     *refRegistry // state management (future phase)
 }
 
 // ErrNoRunners is returned by [MergeRunners] when called with no arguments.
@@ -175,9 +174,6 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	if codec == nil {
 		codec = internal.JSONCodec{}
 	}
-	if r.refs != nil {
-		r.refs.init(cfg.store, codec)
-	}
 
 	hook := cfg.hook
 	if hook == nil {
@@ -186,12 +182,18 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 
 	// Materialise the pipeline: build functions are called recursively,
 	// allocating fresh channels and registering stage functions into rc.
+	// Stateful operators (MapWith etc.) register key factories into rc.refs
+	// during this phase.
 	rc := newRunCtx()
 	rc.cache = cfg.defaultCache
 	rc.cacheTTL = cfg.defaultCacheTTL
 	rc.codec = codec
 	rc.hook = hook
 	r.terminal(rc)
+
+	// Initialise all Refs with the configured store and codec now that all
+	// key factories have been registered by the build phase above.
+	rc.refs.init(cfg.store, codec)
 
 	// Notify GraphHook (static topology — channel sizes are at initial 0).
 	if gh, ok := hook.(internal.GraphHook); ok {
@@ -326,6 +328,5 @@ func MergeRunners(runners ...*Runner) (*Runner, error) {
 				t(rc)
 			}
 		},
-		refs: runners[0].refs,
 	}, nil
 }

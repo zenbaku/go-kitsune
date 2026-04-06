@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/v2/internal"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,11 @@ func LiftFallible[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, 
 	return func(_ context.Context, v I) (O, error) {
 		return fn(v)
 	}
+}
+
+// Lift is an alias for [LiftFallible] for compatibility with v1.
+func Lift[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, error) {
+	return LiftFallible[I, O](fn)
 }
 
 // FilterFunc wraps a simple predicate into the signature expected by [Filter].

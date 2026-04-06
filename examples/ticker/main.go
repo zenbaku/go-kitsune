@@ -1,6 +1,6 @@
-// Example: ticker — scheduled sources that emit on a regular interval.
+// Example: ticker — time-based sources and limiting.
 //
-// Demonstrates: Ticker, Interval, Take, Map, Collect.
+// Demonstrates: Ticker, Interval, Timer, Take, Map
 package main
 
 import (
@@ -12,68 +12,40 @@ import (
 )
 
 func main() {
-	// --- Ticker: emit time.Time on every tick ---
-	//
-	// Ticker wraps time.NewTicker as a pipeline source. Use Take to bound
-	// an otherwise infinite stream. Useful for health-check loops, polling,
-	// or time-triggered batch flushes.
-	fmt.Println("=== Ticker: emit timestamps every 50ms, collect 4 ===")
+	ctx := context.Background()
 
-	times, err := kitsune.Ticker(50 * time.Millisecond).
-		Take(4).
-		Collect(context.Background())
+	// --- Ticker: emits time.Time at each tick, take first 5 ---
+
+	fmt.Println("=== Ticker (5 ticks) ===")
+	ticks, err := kitsune.Collect(ctx,
+		kitsune.Map(
+			kitsune.Take(kitsune.Ticker(20*time.Millisecond), 5),
+			func(_ context.Context, t time.Time) (string, error) {
+				return t.Format("15:04:05.000"), nil
+			}))
 	if err != nil {
 		panic(err)
 	}
-
-	for i, t := range times {
-		if i == 0 {
-			fmt.Printf("  tick 0: %s (base)\n", t.Format("15:04:05.000"))
-			continue
-		}
-		fmt.Printf("  tick %d: +%dms\n", i, t.Sub(times[0]).Milliseconds())
+	for _, ts := range ticks {
+		fmt.Println(" ", ts)
 	}
 
-	// --- Interval: emit a counter (0, 1, 2, …) on every tick ---
-	//
-	// Interval is like Ticker but emits an int64 sequence starting at 0.
-	// Convenient when you need the tick number rather than the wall-clock time.
-	fmt.Println("\n=== Interval: emit 0,1,2,3,4 at 30ms intervals ===")
+	// --- Interval: emits a monotonically increasing counter ---
 
-	counts, err := kitsune.Interval(30 * time.Millisecond).
-		Take(5).
-		Collect(context.Background())
+	fmt.Println("\n=== Interval (counter, 4 ticks) ===")
+	counts, err := kitsune.Collect(ctx, kitsune.Take(kitsune.Interval(20*time.Millisecond), 4))
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println(" ", counts)
 
-	fmt.Println("Counts:", counts)
+	// --- Timer: emits one value after a delay ---
 
-	// --- Ticker + Map: scheduled work ---
-	//
-	// Combine Ticker with Map to run a function on a regular schedule.
-	// Here we "ping" a service every 60ms and collect 3 responses.
-	fmt.Println("\n=== Ticker + Map: periodic health check ===")
-
-	type HealthResult struct {
-		At     time.Time
-		Status string
-	}
-
-	checks, err := kitsune.Map(
-		kitsune.Ticker(60*time.Millisecond).Take(3),
-		func(_ context.Context, t time.Time) (HealthResult, error) {
-			// Simulate a fast health-check call.
-			return HealthResult{At: t, Status: "ok"}, nil
-		},
-		kitsune.WithName("health-check"),
-	).Collect(context.Background())
+	fmt.Println("\n=== Timer (fires once after 20ms) ===")
+	msg, err := kitsune.Collect(ctx,
+		kitsune.Timer(20*time.Millisecond, func() string { return "fired!" }))
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("Checks run: %d\n", len(checks))
-	for _, c := range checks {
-		fmt.Printf("  %s → %s\n", c.At.Format("15:04:05.000"), c.Status)
-	}
+	fmt.Println(" ", msg)
 }

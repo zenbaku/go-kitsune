@@ -4,6 +4,8 @@ go 1.26.1
 
 replace github.com/zenbaku/go-kitsune => ../..
 
+replace github.com/zenbaku/go-kitsune/hooks => ../../hooks
+
 require (
 	github.com/zenbaku/go-kitsune v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otel v1.42.0
@@ -11,7 +13,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.42.0
 )
 
-require golang.org/x/time v0.15.0 // indirect
+require (
+	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

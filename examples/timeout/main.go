@@ -1,6 +1,9 @@
-// Example: timeout — per-item deadline on Map and FlatMap stages.
+// Example: timeout — enforce per-item deadlines on slow stages.
 //
-// Demonstrates: Timeout StageOption, OnError(Skip), Map, Collect.
+// Demonstrates: Timeout StageOption, OnError(Skip()), OnError(Return(...))
+//
+// Timeout passes a deadline-scoped context to the stage function.
+// The function must respect ctx.Done() to be interrupted by the deadline.
 package main
 
 import (
@@ -11,63 +14,60 @@ import (
 	kitsune "github.com/zenbaku/go-kitsune"
 )
 
-// slowLookup simulates an external API call that may take a variable amount of time.
-// It respects context cancellation so that Timeout can interrupt it.
-func slowLookup(ctx context.Context, id int) (string, error) {
-	delay := time.Duration(id*30) * time.Millisecond // id=1→30ms, id=2→60ms, ...
-	select {
-	case <-time.After(delay):
-		return fmt.Sprintf("result-%d", id), nil
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
 func main() {
-	// --- Timeout: fast items pass through, slow items are cancelled ---
-	//
-	// A 100ms deadline is applied per item. IDs 1–3 finish in time (30–90ms);
-	// IDs 4–5 exceed the deadline (120–150ms) and are skipped.
-	fmt.Println("=== Timeout: cancel slow API calls, skip timed-out items ===")
+	ctx := context.Background()
 
-	ids := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	results, err := kitsune.Map(
-		ids,
-		slowLookup,
-		kitsune.Timeout(100*time.Millisecond),
-		kitsune.OnError(kitsune.Skip()),
-		kitsune.WithName("lookup"),
-	).Collect(context.Background())
+	delays := []time.Duration{
+		5 * time.Millisecond,
+		50 * time.Millisecond,
+		5 * time.Millisecond,
+		80 * time.Millisecond,
+		5 * time.Millisecond,
+		30 * time.Millisecond,
+		5 * time.Millisecond,
+	}
+
+	// The context passed to each fn has a per-item deadline.
+	// The fn must select on ctx.Done() so it can be interrupted.
+	slow := func(ctx context.Context, d time.Duration) (string, error) {
+		select {
+		case <-time.After(d):
+			return fmt.Sprintf("done in %v", d), nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	// --- Skip timed-out items ---
+
+	fmt.Println("=== Timeout + Skip ===")
+	results, err := kitsune.Collect(ctx,
+		kitsune.Map(kitsune.FromSlice(delays), slow,
+			kitsune.Timeout(20*time.Millisecond),
+			kitsune.OnError(kitsune.Skip()),
+			kitsune.WithName("slow-op"),
+		))
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("Items: 5  Results: %d  Timed out: %d\n", len(results), 5-len(results))
+	fmt.Printf("received %d of %d items (timed-out items skipped)\n", len(results), len(delays))
 	for _, r := range results {
 		fmt.Println(" ", r)
 	}
 
-	// --- Timeout with retry ---
-	//
-	// Combine Timeout with Retry so a timed-out item gets another attempt
-	// before being dropped. Each attempt gets a fresh deadline.
-	fmt.Println("\n=== Timeout + Retry: each attempt gets a fresh deadline ===")
-	const budget = 50 * time.Millisecond
+	// --- Return a default value on timeout ---
 
-	attempts := kitsune.FromSlice([]int{1, 2}) // id=1→30ms (passes), id=2→60ms (times out on all retries)
-	results2, err := kitsune.Map(
-		attempts,
-		slowLookup,
-		kitsune.Timeout(budget),
-		kitsune.OnError(kitsune.RetryThen(2, kitsune.FixedBackoff(0), kitsune.Skip())),
-		kitsune.WithName("lookup-retry"),
-	).Collect(context.Background())
+	fmt.Println("\n=== Timeout + Return default ===")
+	results2, err := kitsune.Collect(ctx,
+		kitsune.Map(kitsune.FromSlice(delays), slow,
+			kitsune.Timeout(20*time.Millisecond),
+			kitsune.OnError(kitsune.Return("timed out")),
+			kitsune.WithName("slow-op-default"),
+		))
 	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("Submitted: 2  Passed: %d  Dropped after retries: %d\n",
-		len(results2), 2-len(results2))
+	fmt.Printf("received %d items (timeouts replaced with default)\n", len(results2))
 	for _, r := range results2 {
 		fmt.Println(" ", r)
 	}

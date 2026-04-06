@@ -3,9 +3,9 @@ module github.com/zenbaku/go-kitsune/tails/kprometheus
 go 1.26.1
 
 require (
-	github.com/zenbaku/go-kitsune v0.0.0
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
+	github.com/zenbaku/go-kitsune v0.0.0
 )
 
 require (
@@ -14,6 +14,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
@@ -21,3 +22,5 @@ require (
 )
 
 replace github.com/zenbaku/go-kitsune => ../..
+
+replace github.com/zenbaku/go-kitsune/hooks => ../../hooks

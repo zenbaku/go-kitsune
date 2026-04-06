@@ -8,179 +8,138 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // ---------------------------------------------------------------------------
-// Amb
+// Internal helpers
 // ---------------------------------------------------------------------------
 
-// Amb subscribes to all pipeline factories concurrently and forwards items
-// exclusively from whichever factory emits first, cancelling all others.
-// If no factory emits before ctx is cancelled, Amb produces no items.
-// Each factory must create a new independent pipeline graph.
+// sourceStage builds a stageFunc that closes ch on exit and respects cancellation.
+// itemFn is called to produce items; it receives:
+//   - a send helper that delivers an item to ch (blocking, respects ctx)
+//   - the run context
 //
-//	kitsune.Amb(
-//	    func() *Pipeline[Result] { return fetchFromPrimaryDB(ctx) },
-//	    func() *Pipeline[Result] { return fetchFromReplicaDB(ctx) },
-//	)
-func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
-	if len(factories) == 0 {
-		return Generate(func(_ context.Context, _ func(T) bool) error { return nil })
-	}
-	if len(factories) == 1 {
-		return Generate(func(ctx context.Context, yield func(T) bool) error {
-			err := factories[0]().ForEach(func(_ context.Context, item T) error {
-				if !yield(item) {
-					return context.Canceled
-				}
-				return nil
-			}).Run(ctx)
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		})
-	}
-	return Generate(func(ctx context.Context, yield func(T) bool) error {
-		innerCtx, innerCancel := context.WithCancel(ctx)
-		defer innerCancel()
+// This helper exists so every source shares the same close logic.
+func sourceStage[T any](ch chan T, itemFn func(ctx context.Context, send func(T) error) error) stageFunc {
+	return func(ctx context.Context) error {
+		defer close(ch)
 
-		type item struct {
-			val     T
-			factory int
-		}
-
-		// Per-factory item channels.
-		chs := make([]chan item, len(factories))
-		for i := range chs {
-			chs[i] = make(chan item, engine.DefaultBuffer)
-		}
-
-		var (
-			wg      sync.WaitGroup
-			errOnce sync.Once
-			firstErr error
-		)
-
-		// Start each factory in its own goroutine.
-		for i, factory := range factories {
-			i, factory := i, factory
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				err := factory().ForEach(func(_ context.Context, v T) error {
-					select {
-					case chs[i] <- item{val: v, factory: i}:
-						return nil
-					case <-innerCtx.Done():
-						return innerCtx.Err()
-					}
-				}).Run(innerCtx)
-				if err != nil && !errors.Is(err, context.Canceled) {
-					errOnce.Do(func() { firstErr = err })
-					innerCancel()
-				}
-				close(chs[i])
-			}()
-		}
-
-		// Close a merged channel once all goroutines finish.
-		merged := make(chan item, engine.DefaultBuffer)
-		go func() {
-			// Fan all per-factory channels into merged.
-			var fanWg sync.WaitGroup
-			for _, ch := range chs {
-				ch := ch
-				fanWg.Add(1)
-				go func() {
-					defer fanWg.Done()
-					for it := range ch {
-						select {
-						case merged <- it:
-						case <-innerCtx.Done():
-							return
-						}
-					}
-				}()
-			}
-			fanWg.Wait()
-			close(merged)
-		}()
-
-		// Determine winner: first factory to emit.
-		winner := -1
-		for it := range merged {
-			if winner == -1 {
-				winner = it.factory
-				// Cancel all others.
-				innerCancel()
-				// Restart inner context just for the winner's remaining items.
-				// (inner is already cancelled; we drain winner's buffered ch.)
-			}
-			if it.factory != winner {
-				continue
-			}
-			if !yield(it.val) {
-				return nil
-			}
-		}
-
-		// Drain remaining items from the winner's channel if any arrived
-		// after merged was closed but before we read them all.
-		if winner >= 0 {
-			for it := range chs[winner] {
-				if !yield(it.val) {
-					return nil
-				}
-			}
-		}
-
-		wg.Wait()
-		return firstErr
-	})
-}
-
-// From creates a Pipeline that reads from an existing channel.
-// The pipeline completes when the channel is closed.
-func From[T any](ch <-chan T) *Pipeline[T] {
-	g := engine.New()
-	fn := func(ctx context.Context, yield func(any) bool) error {
-		for {
+		send := func(item T) error {
 			select {
-			case item, ok := <-ch:
-				if !ok {
-					return nil
-				}
-				if !yield(item) {
-					return nil
-				}
+			case ch <- item:
+				return nil
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
+		return itemFn(ctx, send)
 	}
-	id := g.AddNode(&engine.Node{Kind: engine.Source, Fn: fn})
-	return &Pipeline[T]{g: g, node: id}
 }
+
+// ---------------------------------------------------------------------------
+// FromSlice
+// ---------------------------------------------------------------------------
 
 // FromSlice creates a Pipeline that emits each element of the slice.
 func FromSlice[T any](items []T) *Pipeline[T] {
-	g := engine.New()
-	fn := func(ctx context.Context, yield func(any) bool) error {
-		for _, item := range items {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if !yield(item) {
+	cfg := buildStageConfig(nil)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "source",
+		name:        "from_slice",
+		concurrency: 1,
+		buffer:      cfg.buffer,
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		var stage stageFunc
+		if internal.IsNoopHook(rc.hook) {
+			// Fast path: plain sends, no select per item. The downstream drain
+			// goroutine unblocks this send if the pipeline exits early.
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				for _, item := range items {
+					ch <- item
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+				}
 				return nil
 			}
+		} else {
+			stage = sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+				for _, item := range items {
+					if err := send(item); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
 		}
-		return nil
+		rc.add(stage, m)
+		return ch
 	}
-	id := g.AddNode(&engine.Node{Kind: engine.Source, Fn: fn})
-	return &Pipeline[T]{g: g, node: id}
+	return newPipeline(id, meta, build)
 }
+
+// ---------------------------------------------------------------------------
+// From
+// ---------------------------------------------------------------------------
+
+// From creates a Pipeline that reads from an existing channel.
+// The pipeline completes when the channel is closed.
+func From[T any](src <-chan T) *Pipeline[T] {
+	cfg := buildStageConfig(nil)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "source",
+		name:        "from",
+		concurrency: 1,
+		buffer:      cfg.buffer,
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+			for {
+				select {
+				case item, ok := <-src:
+					if !ok {
+						return nil
+					}
+					if err := send(item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		})
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// ---------------------------------------------------------------------------
+// Generate
+// ---------------------------------------------------------------------------
 
 // Generate creates a Pipeline from a push-based source function.
 // Call yield for each item. yield returns false if the pipeline is done
@@ -199,13 +158,65 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 //	    }
 //	})
 func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pipeline[T] {
-	g := engine.New()
-	wrapped := func(ctx context.Context, yield func(any) bool) error {
-		return fn(ctx, func(item T) bool { return yield(item) })
+	cfg := buildStageConfig(nil)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "source",
+		name:        "generate",
+		concurrency: 1,
+		buffer:      cfg.buffer,
 	}
-	id := g.AddNode(&engine.Node{Kind: engine.Source, Fn: wrapped})
-	return &Pipeline[T]{g: g, node: id}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		var stage stageFunc
+		done := rc.done
+		if internal.IsNoopHook(rc.hook) {
+			// Fast path: yield selects between the output channel and the pipeline
+			// done signal. The done channel is closed by early-exit stages (Take,
+			// TakeWhile) so infinite sources (Ticker, Interval, …) stop cleanly.
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				return fn(ctx, func(item T) bool {
+					select {
+					case ch <- item:
+						return ctx.Err() == nil
+					case <-done:
+						return false
+					}
+				})
+			}
+		} else {
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				return fn(ctx, func(item T) bool {
+					select {
+					case ch <- item:
+						return true
+					case <-ctx.Done():
+						return false
+					case <-done:
+						return false
+					}
+				})
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
+
+// ---------------------------------------------------------------------------
+// FromIter
+// ---------------------------------------------------------------------------
 
 // FromIter creates a Pipeline from a Go iterator ([iter.Seq]).
 //
@@ -314,7 +325,7 @@ func (c *Channel[T]) Close() {
 }
 
 // ---------------------------------------------------------------------------
-// Scheduled sources
+// Ticker
 // ---------------------------------------------------------------------------
 
 // Ticker emits the current [time.Time] at regular intervals.
@@ -327,7 +338,7 @@ func Ticker(d time.Duration, opts ...StageOption) *Pipeline[time.Time] {
 	cfg := buildStageConfig(opts)
 	clk := cfg.clock
 	if clk == nil {
-		clk = engine.RealClock{}
+		clk = internal.RealClock{}
 	}
 	return Generate(func(ctx context.Context, yield func(time.Time) bool) error {
 		ticker := clk.NewTicker(d)
@@ -345,6 +356,10 @@ func Ticker(d time.Duration, opts ...StageOption) *Pipeline[time.Time] {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Interval
+// ---------------------------------------------------------------------------
+
 // Interval emits a monotonically increasing int64 (0, 1, 2, …) at regular intervals.
 // The first value fires after d. The pipeline runs until the context is cancelled.
 // Pass [WithClock] to use a deterministic clock for testing.
@@ -355,7 +370,7 @@ func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64] {
 	cfg := buildStageConfig(opts)
 	clk := cfg.clock
 	if clk == nil {
-		clk = engine.RealClock{}
+		clk = internal.RealClock{}
 	}
 	return Generate(func(ctx context.Context, yield func(int64) bool) error {
 		ticker := clk.NewTicker(d)
@@ -371,6 +386,33 @@ func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64] {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Timer
+// ---------------------------------------------------------------------------
+
+// Timer emits a single value after delay by calling fn, then closes.
+// The pipeline produces exactly one item unless the context is cancelled first.
+// Pass [WithClock] to use a deterministic clock for testing.
+//
+//	// Emit a heartbeat message after 5 seconds.
+//	kitsune.Timer(5*time.Second, func() string { return "ping" })
+func Timer[T any](delay time.Duration, fn func() T, opts ...StageOption) *Pipeline[T] {
+	cfg := buildStageConfig(opts)
+	clk := cfg.clock
+	if clk == nil {
+		clk = internal.RealClock{}
+	}
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		select {
+		case <-clk.After(delay):
+			yield(fn())
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	})
 }
@@ -461,33 +503,6 @@ func Cycle[T any](items []T) *Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
-// Timer
-// ---------------------------------------------------------------------------
-
-// Timer emits a single value after delay by calling fn, then closes.
-// The pipeline produces exactly one item unless the context is cancelled first.
-// Pass [WithClock] to use a deterministic clock for testing.
-//
-//	// Emit a heartbeat message after 5 seconds.
-//	kitsune.Timer(5*time.Second, func() string { return "ping" })
-func Timer[T any](delay time.Duration, fn func() T, opts ...StageOption) *Pipeline[T] {
-	cfg := buildStageConfig(opts)
-	clk := cfg.clock
-	if clk == nil {
-		clk = engine.RealClock{}
-	}
-	return Generate(func(ctx context.Context, yield func(T) bool) error {
-		select {
-		case <-clk.After(delay):
-			yield(fn())
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
 // Concat
 // ---------------------------------------------------------------------------
 
@@ -524,5 +539,131 @@ func Concat[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			}
 		}
 		return nil
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Amb
+// ---------------------------------------------------------------------------
+
+// Amb subscribes to all pipeline factories concurrently and forwards items
+// exclusively from whichever factory emits first, cancelling all others.
+// If no factory emits before ctx is cancelled, Amb produces no items.
+// Each factory must create a new independent pipeline graph.
+//
+//	kitsune.Amb(
+//	    func() *Pipeline[Result] { return fetchFromPrimaryDB(ctx) },
+//	    func() *Pipeline[Result] { return fetchFromReplicaDB(ctx) },
+//	)
+func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
+	if len(factories) == 0 {
+		return Generate(func(_ context.Context, _ func(T) bool) error { return nil })
+	}
+	if len(factories) == 1 {
+		return Generate(func(ctx context.Context, yield func(T) bool) error {
+			err := factories[0]().ForEach(func(_ context.Context, item T) error {
+				if !yield(item) {
+					return context.Canceled
+				}
+				return nil
+			}).Run(ctx)
+			if errors.Is(err, context.Canceled) {
+				return nil
+			}
+			return err
+		})
+	}
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		innerCtx, innerCancel := context.WithCancel(ctx)
+		defer innerCancel()
+
+		type ambItem struct {
+			val     T
+			factory int
+		}
+
+		// Per-factory item channels.
+		chs := make([]chan ambItem, len(factories))
+		for i := range chs {
+			chs[i] = make(chan ambItem, internal.DefaultBuffer)
+		}
+
+		var (
+			wg      sync.WaitGroup
+			errOnce sync.Once
+			firstErr error
+		)
+
+		// Start each factory in its own goroutine.
+		for i, factory := range factories {
+			i, factory := i, factory
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := factory().ForEach(func(_ context.Context, v T) error {
+					select {
+					case chs[i] <- ambItem{val: v, factory: i}:
+						return nil
+					case <-innerCtx.Done():
+						return innerCtx.Err()
+					}
+				}).Run(innerCtx)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					errOnce.Do(func() { firstErr = err })
+					innerCancel()
+				}
+				close(chs[i])
+			}()
+		}
+
+		// Fan all per-factory channels into a merged channel.
+		merged := make(chan ambItem, internal.DefaultBuffer)
+		go func() {
+			var fanWg sync.WaitGroup
+			for _, ch := range chs {
+				ch := ch
+				fanWg.Add(1)
+				go func() {
+					defer fanWg.Done()
+					for it := range ch {
+						select {
+						case merged <- it:
+						case <-innerCtx.Done():
+							return
+						}
+					}
+				}()
+			}
+			fanWg.Wait()
+			close(merged)
+		}()
+
+		// Determine winner: first factory to emit.
+		winner := -1
+		for it := range merged {
+			if winner == -1 {
+				winner = it.factory
+				innerCancel()
+			}
+			if it.factory != winner {
+				continue
+			}
+			if !yield(it.val) {
+				return nil
+			}
+		}
+
+		// Drain remaining items from the winner's channel if any arrived
+		// after merged was closed but before we read them all.
+		if winner >= 0 {
+			for it := range chs[winner] {
+				if !yield(it.val) {
+					return nil
+				}
+			}
+		}
+
+		wg.Wait()
+		return firstErr
 	})
 }

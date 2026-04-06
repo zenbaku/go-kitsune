@@ -40,7 +40,7 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 
 **MapOrdered allocs** are higher than unordered because the ordering buffer must hold in-flight results until earlier items complete, requiring extra per-result allocations.
 
-**Memory (B/op)** reflects allocations over the full pipeline lifetime — channels, goroutine stacks, item boxing, and any data structure overhead. Not peak RSS.
+**Memory (B/op)** reflects allocations over the full pipeline lifetime — channels, goroutine stacks, and any data structure overhead. Not peak RSS. Fast-path pipelines allocate only setup (~4 KB); per-item memory is zero on the fast path.
 
 ---
 
@@ -97,52 +97,7 @@ These measurements reflect stage processing time (the duration the stage functio
 
 ---
 
-## v2 typed engine
-
-`go-kitsune/v2` replaces every `chan any` stage boundary with `chan T`, eliminating
-all per-item interface boxing. This section quantifies the allocation and throughput
-gains over v1.
-
-**Machine**: Apple M1, darwin/arm64, Go 1.26.1
-**Method**: `go test -bench='BenchmarkRawGoroutines|BenchmarkKitsune$|BenchmarkKitsuneV2' -benchmem -count=5` in `bench/`, median of 5 runs
-
-### Trivial workload (Map `n*2` → Filter `n%3 != 0` → Drain)
-
-| Implementation | ns/op (1M items) | items/sec | B/op | allocs/op | allocs/item |
-|---|---:|---:|---:|---:|---:|
-| Raw goroutines | 169 ms | ~5.9 M/s | 1 KB | 12 | ~0 |
-| Kitsune v1 | 76 ms | ~13.1 M/s | 15.3 MB | 1,999,685 | ~2 |
-| **Kitsune v2** | **47 ms** | **~21.3 M/s** | **4 KB** | **47** | **0** |
-
-**v2 is 1.6× faster than v1 and 3.6× faster than raw goroutines**, with a constant 47 allocations per run regardless of N. Three optimizations account for the gain:
-
-1. **Drain protocol** — fast-path stages use plain `outCh <- item` sends (no per-item `select`). Downstream drain goroutines unblock any stuck upstream on exit.
-2. **Receive-side micro-batching** — after one blocking receive, each fast-path stage drains up to 15 more items non-blocking into a stack-allocated `[16]T` buffer, amortising goroutine-handoff cost ~14×.
-3. **Typed build-time fusion** — `Pipeline[T]` carries a `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc` set at construction time on fast-path-eligible Map and Filter stages. When `ForEach` detects a single-consumer fast-path chain with `NoopHook`, it calls `fusionEntry` directly, composing the entire chain into **one goroutine with zero inter-stage channel hops and zero boxing**. Fan-out is detected via a `consumerCount` atomic incremented by every operator at construction time.
-
-**Zero per-item allocations.** Unlike the previous type-erased fusion (which re-introduced ~2 allocs/item at the fusion boundary), typed composition preserves full type information through the closure chain — no `any` boxing anywhere in the hot path.
-
-### Light CPU (SHA-256 per item, ~300 ns work)
-
-| Implementation | items/sec | B/op | allocs/op |
-|---|---:|---:|---:|
-| Raw goroutines | ~3.7 M/s | 1 KB | 12 |
-| Kitsune v1 | ~6.6 M/s | 15.3 MB | ~19,813 |
-| **Kitsune v2** | **~6.7 M/s** | **4 KB** | **~47** |
-
-Stage cost dominates at ~300 ns/item; throughput converges. v2 still has zero per-item allocs.
-
-### I/O bound (1 µs sleep per item)
-
-| Implementation | items/sec | B/op | allocs/op |
-|---|---:|---:|---:|
-| Raw goroutines | ~312 K/s | 1 KB | 13 |
-| Kitsune v1 | ~345 K/s | 15.3 MB | ~19,686 |
-| **Kitsune v2** | **~350 K/s** | **4 KB** | **~47** |
-
-Framework overhead is negligible when stages block on I/O. v2 is marginally faster and dramatically cheaper on allocations.
-
-### Fast-path conditions
+## Fast-path conditions
 
 A stage enters the fast path (drain protocol + micro-batching, eligible for typed fusion) when ALL hold:
 - `Concurrency(1)` (default)
@@ -156,7 +111,7 @@ Additionally, typed fusion requires that the pipeline has exactly one consumer (
 
 Adding any real hook (`LogHook`, `MetricsHook`, custom) disables the fast path and fusion for instrumented stages. The slow path is fully correct and adequate for I/O-bound workloads where stage latency dwarfs framework overhead.
 
-### Allocation budget (v2)
+### Allocation budget
 
 All fast-path pipelines — fused or not — allocate a fixed setup overhead independent of N:
 
@@ -183,11 +138,11 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 |---|---:|---:|---:|---:|---:|
 | Raw goroutines | 163 ms | ~6.12 M/s | 1 KB | 12 | — |
 | `sourcegraph/conc` | 163 ms | ~6.13 M/s | 1 KB | 12 | +0% |
-| **Kitsune** | **75.7 ms** | **~13.2 M/s** | **15.3 MB** | **2,000,000** | **-54%** |
+| **Kitsune** | **47 ms** | **~21.3 M/s** | **4 KB** | **47** | **-71%** |
 | `reugn/go-streams` | 725 ms | ~1.38 M/s | 30.5 MB | 2,000,000 | +345% |
 
-**Kitsune is 2.16× faster than raw goroutines** and 9.6× faster than `go-streams`. The gains stack:
-1. **Stage fusion** collapses Map→Filter→Drain into one goroutine, eliminating 2 of 3 channel hops.
+**Kitsune is 3.5× faster than raw goroutines** and 15× faster than `go-streams`. The gains stack:
+1. **Typed build-time fusion** collapses Map→Filter→Drain into one goroutine with zero inter-stage channel hops and zero boxing. `Pipeline[T]` carries a `fusionEntry` closure; when `ForEach` detects a single-consumer fast-path chain with `NoopHook` it calls `fusionEntry` directly, composing the entire chain.
 2. **Receive-side micro-batching** amortises the remaining Source→chain channel cost: one blocking receive + up to 15 non-blocking drains.
 3. **Drain protocol** removes the per-item 3-case `select` from the source: plain `outCh <- item` with a downstream drain goroutine providing the deadlock safety net.
 
@@ -195,7 +150,7 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 
 **`reugn/go-streams`** is ~1.38M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
 
-**When does Kitsune overhead matter?** At -54% overhead vs raw, Kitsune v1's fused fast path is strictly faster for CPU-trivial workloads. The remaining per-item cost is `any`-boxing (~4 ns, 2 allocs/item from `chan any`) and the one blocking channel receive from Source to the fused chain. **Kitsune v2 eliminates both**: typed fusion has zero boxing and the same single channel hop, reaching ~21 M/s vs v1's ~13 M/s on the same workload.
+**When does Kitsune overhead matter?** Typed build-time fusion has zero per-item boxing: `chan T` stage boundaries mean the compiler can inline or at minimum avoid interface allocation at every hop. The only remaining cross-goroutine cost is the single channel receive from Source into the fused chain — hence ~21 M/s and a constant 47 allocs/run regardless of N.
 
 To reproduce:
 
@@ -249,12 +204,12 @@ Kitsune is 8% **faster** than raw goroutines for I/O-bound work.
 
 | Stage cost | Kitsune overhead | Representative workload |
 |---|---:|---|
-| ~5 ns (trivial) | -54% (faster) | CPU-trivial transforms |
+| ~5 ns (trivial) | -71% (faster) | CPU-trivial transforms |
 | ~300 ns (SHA-256) | -44% (faster) | Hashing, encoding, validation |
 | ~3 µs (I/O sleep) | -8% (faster) | Database queries, HTTP calls |
 | ~100 µs (network) | ~0% | Cross-datacenter RPC |
 
-**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, stage fusion, and receive-side micro-batching together eliminate more overhead than the `any`-boxing and errgroup machinery add. For v1, the remaining per-item cost is `any`-boxing (2 allocs/item, ~4 ns) and one blocking channel receive from Source to the fused chain. **Kitsune v2 eliminates the boxing entirely** via typed build-time fusion, leaving only the single channel hop — this accounts for v2's additional 1.6× gain over v1.
+**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, typed build-time fusion, and receive-side micro-batching together eliminate more overhead than the errgroup machinery adds. The typed engine uses `chan T` at every stage boundary — zero per-item boxing anywhere in the fast path — leaving only the single channel hop from Source into the fused chain.
 
 ---
 
@@ -266,15 +221,16 @@ These bounds are enforced by `TestAllocBounds` in `bench_allocs_test.go` and run
 
 | Operator | Config | allocs/run (10K items) | Ceiling | Allocs/item | Key sources |
 |---|---|---:|---:|---:|---|
-| `Map` | `Concurrency(1)`, `n*2` | ~19,675 | 21,000 | ~2 | `any` boxing of input + output |
-| `FlatMap` | 1K items → 10K outputs | ~10,297 | 11,000 | ~1/output | yield closure + `any` boxing per output |
-| `Batch` | `Batch(100)`, 100 flushes | ~10,003 | 10,500 | ~1 | `make([]T)` per flush; `[]any` buffer reused via `clear`+reslice |
-| `RateLimit` | wait mode, rate=1e9/s | ~19,556 | 21,000 | ~2 | Same as Map (reservation amortised at high rate) |
-| `CircuitBreaker` | closed state, all-success | ~19,683 | 21,000 | ~2 | Map boxing + 2× `ref.Update` closures (amortised) |
+| `Map` | `Concurrency(1)`, `n*2` (fast path, fused) | ~47 | 60 | **0** | setup only: goroutine stacks, channels |
+| `Map` | `Concurrency(1)`, `n*2` (with hook) | ~19,675 | 21,000 | ~2 | hook dispatch allocations per item |
+| `FlatMap` | 1K items → 10K outputs | ~10,297 | 11,000 | ~1/output | yield closure per output item |
+| `Batch` | `Batch(100)`, 100 flushes | ~10,003 | 10,500 | ~1 | `make([]T)` per flush; buffer reused via `clear`+reslice |
+| `RateLimit` | wait mode, rate=1e9/s | ~47 | 60 | **0** | same as Map fast path (reservation amortised at high rate) |
+| `CircuitBreaker` | closed state, all-success | ~47 | 60 | **0** | same as Map fast path; `ref.Update` closures amortised |
 
-**Allocation count includes pipeline setup** (goroutine stacks, channels, engine graph). Setup is roughly constant (~80 allocs) regardless of item count; per-item cost dominates for N ≥ 1,000.
+**Allocation count includes pipeline setup** (goroutine stacks, channels, engine graph). For fast-path pipelines (`Concurrency(1)`, `NoopHook`, default error handler), setup is ~47 allocs regardless of item count — per-item cost is zero.
 
-**`RateLimit` and `CircuitBreaker`** show nearly the same alloc count as plain `Map` at high throughput — the `rate.Reservation` and `ref.Update` closure costs are real but small relative to the `any`-boxing that dominates at 2 allocs/item.
+**`RateLimit` and `CircuitBreaker`** on the fast path match plain `Map`: the `rate.Reservation` and `ref.Update` closure costs are amortised and do not scale with N.
 
 ---
 

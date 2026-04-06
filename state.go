@@ -5,14 +5,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zenbaku/go-kitsune/engine"
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // ---------------------------------------------------------------------------
 // Key & Ref — typed pipeline state
 // ---------------------------------------------------------------------------
 
-// KeyOption configures a Key.
+// KeyOption configures a [Key].
 type KeyOption func(*keyConfig)
 
 type keyConfig struct {
@@ -20,10 +20,9 @@ type keyConfig struct {
 }
 
 // StateTTL sets a time-to-live for state values associated with this key.
-// When a Ref's value has not been written for longer than ttl, Ref.Get
+// When a Ref's value has not been written for longer than ttl, [Ref.Get]
 // returns the initial value and the slot is reset. Expiry is checked lazily
-// on read. For Store-backed Refs, expiry is tracked on the Ref side (not
-// propagated to the Store's native TTL).
+// on read. For Store-backed Refs, expiry is tracked on the Ref side.
 func StateTTL(ttl time.Duration) KeyOption {
 	return func(c *keyConfig) { c.ttl = ttl }
 }
@@ -31,7 +30,7 @@ func StateTTL(ttl time.Duration) KeyOption {
 // Key identifies a piece of typed, run-scoped pipeline state.
 // Declare keys as package-level variables:
 //
-//	var QueryOrigin = kitsune.NewKey[map[string]Item]("query-origin", make(map[string]Item))
+//	var counterKey = kitsune.NewKey[int]("counter", 0)
 type Key[T any] struct {
 	name    string
 	initial T
@@ -39,7 +38,7 @@ type Key[T any] struct {
 }
 
 // NewKey creates a typed state key with the given name and initial value.
-// The initial value is used at the start of each pipeline [Runner.Run].
+// The initial value is used at the start of each [Runner.Run].
 func NewKey[T any](name string, initial T, opts ...KeyOption) Key[T] {
 	cfg := &keyConfig{}
 	for _, o := range opts {
@@ -60,17 +59,18 @@ type Ref[T any] struct {
 	value T
 
 	// Store-backed path (nil for memory-only).
-	store Store
+	store internal.Store
 	key   string
-	codec Codec
+	codec internal.Codec
 
 	// TTL fields (zero values = no TTL).
 	ttl        time.Duration
-	lastWrite  time.Time // zero = never written
+	lastWrite  time.Time
 	initialVal T
 }
 
-// Get returns the current state value.
+// Get returns the current state value. If a TTL is set and has elapsed since
+// the last write, the initial value is returned and the slot is reset.
 func (r *Ref[T]) Get(ctx context.Context) (T, error) {
 	if r.store == nil {
 		r.mu.RLock()
@@ -78,7 +78,6 @@ func (r *Ref[T]) Get(ctx context.Context) (T, error) {
 			r.mu.RUnlock()
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			// Double-check after lock upgrade.
 			if !r.lastWrite.IsZero() && time.Now().After(r.lastWrite.Add(r.ttl)) {
 				r.value = r.initialVal
 				r.lastWrite = time.Time{}
@@ -106,11 +105,9 @@ func (r *Ref[T]) Set(ctx context.Context, value T) error {
 	return r.storeSet(ctx, value)
 }
 
-// GetOrSet returns the current state value if it has been explicitly set, or
-// calls fn to compute and store a default. For memory Refs, the in-memory
-// value (including the initial value) is always returned directly without
-// calling fn. For store-backed Refs, fn is called only when the key is absent
-// from the store.
+// GetOrSet returns the current value. For memory-backed Refs the in-memory
+// value (including the initial) is always returned directly. For store-backed
+// Refs, fn is called only when the key is absent from the store.
 func (r *Ref[T]) GetOrSet(ctx context.Context, fn func() (T, error)) (T, error) {
 	if r.store == nil {
 		r.mu.RLock()
@@ -157,7 +154,6 @@ func (r *Ref[T]) Update(ctx context.Context, fn func(T) (T, error)) error {
 	return r.storeUpdate(ctx, fn)
 }
 
-// Store-backed operations use JSON serialization and mutex for atomicity.
 func (r *Ref[T]) storeGet(ctx context.Context) (T, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -167,7 +163,7 @@ func (r *Ref[T]) storeGet(ctx context.Context) (T, error) {
 		return zero, err
 	}
 	if !ok {
-		return r.value, nil // return initial value if not in store
+		return r.value, nil
 	}
 	var val T
 	if err := r.codec.Unmarshal(data, &val); err != nil {
@@ -203,7 +199,6 @@ func (r *Ref[T]) storeGetOrSet(ctx context.Context, fn func() (T, error)) (T, er
 		}
 		return val, nil
 	}
-	// Key absent — call fn, store the result.
 	val, err := fn()
 	if err != nil {
 		var zero T
@@ -256,7 +251,6 @@ func (r *Ref[T]) storeUpdateAndGet(ctx context.Context, fn func(T) (T, error)) (
 func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Read current.
 	current := r.value
 	data, ok, err := r.store.Get(ctx, r.key)
 	if err != nil {
@@ -267,12 +261,10 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 			return err
 		}
 	}
-	// Apply update.
 	newVal, err := fn(current)
 	if err != nil {
 		return err
 	}
-	// Write back.
 	data, err = r.codec.Marshal(newVal)
 	if err != nil {
 		return err
@@ -280,12 +272,8 @@ func (r *Ref[T]) storeUpdate(ctx context.Context, fn func(T) (T, error)) error {
 	return r.store.Set(ctx, r.key, data)
 }
 
-// ---------------------------------------------------------------------------
-// Stateful operators
-// ---------------------------------------------------------------------------
-
 // newRef constructs a Ref with all fields set.
-func newRef[S any](initial S, storeKey string, store Store, codec Codec, ttl time.Duration) *Ref[S] {
+func newRef[S any](initial S, storeKey string, store internal.Store, codec internal.Codec, ttl time.Duration) *Ref[S] {
 	return &Ref[S]{
 		value:      initial,
 		initialVal: initial,
@@ -296,52 +284,162 @@ func newRef[S any](initial S, storeKey string, store Store, codec Codec, ttl tim
 	}
 }
 
-// MapWith applies a 1:1 transform with access to typed pipeline state.
-func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) (O, error), opts ...StageOption) *Pipeline[O] {
-	g := p.g
-	g.RegisterKey(key.name, func(store Store, codec Codec) any {
-		return newRef[S](key.initial, key.name, store, codec, key.ttl)
-	})
+// ---------------------------------------------------------------------------
+// Stateful operators
+// ---------------------------------------------------------------------------
 
-	wrapped := func(ctx context.Context, in any) (any, error) {
-		ref := g.GetRef(key.name).(*Ref[S])
-		return fn(ctx, ref, in.(I))
+// MapWith applies a 1:1 transform with access to typed pipeline state.
+// The Ref is shared across all items within a single Run; its value persists
+// for the lifetime of the run. Runs at Concurrency(1).
+//
+//	var counterKey = kitsune.NewKey[int]("counter", 0)
+//	numbered := kitsune.MapWith(p, counterKey,
+//	    func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+//	        n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+//	        return fmt.Sprintf("%d: %s", n, s), nil
+//	    },
+//	)
+func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I) (O, error), opts ...StageOption) *Pipeline[O] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "map_with",
+		name:        orDefault(cfg.name, "map_with"),
+		concurrency: 1,
+		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		inputs:      []int{p.id},
 	}
-	n := newNode(engine.Map, wrapped, p, opts)
-	id := g.AddNode(n)
-	return &Pipeline[O]{g: g, node: id}
+
+	keyName := key.name
+	initial := key.initial
+	ttl := key.ttl
+
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+
+		rc.refs.register(keyName, func(store internal.Store, codec internal.Codec) any {
+			return newRef[S](initial, keyName, store, codec, ttl)
+		})
+
+		inCh := p.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan((<-chan I)(inCh)) }()
+
+			ref := rc.refs.get(keyName).(*Ref[S])
+			outbox := internal.NewBlockingOutbox(ch)
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					out, err := fn(ctx, ref, item)
+					if err != nil {
+						return err
+					}
+					if err := outbox.Send(ctx, out); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // FlatMapWith applies a 1:N transform with access to typed pipeline state.
+// The Ref is shared across all items within a single Run. Runs at Concurrency(1).
 func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *Ref[S], I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
-	g := p.g
-	g.RegisterKey(key.name, func(store Store, codec Codec) any {
-		return newRef[S](key.initial, key.name, store, codec, key.ttl)
-	})
-
-	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
-		ref := g.GetRef(key.name).(*Ref[S])
-		return fn(ctx, ref, in.(I), func(out O) error {
-			return yield(out)
-		})
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "flat_map_with",
+		name:        orDefault(cfg.name, "flat_map_with"),
+		concurrency: 1,
+		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		inputs:      []int{p.id},
 	}
-	n := newNode(engine.FlatMap, wrapped, p, opts)
-	id := g.AddNode(n)
-	return &Pipeline[O]{g: g, node: id}
+
+	keyName := key.name
+	initial := key.initial
+	ttl := key.ttl
+
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+
+		rc.refs.register(keyName, func(store internal.Store, codec internal.Codec) any {
+			return newRef[S](initial, keyName, store, codec, ttl)
+		})
+
+		inCh := p.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan((<-chan I)(inCh)) }()
+
+			ref := rc.refs.get(keyName).(*Ref[S])
+			outbox := internal.NewBlockingOutbox(ch)
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if err := fn(ctx, ref, item, func(out O) error {
+						return outbox.Send(ctx, out)
+					}); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
 // Keyed stateful operators (per-entity state)
 // ---------------------------------------------------------------------------
 
-// keyedRefMap holds a per-entity-key Ref map. It is initialized at run time
-// (like a plain Ref) and looked up by entity key on each item.
+// keyedRefMap holds a map from entity key → Ref. Initialized at run time.
 type keyedRefMap[S any] struct {
 	mu      sync.Mutex
 	refs    map[string]*Ref[S]
 	initial S
-	store   Store
-	codec   Codec
+	store   internal.Store
+	codec   internal.Codec
 	keyName string
 	ttl     time.Duration
 }
@@ -350,7 +448,6 @@ func (m *keyedRefMap[S]) getRef(entityKey string) *Ref[S] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if ref, ok := m.refs[entityKey]; ok {
-		// If expired, evict and create fresh.
 		if m.ttl > 0 && !ref.lastWrite.IsZero() && time.Now().After(ref.lastWrite.Add(m.ttl)) {
 			delete(m.refs, entityKey)
 		} else {
@@ -365,7 +462,19 @@ func (m *keyedRefMap[S]) getRef(entityKey string) *Ref[S] {
 
 // MapWithKey applies a 1:1 transform with per-entity typed pipeline state.
 // keyFn extracts a string entity key from each item; items with the same key
-// share a Ref, while different keys get independent Refs.
+// share a Ref, while different keys get independent Refs. Runs at Concurrency(1).
+//
+//	var sessionKey = kitsune.NewKey[SessionState]("session", SessionState{})
+//	result := kitsune.MapWithKey(events,
+//	    func(e Event) string { return e.UserID },
+//	    sessionKey,
+//	    func(ctx context.Context, ref *kitsune.Ref[SessionState], e Event) (Result, error) {
+//	        s, _ := ref.Get(ctx)
+//	        s.EventCount++
+//	        ref.Set(ctx, s)
+//	        return Result{Count: s.EventCount}, nil
+//	    },
+//	)
 func MapWithKey[I, O, S any](
 	p *Pipeline[I],
 	keyFn func(I) string,
@@ -373,31 +482,81 @@ func MapWithKey[I, O, S any](
 	fn func(context.Context, *Ref[S], I) (O, error),
 	opts ...StageOption,
 ) *Pipeline[O] {
-	g := p.g
-	regName := key.name + ":__keyed__"
-	g.RegisterKey(regName, func(store Store, codec Codec) any {
-		return &keyedRefMap[S]{
-			refs:    make(map[string]*Ref[S]),
-			initial: key.initial,
-			store:   store,
-			codec:   codec,
-			keyName: key.name,
-			ttl:     key.ttl,
-		}
-	})
-
-	wrapped := func(ctx context.Context, in any) (any, error) {
-		item := in.(I)
-		km := g.GetRef(regName).(*keyedRefMap[S])
-		ref := km.getRef(keyFn(item))
-		return fn(ctx, ref, item)
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "map_with_key",
+		name:        orDefault(cfg.name, "map_with_key"),
+		concurrency: 1,
+		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		inputs:      []int{p.id},
 	}
-	n := newNode(engine.Map, wrapped, p, opts)
-	id := g.AddNode(n)
-	return &Pipeline[O]{g: g, node: id}
+
+	regName := key.name + ":__keyed__"
+	initial := key.initial
+	keyName := key.name
+	ttl := key.ttl
+
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+
+		rc.refs.register(regName, func(store internal.Store, codec internal.Codec) any {
+			return &keyedRefMap[S]{
+				refs:    make(map[string]*Ref[S]),
+				initial: initial,
+				store:   store,
+				codec:   codec,
+				keyName: keyName,
+				ttl:     ttl,
+			}
+		})
+
+		inCh := p.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan((<-chan I)(inCh)) }()
+
+			km := rc.refs.get(regName).(*keyedRefMap[S])
+			outbox := internal.NewBlockingOutbox(ch)
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					ref := km.getRef(keyFn(item))
+					out, err := fn(ctx, ref, item)
+					if err != nil {
+						return err
+					}
+					if err := outbox.Send(ctx, out); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // FlatMapWithKey applies a 1:N transform with per-entity typed pipeline state.
+// Runs at Concurrency(1).
 func FlatMapWithKey[I, O, S any](
 	p *Pipeline[I],
 	keyFn func(I) string,
@@ -405,179 +564,73 @@ func FlatMapWithKey[I, O, S any](
 	fn func(context.Context, *Ref[S], I, func(O) error) error,
 	opts ...StageOption,
 ) *Pipeline[O] {
-	g := p.g
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "flat_map_with_key",
+		name:        orDefault(cfg.name, "flat_map_with_key"),
+		concurrency: 1,
+		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		inputs:      []int{p.id},
+	}
+
 	regName := key.name + ":__keyed__"
-	g.RegisterKey(regName, func(store Store, codec Codec) any {
-		return &keyedRefMap[S]{
-			refs:    make(map[string]*Ref[S]),
-			initial: key.initial,
-			store:   store,
-			codec:   codec,
-			keyName: key.name,
-			ttl:     key.ttl,
-		}
-	})
+	initial := key.initial
+	keyName := key.name
+	ttl := key.ttl
 
-	wrapped := func(ctx context.Context, in any, yield func(any) error) error {
-		item := in.(I)
-		km := g.GetRef(regName).(*keyedRefMap[S])
-		ref := km.getRef(keyFn(item))
-		return fn(ctx, ref, item, func(out O) error {
-			return yield(out)
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+
+		rc.refs.register(regName, func(store internal.Store, codec internal.Codec) any {
+			return &keyedRefMap[S]{
+				refs:    make(map[string]*Ref[S]),
+				initial: initial,
+				store:   store,
+				codec:   codec,
+				keyName: keyName,
+				ttl:     ttl,
+			}
 		})
-	}
-	n := newNode(engine.FlatMap, wrapped, p, opts)
-	id := g.AddNode(n)
-	return &Pipeline[O]{g: g, node: id}
-}
 
-// ---------------------------------------------------------------------------
-// Store — state backend
-// ---------------------------------------------------------------------------
+		inCh := p.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
 
-// Store is the backend interface for pipeline state persistence.
-// [MemoryStore] is the default. External stores (Redis, DynamoDB) can
-// implement this interface with []byte serialization.
-//
-// Users own connection lifecycle — create, configure, and close the
-// backing client. Kitsune will never open or close connections.
-type Store = engine.Store
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan((<-chan I)(inCh)) }()
 
-// MemoryStore returns an in-process, mutex-protected state store.
-// Useful for testing or when pipeline state does not need to survive restarts.
-func MemoryStore() Store {
-	return &memoryStore{values: make(map[string][]byte)}
-}
+			km := rc.refs.get(regName).(*keyedRefMap[S])
+			outbox := internal.NewBlockingOutbox(ch)
 
-type memoryStore struct {
-	mu     sync.RWMutex
-	values map[string][]byte
-}
-
-func (s *memoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	v, ok := s.values[key]
-	return v, ok, nil
-}
-
-func (s *memoryStore) Set(_ context.Context, key string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.values[key] = value
-	return nil
-}
-
-func (s *memoryStore) Delete(_ context.Context, key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.values, key)
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Cache — key-value cache with TTL
-// ---------------------------------------------------------------------------
-
-// Cache supports key-value caching with TTL. Use it with the [CacheBy] stage
-// option on [Map] to skip redundant calls on repeated keys.
-// External implementations (Redis, Memcached) can implement this interface.
-type Cache = engine.Cache
-
-// MemoryCache returns an in-process cache with a maximum number of entries.
-// When full, the oldest entry is evicted. TTL is respected on reads.
-func MemoryCache(maxSize int) Cache {
-	return &memoryCache{
-		maxSize: maxSize,
-		entries: make(map[string]cacheEntry),
-	}
-}
-
-type cacheEntry struct {
-	data      []byte
-	expiresAt time.Time
-}
-
-type memoryCache struct {
-	mu      sync.RWMutex
-	maxSize int
-	entries map[string]cacheEntry
-	order   []string // insertion order for eviction
-}
-
-func (c *memoryCache) Get(_ context.Context, key string) ([]byte, bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.entries[key]
-	if !ok {
-		return nil, false, nil
-	}
-	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
-		return nil, false, nil // expired
-	}
-	return entry.data, true, nil
-}
-
-func (c *memoryCache) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Evict oldest if at capacity and key is new.
-	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.maxSize {
-		c.evictOldest()
-	}
-	var exp time.Time
-	if ttl > 0 {
-		exp = time.Now().Add(ttl)
-	}
-	if _, exists := c.entries[key]; !exists {
-		c.order = append(c.order, key)
-	}
-	c.entries[key] = cacheEntry{data: value, expiresAt: exp}
-	return nil
-}
-
-func (c *memoryCache) evictOldest() {
-	for len(c.order) > 0 {
-		oldest := c.order[0]
-		c.order = c.order[1:]
-		if _, ok := c.entries[oldest]; ok {
-			delete(c.entries, oldest)
-			return
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					ref := km.getRef(keyFn(item))
+					if err := fn(ctx, ref, item, func(out O) error {
+						return outbox.Send(ctx, out)
+					}); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 		}
+		rc.add(stage, m)
+		return ch
 	}
-}
-
-// ---------------------------------------------------------------------------
-// DedupSet — deduplication tracker
-// ---------------------------------------------------------------------------
-
-// DedupSet tracks seen keys for use with [Dedupe].
-// External implementations (Redis SETNX, Bloom filters) can implement this interface.
-type DedupSet interface {
-	Contains(ctx context.Context, key string) (bool, error)
-	Add(ctx context.Context, key string) error
-}
-
-// MemoryDedupSet returns an in-process deduplication set.
-func MemoryDedupSet() DedupSet {
-	return &memoryDedupSet{seen: make(map[string]struct{})}
-}
-
-type memoryDedupSet struct {
-	mu   sync.RWMutex
-	seen map[string]struct{}
-}
-
-func (s *memoryDedupSet) Contains(_ context.Context, key string) (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	_, ok := s.seen[key]
-	return ok, nil
-}
-
-func (s *memoryDedupSet) Add(_ context.Context, key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.seen[key] = struct{}{}
-	return nil
+	return newPipeline(id, meta, build)
 }

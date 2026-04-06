@@ -1,10 +1,5 @@
 version: "3"
 
-includes:
-  engine:
-    taskfile: ./engine/Taskfile.yml
-    dir: ./engine
-
 vars:
   PACKAGE: ./...
 
@@ -62,22 +57,7 @@ tasks:
   test:fuzz:
     desc: Run fuzz seed corpus only (fast; use fuzz:* tasks to actively search for bugs)
     cmds:
-      - go test -run='FuzzOutboxDrop' -race ./engine/
       - go test -run='FuzzPipeline' .
-
-  fuzz:outbox-drop-newest:
-    desc: Fuzz the drop-newest outbox under concurrent senders (FUZZ_TIME default 5m)
-    vars:
-      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
-    cmds:
-      - go test -fuzz=FuzzOutboxDropNewest -fuzztime={{.FUZZ_TIME}} -race ./engine/
-
-  fuzz:outbox-drop-oldest:
-    desc: Fuzz the drop-oldest outbox under concurrent senders (FUZZ_TIME default 5m)
-    vars:
-      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
-    cmds:
-      - go test -fuzz=FuzzOutboxDropOldest -fuzztime={{.FUZZ_TIME}} -race ./engine/
 
   fuzz:overflow:
     desc: Fuzz pipeline Map stages across all overflow strategies (FUZZ_TIME default 5m)
@@ -105,10 +85,6 @@ tasks:
     vars:
       FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
     cmds:
-      - task: fuzz:outbox-drop-newest
-        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
-      - task: fuzz:outbox-drop-oldest
-        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
       - task: fuzz:overflow
         vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
       - task: fuzz:cancellation
@@ -123,7 +99,7 @@ tasks:
 
   bench:compare:
     desc: Run comparison benchmarks (Kitsune vs raw goroutines, conc, go-streams)
-    dir: bench
+    dir: archive/bench
     cmds:
       - go test -bench=. -benchmem -count=5 -timeout 300s ./...
 
@@ -155,34 +131,6 @@ tasks:
 
   inspector:
     desc: Launch the live inspector dashboard (opens a pipeline in your browser)
-    cmds:
-      - go run ./examples/inspector
-
-  # ---------------------------------------------------------------------------
-  # v2 tasks
-  # ---------------------------------------------------------------------------
-
-  v2:test:
-    desc: Run v2 tests (fast; skips example smoke tests)
-    dir: v2
-    cmds:
-      - go test -short -race -count=1 -timeout 60s ./...
-
-  v2:test:examples:
-    desc: Run v2 example smoke tests
-    dir: v2
-    cmds:
-      - go test -v -run TestExamples -timeout 120s -count=1 .
-
-  v2:test:all:
-    desc: Run all v2 tests including examples
-    cmds:
-      - task: v2:test
-      - task: v2:test:examples
-
-  v2:inspector:
-    desc: Launch the v2 buffer inspector demo
-    dir: v2
     cmds:
       - go run ./examples/inspector
 
