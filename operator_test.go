@@ -221,6 +221,15 @@ func TestDrop(t *testing.T) {
 	}
 }
 
+func TestSkip(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	got := collectAll(t, p.Skip(2))
+	want := []int{3, 4, 5}
+	if !sliceEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TakeWhile / DropWhile
 // ---------------------------------------------------------------------------
@@ -602,6 +611,94 @@ func TestWithLatestFrom(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// SlidingWindow edge cases (6d)
+// ---------------------------------------------------------------------------
+
+func TestSlidingWindowTumbling(t *testing.T) {
+	// step == size → non-overlapping (tumbling) windows, same as Window.
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
+	got, err := kitsune.Collect(ctx, kitsune.SlidingWindow(p, 2, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]int{{1, 2}, {3, 4}, {5, 6}}
+	if len(got) != len(want) {
+		t.Fatalf("got %d windows, want %d: %v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if !sliceEqual(got[i], w) {
+			t.Errorf("window[%d]: got %v, want %v", i, got[i], w)
+		}
+	}
+}
+
+func TestSlidingWindowShortStream(t *testing.T) {
+	// Stream shorter than window size — no windows emitted (partial windows dropped).
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2})
+	got, err := kitsune.Collect(ctx, kitsune.SlidingWindow(p, 5, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 windows for short stream, got %d: %v", len(got), got)
+	}
+}
+
+func TestSlidingWindowPanics(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3})
+
+	t.Run("step zero", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for step=0")
+			}
+		}()
+		kitsune.SlidingWindow(src, 3, 0)
+	})
+
+	t.Run("step negative", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for step=-1")
+			}
+		}()
+		kitsune.SlidingWindow(src, 3, -1)
+	})
+
+	t.Run("step greater than size", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic for step>size")
+			}
+		}()
+		kitsune.SlidingWindow(src, 3, 4)
+	})
+}
+
+func TestOrderedNoConcurrency(t *testing.T) {
+	// Ordered() with Concurrency(1) should produce the same output as serial execution.
+	items := []int{1, 2, 3, 4, 5}
+	results, err := kitsune.Map(
+		kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) { return v * 2, nil },
+		kitsune.Concurrency(1), kitsune.Ordered(),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != len(items) {
+		t.Fatalf("want %d results, got %d", len(items), len(results))
+	}
+	for i, v := range results {
+		if want := items[i] * 2; v != want {
+			t.Fatalf("results[%d] = %d, want %d", i, v, want)
+		}
+	}
+}
 
 func sliceEqual[T comparable](a, b []T) bool {
 	if len(a) != len(b) {

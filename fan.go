@@ -188,6 +188,9 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 
 // BroadcastN fans out each item to n identical output pipelines.
 func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
+	if n < 2 {
+		panic("kitsune: Broadcast requires n >= 2")
+	}
 	track(p)
 	cfg := buildStageConfig(opts)
 

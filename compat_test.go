@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -307,6 +308,31 @@ func TestStageOr(t *testing.T) {
 	}
 }
 
+func TestOr_ComposesWithThen(t *testing.T) {
+	ctx := context.Background()
+
+	primary := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n * 2, nil })
+	})
+	fallback := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n, nil })
+	})
+	doubleAgain := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n * 2, nil })
+	})
+
+	// primary always succeeds → Or never triggers fallback.
+	// Then composes: (n*2) * 2 = n*4
+	composed := kitsune.Then(primary.Or(fallback), doubleAgain)
+	results, err := composed.Apply(kitsune.FromSlice([]int{1, 2, 3})).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results[0] != 4 || results[1] != 8 || results[2] != 12 {
+		t.Errorf("got %v, want [4 8 12]", results)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // WindowByTime
 // ---------------------------------------------------------------------------
@@ -353,5 +379,236 @@ func TestWindowByTimePartialFlush(t *testing.T) {
 	}
 	if len(windows) != 1 || len(windows[0]) != 3 {
 		t.Fatalf("expected 1 window with 3 items, got %v", windows)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DeadLetter edge cases (6b)
+// ---------------------------------------------------------------------------
+
+func TestDeadLetterAllSucceed(t *testing.T) {
+	ctx := context.Background()
+
+	ok, dlq := kitsune.DeadLetter(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) { return v * 10, nil },
+	)
+
+	var okItems []int
+	var dlqItems []kitsune.ErrItem[int]
+	r1 := ok.ForEach(func(_ context.Context, v int) error { okItems = append(okItems, v); return nil }).Build()
+	r2 := dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[int]) error { dlqItems = append(dlqItems, e); return nil }).Build()
+	merged, _ := kitsune.MergeRunners(r1, r2)
+	if err := merged.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(okItems) != 3 {
+		t.Errorf("expected 3 ok items, got %d: %v", len(okItems), okItems)
+	}
+	if len(dlqItems) != 0 {
+		t.Errorf("expected 0 dlq items, got %d: %v", len(dlqItems), dlqItems)
+	}
+}
+
+func TestDeadLetterAllFail(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("always fails")
+
+	ok, dlq := kitsune.DeadLetter(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) (int, error) { return 0, boom },
+	)
+
+	var okItems []int
+	var dlqItems []kitsune.ErrItem[int]
+	r1 := ok.ForEach(func(_ context.Context, v int) error { okItems = append(okItems, v); return nil }).Build()
+	r2 := dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[int]) error { dlqItems = append(dlqItems, e); return nil }).Build()
+	merged, _ := kitsune.MergeRunners(r1, r2)
+	if err := merged.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(okItems) != 0 {
+		t.Errorf("expected 0 ok items, got %d: %v", len(okItems), okItems)
+	}
+	if len(dlqItems) != 3 {
+		t.Errorf("expected 3 dlq items, got %d: %v", len(dlqItems), dlqItems)
+	}
+	for _, e := range dlqItems {
+		if !errors.Is(e.Err, boom) {
+			t.Errorf("unexpected dlq error: %v", e.Err)
+		}
+	}
+}
+
+func TestDeadLetterWithRetry(t *testing.T) {
+	// Item fails first attempt, succeeds on retry → goes to ok branch.
+	ctx := context.Background()
+	boom := errors.New("transient")
+
+	var calls atomic.Int64
+	ok, dlq := kitsune.DeadLetter(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (string, error) {
+			if calls.Add(1) == 1 {
+				return "", boom
+			}
+			return "ok", nil
+		},
+		kitsune.OnError(kitsune.Retry(1, kitsune.FixedBackoff(0))),
+	)
+
+	var okItems []string
+	var dlqItems []kitsune.ErrItem[int]
+	r1 := ok.ForEach(func(_ context.Context, s string) error { okItems = append(okItems, s); return nil }).Build()
+	r2 := dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[int]) error { dlqItems = append(dlqItems, e); return nil }).Build()
+	merged, _ := kitsune.MergeRunners(r1, r2)
+	if err := merged.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(okItems) != 1 || okItems[0] != "ok" {
+		t.Errorf("expected ok=['ok'], got %v", okItems)
+	}
+	if len(dlqItems) != 0 {
+		t.Errorf("expected 0 dlq items, got %v", dlqItems)
+	}
+}
+
+func TestDeadLetterRetryExhausted(t *testing.T) {
+	// Item fails all retries → goes to DLQ.
+	ctx := context.Background()
+	boom := errors.New("persistent")
+
+	ok, dlq := kitsune.DeadLetter(kitsune.FromSlice([]int{1, 2}),
+		func(_ context.Context, _ int) (string, error) { return "", boom },
+		kitsune.OnError(kitsune.Retry(1, kitsune.FixedBackoff(0))),
+	)
+
+	var okItems []string
+	var dlqItems []kitsune.ErrItem[int]
+	r1 := ok.ForEach(func(_ context.Context, s string) error { okItems = append(okItems, s); return nil }).Build()
+	r2 := dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[int]) error { dlqItems = append(dlqItems, e); return nil }).Build()
+	merged, _ := kitsune.MergeRunners(r1, r2)
+	if err := merged.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(okItems) != 0 {
+		t.Errorf("expected 0 ok items, got %v", okItems)
+	}
+	if len(dlqItems) != 2 {
+		t.Errorf("expected 2 dlq items, got %d: %v", len(dlqItems), dlqItems)
+	}
+	for _, e := range dlqItems {
+		if !errors.Is(e.Err, boom) {
+			t.Errorf("unexpected dlq error: %v", e.Err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CountBy edge cases (6e)
+// ---------------------------------------------------------------------------
+
+func TestCountBy_EmptyStream(t *testing.T) {
+	ctx := context.Background()
+	snapshots, err := kitsune.Collect(ctx, kitsune.CountBy(kitsune.FromSlice([]string{}),
+		func(s string) string { return s },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 0 {
+		t.Errorf("expected 0 snapshots, got %d: %v", len(snapshots), snapshots)
+	}
+}
+
+func TestCountBy_SnapshotIsolation(t *testing.T) {
+	// Mutating a returned snapshot must not affect the next one.
+	ctx := context.Background()
+	snapshots, err := kitsune.Collect(ctx, kitsune.CountBy(
+		kitsune.FromSlice([]string{"a", "a"}),
+		func(s string) string { return s },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) < 2 {
+		t.Fatalf("expected at least 2 snapshots, got %d", len(snapshots))
+	}
+	// Mutate the first snapshot.
+	snapshots[0]["a"] = 999
+	// The second snapshot should be unaffected.
+	if snapshots[1]["a"] != 2 {
+		t.Errorf("snapshot isolation broken: snapshot[1][a]=%d, want 2", snapshots[1]["a"])
+	}
+}
+
+func TestCountBy_MultipleInstances(t *testing.T) {
+	// Two CountBy stages on independent pipelines must not share state.
+	ctx := context.Background()
+
+	p1 := kitsune.FromSlice([]string{"x", "x", "x"})
+	p2 := kitsune.FromSlice([]string{"y", "y"})
+
+	s1, err := kitsune.Collect(ctx, kitsune.CountBy(p1, func(s string) string { return s }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2, err := kitsune.Collect(ctx, kitsune.CountBy(p2, func(s string) string { return s }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	last1 := s1[len(s1)-1]
+	last2 := s2[len(s2)-1]
+	if last1["x"] != 3 {
+		t.Errorf("p1 final count: x=%d, want 3", last1["x"])
+	}
+	if last2["y"] != 2 {
+		t.Errorf("p2 final count: y=%d, want 2", last2["y"])
+	}
+	// p2 must not see p1's keys
+	if _, ok := last2["x"]; ok {
+		t.Error("p2 snapshot contains p1's key 'x' (state shared)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SumBy edge cases (6e)
+// ---------------------------------------------------------------------------
+
+func TestSumBy_EmptyStream(t *testing.T) {
+	ctx := context.Background()
+	type item struct{ k string; v int }
+	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
+		kitsune.FromSlice([]item{}),
+		func(i item) string { return i.k },
+		func(i item) int { return i.v },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 0 {
+		t.Errorf("expected 0 snapshots, got %d", len(snapshots))
+	}
+}
+
+func TestSumBy_SnapshotIsolation(t *testing.T) {
+	type item struct{ k string; v int }
+	ctx := context.Background()
+	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
+		kitsune.FromSlice([]item{{"a", 10}, {"a", 20}}),
+		func(i item) string { return i.k },
+		func(i item) int { return i.v },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) < 2 {
+		t.Fatalf("expected at least 2 snapshots, got %d", len(snapshots))
+	}
+	snapshots[0]["a"] = 9999
+	if snapshots[1]["a"] != 30 {
+		t.Errorf("snapshot isolation broken: snapshot[1][a]=%d, want 30", snapshots[1]["a"])
 	}
 }
