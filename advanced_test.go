@@ -144,12 +144,141 @@ func TestSequenceEqual(t *testing.T) {
 
 func TestIter(t *testing.T) {
 	ctx := context.Background()
+	seq, errFn := kitsune.Iter(ctx, kitsune.FromSlice([]int{1, 2, 3}))
 	var got []int
-	for v := range kitsune.Iter(ctx, kitsune.FromSlice([]int{1, 2, 3})) {
+	for v := range seq {
 		got = append(got, v)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
 	}
 	if !sliceEqual(got, []int{1, 2, 3}) {
 		t.Fatalf("Iter: got %v", got)
+	}
+}
+
+func TestIterEmpty(t *testing.T) {
+	seq, errFn := kitsune.Iter(context.Background(), kitsune.FromSlice([]int{}))
+	var got []int
+	for v := range seq {
+		got = append(got, v)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestIterPipelineError(t *testing.T) {
+	wantErr := errors.New("stage failure")
+	seq, errFn := kitsune.Iter(context.Background(),
+		kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, n int) (int, error) {
+				if n == 2 {
+					return 0, wantErr
+				}
+				return n, nil
+			},
+		),
+	)
+	for range seq {
+	}
+	if err := errFn(); !errors.Is(err, wantErr) {
+		t.Fatalf("expected %v, got %v", wantErr, err)
+	}
+}
+
+func TestIterBreak(t *testing.T) {
+	// Breaking early must not return an error.
+	seq, errFn := kitsune.Iter(context.Background(), kitsune.FromSlice([]int{1, 2, 3, 4, 5}))
+	var got []int
+	for v := range seq {
+		got = append(got, v)
+		if v == 2 {
+			break
+		}
+	}
+	if err := errFn(); err != nil {
+		t.Fatalf("early break should return nil error, got %v", err)
+	}
+	if len(got) == 0 || got[len(got)-1] != 2 {
+		t.Fatalf("expected to stop at 2, got %v", got)
+	}
+}
+
+func TestIterContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for i := 0; ; i++ {
+			if !yield(i) {
+				return nil
+			}
+		}
+	})
+	seq, errFn := kitsune.Iter(ctx, p)
+	var got []int
+	for v := range seq {
+		got = append(got, v)
+		if len(got) == 3 {
+			cancel()
+		}
+	}
+	// cancelling the caller's context should surface context.Canceled
+	if err := errFn(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestIterErrFnIdempotent(t *testing.T) {
+	wantErr := errors.New("fail")
+	seq, errFn := kitsune.Iter(context.Background(),
+		kitsune.Map(kitsune.FromSlice([]int{1}),
+			func(_ context.Context, _ int) (int, error) { return 0, wantErr },
+		),
+	)
+	for range seq {
+	}
+	err1 := errFn()
+	err2 := errFn()
+	if !errors.Is(err1, wantErr) || !errors.Is(err2, wantErr) {
+		t.Fatalf("errFn not idempotent: %v / %v", err1, err2)
+	}
+}
+
+func TestIterWithMap(t *testing.T) {
+	seq, errFn := kitsune.Iter(context.Background(),
+		kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, n int) (string, error) { return fmt.Sprintf("%d", n), nil },
+		),
+	)
+	var got []string
+	for s := range seq {
+		got = append(got, s)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if !sliceEqual(got, []string{"1", "2", "3"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestIterWithFilter(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	p2 := kitsune.Filter(p, kitsune.FilterFunc(func(n int) bool { return n%2 == 0 }))
+	seq, errFn := kitsune.Iter(context.Background(), p2)
+	var got []int
+	for v := range seq {
+		got = append(got, v)
+	}
+	if err := errFn(); err != nil {
+		t.Fatal(err)
+	}
+	if !sliceEqual(got, []int{2, 4}) {
+		t.Fatalf("got %v", got)
 	}
 }
 
@@ -406,5 +535,94 @@ func TestSessionWindow(t *testing.T) {
 	}
 	if !sliceEqual(got[1], []int{3, 4}) {
 		t.Errorf("session 1: got %v", got[1])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeout option on FlatMap
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Timeout option on Map
+// ---------------------------------------------------------------------------
+
+func TestTimeoutMap(t *testing.T) {
+	input := kitsune.FromSlice([]int{1})
+	_, err := kitsune.Map(input, func(ctx context.Context, v int) (int, error) {
+		select {
+		case <-time.After(time.Second):
+			return v, nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}, kitsune.Timeout(20*time.Millisecond)).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestTimeoutMapSkip(t *testing.T) {
+	// Slow item + OnError(Skip()) — item is dropped, no pipeline error.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.Map(p, func(ctx context.Context, v int) (int, error) {
+		if v == 2 {
+			select {
+			case <-time.After(time.Second):
+				return v, nil
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}
+		return v * 10, nil
+	},
+		kitsune.Timeout(20*time.Millisecond),
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("expected nil error with Skip, got: %v", err)
+	}
+	want := []int{10, 30}
+	if !sliceEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestTimeoutMapFastFn(t *testing.T) {
+	// Fast fn completes well within the deadline — no error.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+		return v * 10, nil
+	}, kitsune.Timeout(time.Second)).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{10, 20, 30}) {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestTimeoutFlatMap(t *testing.T) {
+	input := kitsune.FromSlice([]int{1})
+	_, err := kitsune.FlatMap(input, func(ctx context.Context, v int, yield func(int) error) error {
+		select {
+		case <-time.After(time.Second):
+			return yield(v)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}, kitsune.Timeout(20*time.Millisecond)).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MergeRunners edge cases (6h)
+// ---------------------------------------------------------------------------
+
+func TestMergeRunners_NoRunners(t *testing.T) {
+	_, err := kitsune.MergeRunners()
+	if !errors.Is(err, kitsune.ErrNoRunners) {
+		t.Fatalf("expected ErrNoRunners, got %v", err)
 	}
 }

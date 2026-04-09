@@ -1,6 +1,9 @@
 package kitsune
 
-import "context"
+import (
+	"context"
+	"iter"
+)
 
 // ---------------------------------------------------------------------------
 // Terminal methods on Pipeline[T]
@@ -11,7 +14,7 @@ import "context"
 //
 // Note: Go does not allow methods with their own type parameters, so the
 // following terminals must remain free functions only:
-//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, Iter, TakeRandom, SequenceEqual
+//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, TakeRandom, SequenceEqual
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.
@@ -56,6 +59,19 @@ func (p *Pipeline[T]) ReduceWhile(ctx context.Context, initial T, fn func(T, T) 
 	return ReduceWhile(ctx, p, initial, fn, opts...)
 }
 
+// Iter returns a Go 1.23 iterator over the pipeline's items.
+// The second return value is a function that must be called after the iterator
+// is exhausted (or abandoned) to retrieve any pipeline error.
+func (p *Pipeline[T]) Iter(ctx context.Context, opts ...RunOption) (iter.Seq[T], func() error) {
+	return Iter(ctx, p, opts...)
+}
+
+// ElementAt returns the item at zero-based index, or (zero, false, nil) if
+// the pipeline produces fewer than index+1 items.
+func (p *Pipeline[T]) ElementAt(ctx context.Context, index int, opts ...RunOption) (T, bool, error) {
+	return ElementAt(ctx, p, index, opts...)
+}
+
 // ---------------------------------------------------------------------------
 // Operator methods on Pipeline[T]
 //
@@ -72,6 +88,10 @@ func (p *Pipeline[T]) Take(n int) *Pipeline[T] {
 func (p *Pipeline[T]) Drop(n int) *Pipeline[T] {
 	return Drop(p, n)
 }
+
+// Skip discards the first n items then forwards the rest.
+// Alias for [Drop]; retained for v1 API compatibility.
+func (p *Pipeline[T]) Skip(n int) *Pipeline[T] { return Drop(p, n) }
 
 // Filter forwards only items for which fn returns true.
 // fn is a plain predicate (no context, no error); use the free-function

@@ -22,6 +22,7 @@ func TestExamples(t *testing.T) {
 	}
 	examples := []string{
 		"basic",
+		"bloomdedup",
 		"broadcast",
 		"caching",
 		"channel",

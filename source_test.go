@@ -2,6 +2,7 @@ package kitsune_test
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
@@ -265,5 +266,107 @@ func TestDrain(t *testing.T) {
 	err := kitsune.FromSlice([]int{1, 2, 3}).Drain().Run(ctx)
 	if err != nil {
 		t.Fatalf("drain error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Channel edge cases (6c)
+// ---------------------------------------------------------------------------
+
+func TestChannel_CloseIdempotent(t *testing.T) {
+	ch := kitsune.NewChannel[int](4)
+	// Double-close must not panic.
+	ch.Close()
+	ch.Close()
+}
+
+func TestChannel_SendAfterClose(t *testing.T) {
+	ch := kitsune.NewChannel[int](4)
+	ch.Close()
+	err := ch.Send(context.Background(), 1)
+	if !errors.Is(err, kitsune.ErrChannelClosed) {
+		t.Fatalf("expected ErrChannelClosed, got %v", err)
+	}
+}
+
+func TestChannel_TrySendBufferFull(t *testing.T) {
+	ch := kitsune.NewChannel[int](1)
+	if !ch.TrySend(1) {
+		t.Fatal("first TrySend should succeed on empty buffer")
+	}
+	if ch.TrySend(2) {
+		t.Fatal("second TrySend should return false on full buffer")
+	}
+}
+
+func TestChannel_TrySendAfterClose(t *testing.T) {
+	ch := kitsune.NewChannel[int](4)
+	ch.Close()
+	if ch.TrySend(1) {
+		t.Fatal("TrySend after Close should return false")
+	}
+}
+
+func TestChannel_SendContextCancelled(t *testing.T) {
+	ch := kitsune.NewChannel[int](0) // unbuffered: Send blocks until consumer ready
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	err := ch.Send(ctx, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestChannel_SourcePanicsOnSecondCall(t *testing.T) {
+	ch := kitsune.NewChannel[int](4)
+	_ = ch.Source() // first call — fine
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected second Source() call to panic")
+		}
+	}()
+	_ = ch.Source() // second call — should panic
+}
+
+func TestChannel_Backpressure(t *testing.T) {
+	// Unbuffered channel: Send blocks until a consumer is ready.
+	ch := kitsune.NewChannel[int](0)
+	ctx := context.Background()
+
+	sent := make(chan error, 1)
+	go func() {
+		sent <- ch.Send(ctx, 42)
+	}()
+
+	// Send should be blocking — verify it hasn't returned yet.
+	select {
+	case err := <-sent:
+		t.Fatalf("Send completed before consumer was ready, err=%v", err)
+	case <-time.After(20 * time.Millisecond):
+		// expected: still blocking
+	}
+
+	// Start consumer — Send should now unblock.
+	received := make(chan int, 1)
+	go func() {
+		ch.Source().ForEach(func(_ context.Context, v int) error {
+			received <- v
+			return nil
+		}).Run(ctx)
+	}()
+
+	select {
+	case err := <-sent:
+		if err != nil {
+			t.Fatalf("Send failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Send did not unblock after consumer started")
+	}
+
+	ch.Close()
+	v := <-received
+	if v != 42 {
+		t.Errorf("received %d, want 42", v)
 	}
 }

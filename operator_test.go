@@ -385,6 +385,40 @@ func TestGroupBy(t *testing.T) {
 	}
 }
 
+func TestGroupByStream(t *testing.T) {
+	ctx := context.Background()
+	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
+	groups, err := kitsune.Collect(ctx, kitsune.GroupByStream(p, func(s string) string { return s }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Expect three groups in first-seen order: a, b, c.
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d: %v", len(groups), groups)
+	}
+	if groups[0].Key != "a" || len(groups[0].Items) != 3 {
+		t.Errorf("group[0]: got key=%q items=%v, want key=a items=[a a a]", groups[0].Key, groups[0].Items)
+	}
+	if groups[1].Key != "b" || len(groups[1].Items) != 2 {
+		t.Errorf("group[1]: got key=%q items=%v, want key=b items=[b b]", groups[1].Key, groups[1].Items)
+	}
+	if groups[2].Key != "c" || len(groups[2].Items) != 1 {
+		t.Errorf("group[2]: got key=%q items=%v, want key=c items=[c]", groups[2].Key, groups[2].Items)
+	}
+}
+
+func TestGroupByStreamEmpty(t *testing.T) {
+	ctx := context.Background()
+	p := kitsune.FromSlice([]string{})
+	groups, err := kitsune.Collect(ctx, kitsune.GroupByStream(p, func(s string) string { return s }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected empty result, got %v", groups)
+	}
+}
+
 func TestFrequencies(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})

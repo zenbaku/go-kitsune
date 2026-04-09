@@ -55,23 +55,35 @@ func RateMode(m RateLimitMode) RateLimitOpt {
 // empty, creating backpressure. With [RateLimitDrop], excess items are silently
 // discarded. Use [Burst] to allow short bursts above the steady-state rate.
 //
+// rlOpts configures rate-limit behaviour ([Burst], [RateMode]). stageOpts
+// accepts any [StageOption] — most usefully [WithName] and [Buffer].
+//
 //	// Allow up to 100 events/sec with bursts of up to 10:
-//	kitsune.RateLimit(events, 100, kitsune.Burst(10))
+//	kitsune.RateLimit(events, 100, []kitsune.RateLimitOpt{kitsune.Burst(10)})
 //
 //	// Drop items that exceed 50/sec instead of blocking:
-//	kitsune.RateLimit(events, 50, kitsune.RateMode(kitsune.RateLimitDrop))
-func RateLimit[T any](p *Pipeline[T], ratePerSec float64, opts ...RateLimitOpt) *Pipeline[T] {
+//	kitsune.RateLimit(events, 50, []kitsune.RateLimitOpt{kitsune.RateMode(kitsune.RateLimitDrop)})
+func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt, stageOpts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := rateLimitConfig{burst: 1}
-	for _, o := range opts {
+	for _, o := range rlOpts {
 		o(&cfg)
 	}
+	scfg := buildStageConfig(stageOpts)
 	id := nextPipelineID()
+	name := "rate_limit"
+	if scfg.name != "" {
+		name = scfg.name
+	}
+	buf := internal.DefaultBuffer
+	if scfg.buffer != internal.DefaultBuffer {
+		buf = scfg.buffer
+	}
 	meta := stageMeta{
 		id:     id,
 		kind:   "rate_limit",
-		name:   "rate_limit",
-		buffer: internal.DefaultBuffer,
+		name:   name,
+		buffer: buf,
 		inputs: []int{p.id},
 	}
 	build := func(rc *runCtx) chan T {
@@ -103,7 +115,7 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, opts ...RateLimitOpt) 
 						}
 					} else {
 						if err := limiter.Wait(ctx); err != nil {
-							return ctx.Err()
+							return err
 						}
 					}
 					if err := outbox.Send(ctx, item); err != nil {
@@ -134,6 +146,7 @@ type circuitBreakerConfig struct {
 	failureThreshold int
 	cooldown         time.Duration
 	halfOpenProbes   int
+	halfOpenTimeout  time.Duration
 }
 
 // FailureThreshold sets the number of consecutive failures needed to open the
@@ -166,6 +179,18 @@ func HalfOpenProbes(n int) CircuitBreakerOpt {
 	}
 }
 
+// HalfOpenTimeout sets a deadline on the half-open state. If the required
+// number of successful probes has not been received within d, the circuit
+// opens again (resetting the cooldown clock). No timeout is applied by
+// default.
+func HalfOpenTimeout(d time.Duration) CircuitBreakerOpt {
+	return func(c *circuitBreakerConfig) {
+		if d > 0 {
+			c.halfOpenTimeout = d
+		}
+	}
+}
+
 type cbState int
 
 const (
@@ -175,12 +200,13 @@ const (
 )
 
 type circuitBreaker struct {
-	mu              sync.Mutex
-	state           cbState
-	failures        int
-	successesNeeded int
-	openUntil       time.Time
-	cfg             circuitBreakerConfig
+	mu               sync.Mutex
+	state            cbState
+	failures         int
+	successesNeeded  int
+	openUntil        time.Time
+	halfOpenDeadline time.Time
+	cfg              circuitBreakerConfig
 }
 
 func (cb *circuitBreaker) allow(now time.Time) (allowed bool, open bool) {
@@ -198,9 +224,20 @@ func (cb *circuitBreaker) allow(now time.Time) (allowed bool, open bool) {
 		// Cooldown elapsed — enter half-open.
 		cb.state = cbHalfOpen
 		cb.successesNeeded = cb.cfg.halfOpenProbes
+		if cb.cfg.halfOpenTimeout > 0 {
+			cb.halfOpenDeadline = now.Add(cb.cfg.halfOpenTimeout)
+		}
 		return true, false
 
 	case cbHalfOpen:
+		if cb.cfg.halfOpenTimeout > 0 && now.After(cb.halfOpenDeadline) {
+			// Half-open window expired without enough successes — reopen.
+			cb.state = cbOpen
+			cb.openUntil = now.Add(cb.cfg.cooldown)
+			cb.failures = 0
+			cb.halfOpenDeadline = time.Time{}
+			return false, true
+		}
 		return true, false
 	}
 	return false, false
@@ -215,6 +252,7 @@ func (cb *circuitBreaker) recordSuccess() {
 		if cb.successesNeeded <= 0 {
 			cb.state = cbClosed
 			cb.failures = 0
+			cb.halfOpenDeadline = time.Time{}
 		}
 	} else {
 		cb.failures = 0

@@ -17,15 +17,20 @@ import (
 
 // sourceStage builds a stageFunc that closes ch on exit and respects cancellation.
 // itemFn is called to produce items; it receives:
-//   - a send helper that delivers an item to ch (blocking, respects ctx)
+//   - a send helper that delivers an item to ch (blocking, respects ctx and gate)
 //   - the run context
 //
 // This helper exists so every source shares the same close logic.
-func sourceStage[T any](ch chan T, itemFn func(ctx context.Context, send func(T) error) error) stageFunc {
+func sourceStage[T any](ch chan T, gate *internal.Gate, itemFn func(ctx context.Context, send func(T) error) error) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(ch)
 
 		send := func(item T) error {
+			if gate != nil {
+				if err := gate.Wait(ctx); err != nil {
+					return err
+				}
+			}
 			select {
 			case ch <- item:
 				return nil
@@ -61,8 +66,9 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		gate := rc.gate
 		var stage stageFunc
-		if internal.IsNoopHook(rc.hook) {
+		if internal.IsNoopHook(rc.hook) && gate == nil {
 			// Fast path: plain sends, no select per item. The downstream drain
 			// goroutine unblocks this send if the pipeline exits early.
 			stage = func(ctx context.Context) error {
@@ -76,7 +82,7 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 				return nil
 			}
 		} else {
-			stage = sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+			stage = sourceStage(ch, gate, func(ctx context.Context, send func(T) error) error {
 				for _, item := range items {
 					if err := send(item); err != nil {
 						return err
@@ -116,7 +122,7 @@ func From[T any](src <-chan T) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
-		stage := sourceStage(ch, func(ctx context.Context, send func(T) error) error {
+		stage := sourceStage(ch, rc.gate, func(ctx context.Context, send func(T) error) error {
 			for {
 				select {
 				case item, ok := <-src:
@@ -176,36 +182,76 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		gate := rc.gate
 		var stage stageFunc
 		done := rc.done
-		if internal.IsNoopHook(rc.hook) {
+		if internal.IsNoopHook(rc.hook) && gate == nil {
 			// Fast path: yield selects between the output channel and the pipeline
 			// done signal. The done channel is closed by early-exit stages (Take,
 			// TakeWhile) so infinite sources (Ticker, Interval, …) stop cleanly.
+			//
+			// A derived stageCtx is also cancelled when done closes, so blocking
+			// external calls inside the generator (e.g. long-poll RPCs) are
+			// interrupted even if the generator is not currently inside yield.
+			//
+			// If fn returns context.Canceled because stageCtx was cancelled by the
+			// done signal (not by the parent ctx), we suppress it so it is not
+			// mistaken for a pipeline error.
 			stage = func(ctx context.Context) error {
+				stageCtx, cancelStage := context.WithCancel(ctx)
+				defer cancelStage()
+				go func() {
+					select {
+					case <-done:
+						cancelStage()
+					case <-stageCtx.Done():
+					}
+				}()
 				defer close(ch)
-				return fn(ctx, func(item T) bool {
+				err := fn(stageCtx, func(item T) bool {
 					select {
 					case ch <- item:
-						return ctx.Err() == nil
+						return stageCtx.Err() == nil
 					case <-done:
 						return false
 					}
 				})
+				if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+					return nil // cancelled by done signal, not by parent context
+				}
+				return err
 			}
 		} else {
 			stage = func(ctx context.Context) error {
+				stageCtx, cancelStage := context.WithCancel(ctx)
+				defer cancelStage()
+				go func() {
+					select {
+					case <-done:
+						cancelStage()
+					case <-stageCtx.Done():
+					}
+				}()
 				defer close(ch)
-				return fn(ctx, func(item T) bool {
+				err := fn(stageCtx, func(item T) bool {
+					if gate != nil {
+						if err := gate.Wait(stageCtx); err != nil {
+							return false
+						}
+					}
 					select {
 					case ch <- item:
 						return true
-					case <-ctx.Done():
+					case <-stageCtx.Done():
 						return false
 					case <-done:
 						return false
 					}
 				})
+				if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+					return nil // cancelled by done signal, not by parent context
+				}
+				return err
 			}
 		}
 		rc.add(stage, m)

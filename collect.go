@@ -3,7 +3,10 @@ package kitsune
 import (
 	"context"
 	"errors"
+	"iter"
 	"math/rand"
+	"sync"
+	"sync/atomic"
 
 	"github.com/zenbaku/go-kitsune/internal"
 )
@@ -377,21 +380,72 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 // ---------------------------------------------------------------------------
 
 // Iter returns an iterator over all items emitted by the pipeline.
-// Usage (Go 1.23+):
+// Iter returns a pull-based iterator over the pipeline's output items and an
+// error function. The iterator is suitable for use with range-over-func
+// (Go 1.23+).
 //
-//	for item := range kitsune.Iter(ctx, p) {
-//	    fmt.Println(item)
+// The error function must be called after iteration completes — or after
+// breaking out of the loop — to retrieve any pipeline execution error. It
+// blocks until the pipeline finishes and is safe to call multiple times.
+//
+// If the caller breaks out of the loop early, the pipeline context is
+// cancelled and the error function returns nil (the context.Canceled caused
+// by the break is suppressed). If the caller's own context is cancelled, the
+// error function returns context.Canceled.
+//
+//	seq, errFn := kitsune.Iter(ctx, p)
+//	for item := range seq {
+//	    process(item)
 //	}
-//
-// The iterator runs the pipeline eagerly in a background goroutine.
-// Cancel ctx to stop early.
-func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) func(yield func(T) bool) {
-	return func(yield func(T) bool) {
-		_ = p.ForEach(func(_ context.Context, v T) error {
-			if !yield(v) {
-				return context.Canceled
-			}
+//	if err := errFn(); err != nil {
+//	    log.Fatal(err)
+//	}
+func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (iter.Seq[T], func() error) {
+	ch := make(chan T, internal.DefaultBuffer)
+	iterCtx, iterCancel := context.WithCancel(ctx)
+	var callerBroke atomic.Bool
+
+	handle := p.ForEach(func(_ context.Context, item T) error {
+		select {
+		case ch <- item:
 			return nil
-		}).Run(ctx, opts...)
+		case <-iterCtx.Done():
+			return iterCtx.Err()
+		}
+	}).Build().RunAsync(iterCtx, opts...)
+
+	go func() {
+		<-handle.Done()
+		close(ch)
+	}()
+
+	seq := iter.Seq[T](func(yield func(T) bool) {
+		defer func() {
+			iterCancel()
+			for range ch { //nolint:revive
+			}
+		}()
+		for item := range ch {
+			if !yield(item) {
+				callerBroke.Store(true)
+				return
+			}
+		}
+	})
+
+	var (
+		errOnce sync.Once
+		errVal  error
+	)
+	errFn := func() error {
+		errOnce.Do(func() {
+			errVal = <-handle.Err()
+			if callerBroke.Load() && errors.Is(errVal, context.Canceled) {
+				errVal = nil
+			}
+		})
+		return errVal
 	}
+
+	return seq, errFn
 }

@@ -110,6 +110,19 @@ func MemoryCache(maxSize int) Cache { return internal.MemoryCache(maxSize) }
 // MemoryDedupSet returns an in-process deduplication set.
 func MemoryDedupSet() DedupSet { return internal.MemoryDedupSet() }
 
+// BloomDedupSet returns an in-process probabilistic deduplication set backed
+// by a Bloom filter. Memory usage is bounded regardless of key-space size, at
+// the cost of a configurable false-positive rate: items may occasionally be
+// reported as seen when they have not been. Inserted items are never missed
+// (zero false-negative rate).
+//
+// expectedItems is the anticipated number of unique keys.
+// falsePositiveRate is the desired probability of a false positive (e.g. 0.01
+// for 1%). Panics if expectedItems <= 0 or falsePositiveRate is not in (0,1).
+func BloomDedupSet(expectedItems int, falsePositiveRate float64) DedupSet {
+	return internal.BloomDedupSet(expectedItems, falsePositiveRate)
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -189,6 +202,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	rc.cacheTTL = cfg.defaultCacheTTL
 	rc.codec = codec
 	rc.hook = hook
+	rc.gate = cfg.gate
 	r.terminal(rc)
 
 	// Initialise all Refs with the configured store and codec now that all
@@ -242,20 +256,36 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	}
 
 	if cfg.drainTimeout > 0 {
-		return runWithDrain(ctx, cfg.drainTimeout, wrappers)
+		return runWithDrain(ctx, cfg.drainTimeout, rc.signalDone, wrappers)
 	}
 	return internal.RunStages(ctx, wrappers)
 }
 
-// runWithDrain executes stages with graceful drain semantics.
-// When parentCtx is cancelled, stages are given drainTimeout to finish.
-func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, stages []func(context.Context) error) error {
+// runWithDrain executes stages with graceful drain semantics using a two-phase
+// shutdown:
+//
+//   - Phase 1: When parentCtx is cancelled, signalDone() closes the rc.done
+//     channel. Sources watch rc.done (via the goroutine inside Generate) and
+//     cancel their stageCtx, unblocking any parked source without touching the
+//     processing context for downstream stages.
+//
+//   - Phase 2: Downstream stages continue with a fresh drainCtx and have up to
+//     drainTimeout to flush any in-flight items naturally (e.g. Batch flushes
+//     a partial buffer when its input channel is closed by the stopped source).
+//
+//   - Hard stop: If drainTimeout elapses before all stages finish, drainCtx is
+//     cancelled and any remaining stages receive context.Canceled. That error is
+//     suppressed on return because it is an expected drain-termination signal.
+func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, signalDone func(), stages []func(context.Context) error) error {
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 	defer drainCancel()
 
 	go func() {
 		select {
 		case <-parentCtx.Done():
+			// Phase 1: stop sources cleanly (closes rc.done; Generate watches it).
+			signalDone()
+			// Phase 2: wait for natural drain or hard-stop timeout.
 			select {
 			case <-time.After(drainTimeout):
 				drainCancel()
@@ -265,7 +295,14 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, stages 
 		}
 	}()
 
-	return internal.RunStages(drainCtx, stages)
+	err := internal.RunStages(drainCtx, stages)
+	// Suppress context errors caused by the drain timeout hard-stop — they are
+	// expected when drainCtx was cancelled after the timeout, not genuine errors.
+	if err != nil && parentCtx.Err() != nil &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return nil
+	}
+	return err
 }
 
 // RunAsync starts the pipeline in a background goroutine and returns a
@@ -288,18 +325,6 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 	return &RunHandle{errCh: errCh, done: done, gate: gate}
 }
 
-// MergeRunners combines multiple runners that share the same pipeline graph
-// into a single runner. Use this when a pipeline forks (e.g., via [Partition]
-// or [Broadcast]) into multiple terminal branches.
-//
-//	valid, invalid := kitsune.Partition(parsed, isValid)
-//	stored := valid.ForEach(storeEvent)
-//	logged := invalid.ForEach(logRejection)
-//	runner, _ := kitsune.MergeRunners(stored, logged)
-//	err := runner.Run(ctx)
-//
-// MergeRunners returns [ErrNoRunners] if called with no arguments, or
-// [ErrNoRunners] if called with no arguments.
 // MergeRunners combines multiple runners that share the same pipeline graph
 // into a single runner. Use this when a pipeline forks (e.g., via [Partition]
 // or [Broadcast]) into multiple terminal branches.

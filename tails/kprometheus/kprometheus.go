@@ -1,6 +1,6 @@
 // Package kprometheus provides a Prometheus metrics hook for Kitsune pipelines.
 //
-// PrometheusHook implements kitsune.Hook plus the optional OverflowHook and
+// PrometheusHook implements hooks.Hook plus the optional OverflowHook and
 // SupervisionHook interfaces. Pass it to kitsune.WithHook to record per-stage
 // counters and latency histograms against any prometheus.Registerer.
 //
@@ -21,7 +21,7 @@ import (
 	"context"
 	"time"
 
-	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/hooks"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -36,9 +36,9 @@ type PrometheusHook struct {
 
 // Verify interface compliance at compile time.
 var (
-	_ kitsune.Hook            = (*PrometheusHook)(nil)
-	_ kitsune.OverflowHook    = (*PrometheusHook)(nil)
-	_ kitsune.SupervisionHook = (*PrometheusHook)(nil)
+	_ hooks.Hook            = (*PrometheusHook)(nil)
+	_ hooks.OverflowHook    = (*PrometheusHook)(nil)
+	_ hooks.SupervisionHook = (*PrometheusHook)(nil)
 )
 
 // New creates a PrometheusHook that registers metrics with reg under the given
@@ -85,10 +85,10 @@ func New(reg prometheus.Registerer, namespace string) *PrometheusHook {
 	}
 }
 
-// OnStageStart implements kitsune.Hook.
+// OnStageStart implements hooks.Hook.
 func (h *PrometheusHook) OnStageStart(_ context.Context, _ string) {}
 
-// OnItem implements kitsune.Hook.
+// OnItem implements hooks.Hook.
 func (h *PrometheusHook) OnItem(_ context.Context, stage string, dur time.Duration, err error) {
 	status := "ok"
 	if err != nil {
@@ -104,15 +104,15 @@ func (h *PrometheusHook) OnItem(_ context.Context, stage string, dur time.Durati
 	}
 }
 
-// OnStageDone implements kitsune.Hook.
+// OnStageDone implements hooks.Hook.
 func (h *PrometheusHook) OnStageDone(_ context.Context, _ string, _ int64, _ int64) {}
 
-// OnDrop implements kitsune.OverflowHook.
+// OnDrop implements hooks.OverflowHook.
 func (h *PrometheusHook) OnDrop(_ context.Context, stage string, _ any) {
 	h.drops.WithLabelValues(stage).Inc()
 }
 
-// OnStageRestart implements kitsune.SupervisionHook.
+// OnStageRestart implements hooks.SupervisionHook.
 func (h *PrometheusHook) OnStageRestart(_ context.Context, stage string, _ int, _ error) {
 	h.restarts.WithLabelValues(stage).Inc()
 }

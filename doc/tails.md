@@ -229,12 +229,30 @@ runner.Run(ctx, kitsune.WithCache(cache, 5*time.Minute))
 
 **DedupSet** — distributed deduplication for long-running pipelines:
 
+`MemoryDedupSet` (the default) accumulates every seen key in a `map[string]struct{}`. For long-running pipelines this grows without bound. `kredis.NewDedupSet` stores keys in a Redis Set, bounding memory to your Redis instance.
+
 ```go
-// In-memory MemoryDedupSet is fine for bounded batch jobs.
-// For long-running pipelines, switch to Redis to bound memory:
+// Drop-in replacement: switch MemoryDedupSet → Redis for production.
 dedup := kredis.NewDedupSet(rdb, "myapp:seen:")
-pipe.Dedupe(func(e Event) string { return e.ID }, dedup)
+enriched := kitsune.Dedupe(events, kitsune.WithDedupSet(dedup))
+// Or via the Pipeline method form:
+//   p.Dedupe(kitsune.WithDedupSet(dedup))
 ```
+
+The `DedupSet` interface has two methods — `Contains` and `Add` — called in sequence per item. This means two Redis round-trips per item and a theoretical race window (another process could add the same key between the two calls). In practice this is harmless for dedup: a duplicate that slips through is equivalent to the check arriving slightly later. If you need strictly atomic check-and-add, implement `DedupSet` using a Lua script or `SADD`'s return value (which is `0` when the member already exists):
+
+```go
+// Atomic single-call implementation using SADD return value.
+func (s *redisDedupSet) Contains(ctx context.Context, key string) (bool, error) {
+    n, err := s.client.SAdd(ctx, s.redisKey, key).Result()
+    return n == 0, err // 0 means already present
+}
+func (s *redisDedupSet) Add(ctx context.Context, key string) error {
+    return nil // already added by Contains
+}
+```
+
+For probabilistic dedup with bounded memory (useful when approximate correctness is acceptable and the key space is huge), a Bloom filter backend implementing `DedupSet` is a natural extension — no built-in implementation is provided yet.
 
 **Source / sink** — Redis list-based queues:
 

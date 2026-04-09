@@ -27,7 +27,7 @@ func main() {
 	start := time.Now()
 	results, err := kitsune.Collect(ctx,
 		kitsune.RateLimit(kitsune.FromSlice(items[:10]), 200,
-			kitsune.Burst(5),
+			[]kitsune.RateLimitOpt{kitsune.Burst(5)},
 		))
 	if err != nil {
 		panic(err)
@@ -42,8 +42,7 @@ func main() {
 	fmt.Println("=== RateLimitDrop (drop excess) ===")
 	fast := kitsune.FromSlice(items) // 20 items arrive instantly
 	limited := kitsune.RateLimit(fast, 5,
-		kitsune.RateMode(kitsune.RateLimitDrop),
-		kitsune.Burst(3),
+		[]kitsune.RateLimitOpt{kitsune.RateMode(kitsune.RateLimitDrop), kitsune.Burst(3)},
 	)
 	dropped, err := kitsune.Collect(ctx, limited)
 	if err != nil {

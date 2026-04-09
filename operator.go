@@ -46,6 +46,7 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
 		inputs:      []int{p.id},
+		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -292,72 +293,75 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 		var procCount, errCount atomic.Int64
 		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
 
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
-		outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
-		sem := make(chan struct{}, cfg.concurrency)
-		errCh := make(chan error, 1)
-		var wg sync.WaitGroup
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
 
-		func() {
-			for {
-				select {
-				case item, ok := <-inCh:
-					if !ok {
-						return
-					}
+			func() {
+				for {
 					select {
-					case sem <- struct{}{}:
-					case <-ctx.Done():
-						return
-					case err := <-errCh:
-						_ = err
+					case item, ok := <-inCh:
+						if !ok {
+							return
+						}
+						// Use innerCtx.Done() only — reading errCh here would drain it (BUG: removed for test)
+						// before the final select below can return it to Supervise.
+						select {
+						case sem <- struct{}{}:
+						case <-innerCtx.Done():
+							return
+						}
+						wg.Add(1)
+						go func(it I) {
+							defer wg.Done()
+							defer func() { <-sem }()
+
+							itemCtx, cancelItem := itemContext(innerCtx, cfg)
+							start := time.Now()
+							val, err, attempt := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
+							dur := time.Since(start)
+							cancelItem()
+							if err == internal.ErrSkipped {
+								errCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, err)
+								return
+							}
+							if err != nil {
+								errCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, err)
+								reportErr(errCh, internal.WrapStageErr(cfg.name, err, attempt))
+								cancel()
+								return
+							}
+							procCount.Add(1)
+							hook.OnItem(ctx, cfg.name, dur, nil)
+							if sendErr := outbox.Send(innerCtx, val); sendErr != nil {
+								reportErr(errCh, sendErr)
+								cancel()
+							}
+						}(item)
+					case <-innerCtx.Done():
 						return
 					}
-					wg.Add(1)
-					go func(it I) {
-						defer wg.Done()
-						defer func() { <-sem }()
-
-						itemCtx, cancelItem := itemContext(ctx, cfg)
-						start := time.Now()
-						val, err, attempt := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
-						dur := time.Since(start)
-						cancelItem()
-						if err == internal.ErrSkipped {
-							errCount.Add(1)
-							hook.OnItem(ctx, cfg.name, dur, err)
-							return
-						}
-						if err != nil {
-							errCount.Add(1)
-							hook.OnItem(ctx, cfg.name, dur, err)
-							reportErr(errCh, internal.WrapStageErr(cfg.name, err, attempt))
-							cancel()
-							return
-						}
-						procCount.Add(1)
-						hook.OnItem(ctx, cfg.name, dur, nil)
-						if sendErr := outbox.Send(ctx, val); sendErr != nil {
-							reportErr(errCh, sendErr)
-							cancel()
-						}
-					}(item)
-				case <-ctx.Done():
-					return
 				}
+			}()
+
+			wg.Wait()
+
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return nil
 			}
-		}()
-
-		wg.Wait()
-
-		select {
-		case err := <-errCh:
-			return err
-		default:
-			return nil
 		}
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 	}
 }
 
@@ -376,97 +380,101 @@ func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, 
 		var procCount, errCount atomic.Int64
 		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
 
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
-		outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
-		sem := make(chan struct{}, cfg.concurrency)
-		// slots channels depth = concurrency*2 to let the dispatcher stay ahead
-		slots := make(chan chan result, cfg.concurrency*2)
-		drainErrs := make(chan error, 1)
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			// slots channels depth = concurrency*2 to let the dispatcher stay ahead
+			slots := make(chan chan result, cfg.concurrency*2)
+			drainErrs := make(chan error, 1)
 
-		// Drainer: reads slots in order, emits results in sequence.
-		go func() {
-			for slotCh := range slots {
-				r := <-slotCh
-				if r.err == internal.ErrSkipped {
-					continue
-				}
-				if r.err != nil {
-					errCount.Add(1)
-					hook.OnItem(ctx, cfg.name, r.dur, r.err)
-					cancel()
-					// Drain remaining slots so workers aren't stuck.
-					go func() {
-						for s := range slots {
-							<-s
-						}
-					}()
-					drainErrs <- internal.WrapStageErr(cfg.name, r.err, r.att)
-					return
-				}
-				procCount.Add(1)
-				hook.OnItem(ctx, cfg.name, r.dur, nil)
-				if err := outbox.Send(ctx, r.val); err != nil {
-					cancel()
-					go func() {
-						for s := range slots {
-							<-s
-						}
-					}()
-					drainErrs <- err
-					return
-				}
-			}
-			drainErrs <- nil
-		}()
-
-		// Dispatcher: reads input, launches per-item goroutines in order.
-		func() {
-			for {
-				var item I
-				var ok bool
-				select {
-				case item, ok = <-inCh:
-					if !ok {
+			// Drainer: reads slots in order, emits results in sequence.
+			go func() {
+				for slotCh := range slots {
+					r := <-slotCh
+					if r.err == internal.ErrSkipped {
+						continue
+					}
+					if r.err != nil {
+						errCount.Add(1)
+						hook.OnItem(ctx, cfg.name, r.dur, r.err)
+						cancel()
+						// Drain remaining slots so workers aren't stuck.
+						go func() {
+							for s := range slots {
+								<-s
+							}
+						}()
+						drainErrs <- internal.WrapStageErr(cfg.name, r.err, r.att)
 						return
 					}
-				case <-ctx.Done():
-					return
+					procCount.Add(1)
+					hook.OnItem(ctx, cfg.name, r.dur, nil)
+					if err := outbox.Send(innerCtx, r.val); err != nil {
+						cancel()
+						go func() {
+							for s := range slots {
+								<-s
+							}
+						}()
+						drainErrs <- err
+						return
+					}
 				}
+				drainErrs <- nil
+			}()
 
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
-					return
+			// Dispatcher: reads input, launches per-item goroutines in order.
+			func() {
+				for {
+					var item I
+					var ok bool
+					select {
+					case item, ok = <-inCh:
+						if !ok {
+							return
+						}
+					case <-innerCtx.Done():
+						return
+					}
+
+					select {
+					case sem <- struct{}{}:
+					case <-innerCtx.Done():
+						return
+					}
+
+					slotCh := make(chan result, 1)
+					select {
+					case slots <- slotCh:
+					case <-innerCtx.Done():
+						<-sem
+						return
+					}
+
+					go func(it I, sc chan result) {
+						defer func() { <-sem }()
+						itemCtx, cancelItem := itemContext(innerCtx, cfg)
+						start := time.Now()
+						val, err, att := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
+						dur := time.Since(start)
+						cancelItem()
+						sc <- result{val: val, dur: dur, err: err, att: att}
+					}(item, slotCh)
 				}
+			}()
 
-				slotCh := make(chan result, 1)
-				select {
-				case slots <- slotCh:
-				case <-ctx.Done():
-					<-sem
-					return
-				}
-
-				go func(it I, sc chan result) {
-					defer func() { <-sem }()
-					itemCtx, cancelItem := itemContext(ctx, cfg)
-					start := time.Now()
-					val, err, att := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
-					dur := time.Since(start)
-					cancelItem()
-					sc <- result{val: val, dur: dur, err: err, att: att}
-				}(item, slotCh)
+			// Wait for all in-flight workers.
+			for i := 0; i < cfg.concurrency; i++ {
+				sem <- struct{}{}
 			}
-		}()
-
-		// Wait for all in-flight workers.
-		for i := 0; i < cfg.concurrency; i++ {
-			sem <- struct{}{}
+			close(slots)
+			return <-drainErrs
 		}
-		close(slots)
-		return <-drainErrs
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 	}
 }
 
@@ -633,66 +641,69 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 		var procCount, errCount atomic.Int64
 		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
 
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
-		outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
-		sem := make(chan struct{}, cfg.concurrency)
-		errCh := make(chan error, 1)
-		var wg sync.WaitGroup
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
 
-		func() {
-			for {
-				select {
-				case item, ok := <-inCh:
-					if !ok {
-						return
-					}
+			func() {
+				for {
 					select {
-					case sem <- struct{}{}:
-					case <-ctx.Done():
-						return
-					case err := <-errCh:
-						_ = err
-						return
-					}
-					wg.Add(1)
-					go func(it I) {
-						defer wg.Done()
-						defer func() { <-sem }()
-
-						itemCtx, cancelItem := itemContext(ctx, cfg)
-						send := func(v O) error { return outbox.Send(ctx, v) }
-						start := time.Now()
-						err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
-						dur := time.Since(start)
-						cancelItem()
-						if err != nil && err != internal.ErrSkipped {
-							errCount.Add(1)
-							hook.OnItem(ctx, cfg.name, dur, err)
-							reportErr(errCh, internal.WrapStageErr(cfg.name, err, attempt))
-							cancel()
+					case item, ok := <-inCh:
+						if !ok {
 							return
 						}
-						if err == nil {
-							procCount.Add(1)
-							hook.OnItem(ctx, cfg.name, dur, nil)
+						// Use innerCtx.Done() only — reading errCh here would drain it (BUG: removed for test)
+						// before the final select below can return it to Supervise.
+						select {
+						case sem <- struct{}{}:
+						case <-innerCtx.Done():
+							return
 						}
-					}(item)
-				case <-ctx.Done():
-					return
+						wg.Add(1)
+						go func(it I) {
+							defer wg.Done()
+							defer func() { <-sem }()
+
+							itemCtx, cancelItem := itemContext(innerCtx, cfg)
+							send := func(v O) error { return outbox.Send(innerCtx, v) }
+							start := time.Now()
+							err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+							dur := time.Since(start)
+							cancelItem()
+							if err != nil && err != internal.ErrSkipped {
+								errCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, err)
+								reportErr(errCh, internal.WrapStageErr(cfg.name, err, attempt))
+								cancel()
+								return
+							}
+							if err == nil {
+								procCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, nil)
+							}
+						}(item)
+					case <-innerCtx.Done():
+						return
+					}
 				}
+			}()
+
+			wg.Wait()
+
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return nil
 			}
-		}()
-
-		wg.Wait()
-
-		select {
-		case err := <-errCh:
-			return err
-		default:
-			return nil
 		}
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 	}
 }
 
@@ -711,99 +722,103 @@ func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Conte
 		var procCount, errCount atomic.Int64
 		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
 
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
-		outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
-		sem := make(chan struct{}, cfg.concurrency)
-		slots := make(chan chan result, cfg.concurrency*2)
-		drainErrs := make(chan error, 1)
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			slots := make(chan chan result, cfg.concurrency*2)
+			drainErrs := make(chan error, 1)
 
-		go func() {
-			for slotCh := range slots {
-				r := <-slotCh
-				if r.err == internal.ErrSkipped {
-					continue
-				}
-				if r.err != nil {
-					errCount.Add(1)
-					hook.OnItem(ctx, cfg.name, r.dur, r.err)
-					cancel()
-					go func() {
-						for s := range slots {
-							<-s
-						}
-					}()
-					drainErrs <- internal.WrapStageErr(cfg.name, r.err, r.att)
-					return
-				}
-				procCount.Add(1)
-				hook.OnItem(ctx, cfg.name, r.dur, nil)
-				for _, v := range r.items {
-					if err := outbox.Send(ctx, v); err != nil {
+			go func() {
+				for slotCh := range slots {
+					r := <-slotCh
+					if r.err == internal.ErrSkipped {
+						continue
+					}
+					if r.err != nil {
+						errCount.Add(1)
+						hook.OnItem(ctx, cfg.name, r.dur, r.err)
 						cancel()
 						go func() {
 							for s := range slots {
 								<-s
 							}
 						}()
-						drainErrs <- err
+						drainErrs <- internal.WrapStageErr(cfg.name, r.err, r.att)
 						return
 					}
+					procCount.Add(1)
+					hook.OnItem(ctx, cfg.name, r.dur, nil)
+					for _, v := range r.items {
+						if err := outbox.Send(innerCtx, v); err != nil {
+							cancel()
+							go func() {
+								for s := range slots {
+									<-s
+								}
+							}()
+							drainErrs <- err
+							return
+						}
+					}
 				}
-			}
-			drainErrs <- nil
-		}()
+				drainErrs <- nil
+			}()
 
-		func() {
-			for {
-				var item I
-				var ok bool
-				select {
-				case item, ok = <-inCh:
-					if !ok {
+			func() {
+				for {
+					var item I
+					var ok bool
+					select {
+					case item, ok = <-inCh:
+						if !ok {
+							return
+						}
+					case <-innerCtx.Done():
 						return
 					}
-				case <-ctx.Done():
-					return
-				}
 
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
-					return
-				}
-
-				slotCh := make(chan result, 1)
-				select {
-				case slots <- slotCh:
-				case <-ctx.Done():
-					<-sem
-					return
-				}
-
-				go func(it I, sc chan result) {
-					defer func() { <-sem }()
-					itemCtx, cancelItem := itemContext(ctx, cfg)
-					var buf []O
-					collect := func(v O) error {
-						buf = append(buf, v)
-						return nil
+					select {
+					case sem <- struct{}{}:
+					case <-innerCtx.Done():
+						return
 					}
-					start := time.Now()
-					err, att := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, collect)
-					dur := time.Since(start)
-					cancelItem()
-					sc <- result{items: buf, dur: dur, err: err, att: att}
-				}(item, slotCh)
-			}
-		}()
 
-		for i := 0; i < cfg.concurrency; i++ {
-			sem <- struct{}{}
+					slotCh := make(chan result, 1)
+					select {
+					case slots <- slotCh:
+					case <-innerCtx.Done():
+						<-sem
+						return
+					}
+
+					go func(it I, sc chan result) {
+						defer func() { <-sem }()
+						itemCtx, cancelItem := itemContext(innerCtx, cfg)
+						var buf []O
+						collect := func(v O) error {
+							buf = append(buf, v)
+							return nil
+						}
+						start := time.Now()
+						err, att := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, collect)
+						dur := time.Since(start)
+						cancelItem()
+						sc <- result{items: buf, dur: dur, err: err, att: att}
+					}(item, slotCh)
+				}
+			}()
+
+			for i := 0; i < cfg.concurrency; i++ {
+				sem <- struct{}{}
+			}
+			close(slots)
+			return <-drainErrs
 		}
-		close(slots)
-		return <-drainErrs
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 	}
 }
 

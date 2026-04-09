@@ -8,15 +8,13 @@ replace github.com/zenbaku/go-kitsune/hooks => ../../hooks
 
 require (
 	github.com/zenbaku/go-kitsune v0.0.0-00010101000000-000000000000
+	github.com/zenbaku/go-kitsune/hooks v0.0.0
 	go.opentelemetry.io/otel v1.42.0
 	go.opentelemetry.io/otel/metric v1.42.0
 	go.opentelemetry.io/otel/trace v1.42.0
 )
 
-require (
-	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
-)
+require golang.org/x/time v0.15.0 // indirect
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

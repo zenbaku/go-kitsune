@@ -1,7 +1,7 @@
 // Package kotel provides an OpenTelemetry metrics and tracing hook for
 // Kitsune pipelines.
 //
-// OTelHook implements kitsune.Hook plus the optional OverflowHook,
+// OTelHook implements hooks.Hook plus the optional OverflowHook,
 // SupervisionHook, GraphHook, and BufferHook interfaces. Pass it to
 // kitsune.WithHook to record per-stage counters, latency histograms, live
 // buffer-fill gauges, and (optionally) stage-level spans using any
@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/hooks"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -118,7 +118,7 @@ func New(meter metric.Meter) *OTelHook {
 	}
 }
 
-// OnStageStart implements kitsune.Hook. When a tracer is configured, it
+// OnStageStart implements hooks.Hook. When a tracer is configured, it
 // starts a span named "kitsune.stage.<stage>" as a child of ctx.
 func (h *OTelHook) OnStageStart(ctx context.Context, stage string) {
 	if h.tracer == nil {
@@ -130,7 +130,7 @@ func (h *OTelHook) OnStageStart(ctx context.Context, stage string) {
 	h.spans.Store(stage, span)
 }
 
-// OnItem implements kitsune.Hook.
+// OnItem implements hooks.Hook.
 func (h *OTelHook) OnItem(ctx context.Context, stage string, dur time.Duration, err error) {
 	status := "ok"
 	if err != nil {
@@ -151,7 +151,7 @@ func (h *OTelHook) OnItem(ctx context.Context, stage string, dur time.Duration, 
 	}
 }
 
-// OnStageDone implements kitsune.Hook. When a tracer is configured, it
+// OnStageDone implements hooks.Hook. When a tracer is configured, it
 // ends the stage span and records processed/error counts as attributes.
 func (h *OTelHook) OnStageDone(_ context.Context, stage string, processed int64, errors int64) {
 	if h.tracer == nil {
@@ -167,25 +167,25 @@ func (h *OTelHook) OnStageDone(_ context.Context, stage string, processed int64,
 	}
 }
 
-// OnDrop implements kitsune.OverflowHook.
+// OnDrop implements hooks.OverflowHook.
 func (h *OTelHook) OnDrop(ctx context.Context, stage string, _ any) {
 	h.drops.Add(ctx, 1, metric.WithAttributes(attribute.String("stage", stage)))
 }
 
-// OnStageRestart implements kitsune.SupervisionHook.
+// OnStageRestart implements hooks.SupervisionHook.
 func (h *OTelHook) OnStageRestart(ctx context.Context, stage string, _ int, _ error) {
 	h.restarts.Add(ctx, 1, metric.WithAttributes(attribute.String("stage", stage)))
 }
 
-// OnGraph implements kitsune.GraphHook.
-func (h *OTelHook) OnGraph(nodes []kitsune.GraphNode) {
+// OnGraph implements hooks.GraphHook.
+func (h *OTelHook) OnGraph(nodes []hooks.GraphNode) {
 	h.stages.Add(context.Background(), int64(len(nodes)))
 }
 
-// OnBuffers implements kitsune.BufferHook.
+// OnBuffers implements hooks.BufferHook.
 // It registers a kitsune.stage.buffer_length observable gauge whose value is
 // refreshed on every metrics collection cycle by calling query().
-func (h *OTelHook) OnBuffers(query func() []kitsune.BufferStatus) {
+func (h *OTelHook) OnBuffers(query func() []hooks.BufferStatus) {
 	_, _ = h.meter.Int64ObservableGauge(
 		"kitsune.stage.buffer_length",
 		metric.WithDescription("Current number of items buffered between stages"),

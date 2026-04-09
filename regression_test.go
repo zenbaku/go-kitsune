@@ -402,4 +402,3 @@ func TestCombineLatest_IndependentGraphs(t *testing.T) {
 		t.Fatal("expected at least one pair from CombineLatest")
 	}
 }
-

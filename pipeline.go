@@ -77,6 +77,7 @@ type runCtx struct {
 	codec    internal.Codec
 	hook     internal.Hook
 	refs     *refRegistry // keyed state, populated during build phase
+	gate     *internal.Gate
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
 	// sources (Ticker, Interval, Repeatedly, …) without cancelling the run

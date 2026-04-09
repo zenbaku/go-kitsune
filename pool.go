@@ -31,8 +31,31 @@ func (p *Pool[T]) Get() *Pooled[T] {
 	return p.p.Get().(*Pooled[T])
 }
 
+// Put returns item to the pool. Equivalent to calling [Pooled.Release] on the
+// item directly. After Put, the item's Value field must not be accessed.
+func (p *Pool[T]) Put(item *Pooled[T]) {
+	p.put(item)
+}
+
 func (p *Pool[T]) put(item *Pooled[T]) {
 	p.p.Put(item)
+}
+
+// Warmup pre-populates the pool with n objects by calling the factory function
+// n times and immediately returning them. This reduces first-use latency for
+// latency-sensitive start-up paths. Warmup is best-effort: sync.Pool may evict
+// objects at any time (e.g. on GC). No-op for n <= 0.
+func (p *Pool[T]) Warmup(n int) {
+	if n <= 0 {
+		return
+	}
+	items := make([]*Pooled[T], n)
+	for i := range items {
+		items[i] = p.Get()
+	}
+	for _, item := range items {
+		p.put(item)
+	}
 }
 
 // Pooled wraps a value obtained from a [Pool].

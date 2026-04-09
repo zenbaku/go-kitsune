@@ -104,15 +104,10 @@ tasks:
       - go test -bench=. -benchmem -count=5 -timeout 300s ./...
 
   test:examples:
-    desc: Build and run all examples (skips redis tail if unavailable)
+    desc: Build and run all examples
     cmds:
       # Root-module examples — run via go test -run TestExamples (parallel, cached builds).
       - go test -v -run TestExamples -timeout 120s -count=1 .
-      # Tail examples — own go.mod, run directly.
-      - for: [files, sqlite, http, prometheus, websocket]
-        cmd: cd examples/{{.ITEM}} && go run . > /dev/null 2>&1 && echo "PASS examples/{{.ITEM}}" || (echo "FAIL examples/{{.ITEM}}" && exit 1)
-      # Redis tail example — only if Redis is reachable.
-      - redis-cli ping > /dev/null 2>&1 && (cd examples/redis && go run . > /dev/null 2>&1 && echo "PASS examples/redis") || echo "SKIP examples/redis (Redis not available)"
 
   test:all:
     desc: Run core + tail + example tests
@@ -124,10 +119,8 @@ tasks:
   examples:
     desc: Run all examples
     cmds:
-      - for: [basic, filter, batch, flatmap, fanout, errors, state, compose, generate, concurrent, window, broadcast, dedupe, iter, metrics, supervise, overflow, channel, collectors, concatmap, groupby, mapresult, pairwise, reduce, scan, slidingwindow, stages, ticker, timebased, timeout, withlatestfrom, circuitbreaker, metricsapi, pool, ratelimit, switchmap, exhaustmap, combinelatest, balance, testclock, mapwithkey, sessionwindow]
+      - for: [basic, broadcast, caching, channel, circuitbreaker, concurrent, fanout, hooks, ratelimit, stages, switchmap, ticker, timeout]
         cmd: echo "=== {{.ITEM}} ===" && go run ./examples/{{.ITEM}}
-      - for: [files, redis, sqlite, http]
-        cmd: echo "=== {{.ITEM}} ===" && cd examples/{{.ITEM}} && go run .
 
   inspector:
     desc: Launch the live inspector dashboard (opens a pipeline in your browser)

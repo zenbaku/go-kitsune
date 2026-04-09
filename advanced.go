@@ -16,6 +16,11 @@ import (
 // yield for each output). When a new input item arrives, the current sub-stream
 // is cancelled immediately and the new sub-stream begins.
 // Only the outputs of the most-recently-started sub-stream are forwarded.
+//
+// Use Timeout(d) to impose a per-item deadline on fn; the context passed to fn
+// is cancelled after d. Use Supervise to restart the stage loop on panic or
+// unrecoverable error. Use Overflow to control the drop policy when the output
+// channel is full.
 func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	track(p)
 	cfg := buildStageConfig(opts)
@@ -26,6 +31,9 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 		name:        orDefault(cfg.name, "switch_map"),
 		concurrency: cfg.concurrency,
 		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		timeout:     cfg.timeout,
+		hasSuperv:   cfg.supervision.HasSupervision(),
 		inputs:      []int{p.id},
 	}
 	build := func(rc *runCtx) chan O {
@@ -38,85 +46,98 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		hook := rc.hook
+		if hook == nil {
+			hook = internal.NoopHook{}
+		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
 
-			outbox := internal.NewBlockingOutbox(ch)
-			errCh := make(chan error, 1)
+			inner := func() error {
+				outbox := internal.NewOutbox(ch, cfg.overflow, hook, cfg.name)
+				errCh := make(chan error, 1)
 
-			var (
-				mu          sync.Mutex
-				innerCancel context.CancelFunc
-			)
-			// wg tracks ALL inner goroutines so we can wait for them all before
-			// closing the output channel (even "cancelled" goroutines may still
-			// be in flight).
-			var wg sync.WaitGroup
+				var (
+					mu          sync.Mutex
+					innerCancel context.CancelFunc
+				)
+				// wg tracks ALL inner goroutines so we can wait for them all before
+				// closing the output channel (even "cancelled" goroutines may still
+				// be in flight).
+				var wg sync.WaitGroup
 
-			cancelCurrent := func() {
-				mu.Lock()
-				if innerCancel != nil {
-					innerCancel()
-					innerCancel = nil
-				}
-				mu.Unlock()
-			}
-
-			// naturalEnd tracks whether the outer input exhausted normally.
-			// When true, we must NOT cancel the last sub-stream — it should be
-			// allowed to complete. When false (error or ctx cancellation), we cancel.
-			naturalEnd := func() bool {
-				for {
-					select {
-					case item, ok := <-inCh:
-						if !ok {
-							return true
-						}
-						// Cancel the previous sub-stream.
-						mu.Lock()
-						if innerCancel != nil {
-							innerCancel()
-						}
-						ic, cancel := context.WithCancel(ctx)
-						innerCancel = cancel
-						mu.Unlock()
-
-						wg.Add(1)
-						go func(it I, ic context.Context, c context.CancelFunc) {
-							defer wg.Done()
-							defer c()
-							// Use ic for sends so a cancelled goroutine doesn't
-							// block on a full channel or write to a closed one.
-							send := func(v O) error { return outbox.Send(ic, v) }
-							err, _ := internal.ProcessFlatMapItem(ic, fn, it, cfg.errorHandler, send)
-							if err != nil && err != internal.ErrSkipped && ic.Err() == nil {
-								reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
-							}
-						}(item, ic, cancel)
-
-					case err := <-errCh:
-						cancelCurrent()
-						_ = err
-						return false
-					case <-ctx.Done():
-						cancelCurrent()
-						return false
+				cancelCurrent := func() {
+					mu.Lock()
+					if innerCancel != nil {
+						innerCancel()
+						innerCancel = nil
 					}
+					mu.Unlock()
 				}
-			}()
 
-			if !naturalEnd {
-				cancelCurrent()
-			}
-			wg.Wait() // wait for all goroutines before defer close(ch) runs
+				// naturalEnd tracks whether the outer input exhausted normally.
+				// When true, we must NOT cancel the last sub-stream — it should be
+				// allowed to complete. When false (error or ctx cancellation), we cancel.
+				var loopErr error
+				naturalEnd := func() bool {
+					for {
+						select {
+						case item, ok := <-inCh:
+							if !ok {
+								return true
+							}
+							// Cancel the previous sub-stream.
+							mu.Lock()
+							if innerCancel != nil {
+								innerCancel()
+							}
+							ic, cancel := context.WithCancel(ctx)
+							innerCancel = cancel
+							mu.Unlock()
 
-			select {
-			case err := <-errCh:
-				return err
-			default:
-				return nil
+							wg.Add(1)
+							go func(it I, ic context.Context, c context.CancelFunc) {
+								defer wg.Done()
+								defer c()
+								itemCtx, cancelItem := itemContext(ic, cfg)
+								defer cancelItem()
+								// Use ic for sends so a cancelled goroutine doesn't
+								// block on a full channel or write to a closed one.
+								send := func(v O) error { return outbox.Send(ic, v) }
+								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+								if err != nil && err != internal.ErrSkipped && ic.Err() == nil {
+									reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
+								}
+							}(item, ic, cancel)
+
+						case err := <-errCh:
+							loopErr = err
+							cancelCurrent()
+							return false
+						case <-ctx.Done():
+							cancelCurrent()
+							return false
+						}
+					}
+				}()
+
+				if !naturalEnd {
+					cancelCurrent()
+				}
+				wg.Wait() // wait for all goroutines before defer close(ch) runs
+
+				if loopErr != nil {
+					return loopErr
+				}
+				select {
+				case err := <-errCh:
+					return err
+				default:
+					return nil
+				}
 			}
+			return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 		}
 		rc.add(stage, m)
 		return ch
@@ -131,6 +152,11 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 // ExhaustMap transforms each input item into a sub-stream using fn.
 // While a sub-stream is in progress, new input items are dropped.
 // Only when the current sub-stream finishes is the next item processed.
+//
+// Use Timeout(d) to impose a per-item deadline on fn; the context passed to fn
+// is cancelled after d. Use Supervise to restart the stage loop on panic or
+// unrecoverable error. Use Overflow to control the drop policy when the output
+// channel is full.
 func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	track(p)
 	cfg := buildStageConfig(opts)
@@ -141,6 +167,9 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 		name:        orDefault(cfg.name, "exhaust_map"),
 		concurrency: cfg.concurrency,
 		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		timeout:     cfg.timeout,
+		hasSuperv:   cfg.supervision.HasSupervision(),
 		inputs:      []int{p.id},
 	}
 	build := func(rc *runCtx) chan O {
@@ -153,54 +182,63 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		hook := rc.hook
+		if hook == nil {
+			hook = internal.NoopHook{}
+		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
 
-			outbox := internal.NewBlockingOutbox(ch)
-			errCh := make(chan error, 1)
+			inner := func() error {
+				outbox := internal.NewOutbox(ch, cfg.overflow, hook, cfg.name)
+				errCh := make(chan error, 1)
 
-			var wg sync.WaitGroup
-			// semaphore of 1: tracks whether an inner goroutine is active.
-			sem := make(chan struct{}, 1)
-			sem <- struct{}{} // initially available
+				var wg sync.WaitGroup
+				// semaphore of 1: tracks whether an inner goroutine is active.
+				sem := make(chan struct{}, 1)
+				sem <- struct{}{} // initially available
 
-			for {
-				select {
-				case item, ok := <-inCh:
-					if !ok {
-						wg.Wait() // wait for any active inner goroutine before closing ch
-						select {
-						case err := <-errCh:
-							return err
-						default:
-							return nil
-						}
-					}
-					// Non-blocking: only launch if no inner goroutine is running.
+				for {
 					select {
-					case <-sem:
-						wg.Add(1)
-						go func(it I) {
-							defer wg.Done()
-							defer func() { sem <- struct{}{} }()
-							send := func(v O) error { return outbox.Send(ctx, v) }
-							err, _ := internal.ProcessFlatMapItem(ctx, fn, it, cfg.errorHandler, send)
-							if err != nil && err != internal.ErrSkipped && ctx.Err() == nil {
-								reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
+					case item, ok := <-inCh:
+						if !ok {
+							wg.Wait() // wait for any active inner goroutine before closing ch
+							select {
+							case err := <-errCh:
+								return err
+							default:
+								return nil
 							}
-						}(item)
-					default:
-						// Inner goroutine busy — drop item.
+						}
+						// Non-blocking: only launch if no inner goroutine is running.
+						select {
+						case <-sem:
+							wg.Add(1)
+							go func(it I) {
+								defer wg.Done()
+								defer func() { sem <- struct{}{} }()
+								itemCtx, cancelItem := itemContext(ctx, cfg)
+								defer cancelItem()
+								send := func(v O) error { return outbox.Send(ctx, v) }
+								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+								if err != nil && err != internal.ErrSkipped && ctx.Err() == nil {
+									reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
+								}
+							}(item)
+						default:
+							// Inner goroutine busy — drop item.
+						}
+					case err := <-errCh:
+						wg.Wait()
+						return err
+					case <-ctx.Done():
+						wg.Wait()
+						return ctx.Err()
 					}
-				case err := <-errCh:
-					wg.Wait()
-					return err
-				case <-ctx.Done():
-					wg.Wait()
-					return ctx.Err()
 				}
 			}
+			return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
 		}
 		rc.add(stage, m)
 		return ch
@@ -218,7 +256,8 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 // This is equivalent to FlatMap with Concurrency(1).
 func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
 	// ConcatMap = serial FlatMap; enforce single concurrency.
-	opts = append([]StageOption{Concurrency(1)}, opts...)
+	// Append last so this overrides any caller-supplied Concurrency option.
+	opts = append(opts, Concurrency(1))
 	return FlatMap(p, fn, opts...)
 }
 

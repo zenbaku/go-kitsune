@@ -322,6 +322,7 @@ type Group[K comparable, V any] struct {
 }
 
 // GroupBy runs the pipeline and returns a map from key to slice of items.
+// For a streaming variant that keeps the result in-pipeline, use [GroupByStream].
 func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K][]T, error) {
 	groups := make(map[K][]T)
 	err := p.ForEach(func(_ context.Context, v T) error {
@@ -332,18 +333,18 @@ func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn fun
 	return groups, err
 }
 
-// GroupByOrdered partitions items by key and emits one [Group] per distinct key
-// when the source completes. Groups are emitted in first-seen key order.
-// Use this when you need to pipeline the grouped results further; for a simple
-// map result use [GroupBy].
-func GroupByOrdered[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
+// GroupByStream partitions items by key and emits one [Group] per distinct key
+// when the source completes, in first-seen key order. Use this when you need to
+// pipeline the grouped results into further stages; for a terminal map result
+// use [GroupBy].
+func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "group_by_ordered",
-		name:   orDefault(cfg.name, "group_by_ordered"),
+		kind:   "group_by_stream",
+		name:   orDefault(cfg.name, "group_by_stream"),
 		buffer: cfg.buffer,
 		inputs: []int{p.id},
 	}

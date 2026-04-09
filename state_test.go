@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	kitsune "github.com/zenbaku/go-kitsune"
 )
@@ -263,5 +264,954 @@ func TestLiftAlias(t *testing.T) {
 	}
 	if len(got) != 3 || got[0] != 2 || got[1] != 4 || got[2] != 6 {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StateTTL tests
+// ---------------------------------------------------------------------------
+
+func TestStateTTL_ExpiryOnGet(t *testing.T) {
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey("ttl-expire", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], _ int) (int, error) {
+		if err := ref.Set(ctx, 42); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl + 5*time.Millisecond) // sleep past TTL
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 0 {
+		t.Errorf("expected initial value 0 after TTL expiry, got %d", gotValue)
+	}
+}
+
+func TestStateTTL_ResetOnWrite(t *testing.T) {
+	ttl := 30 * time.Millisecond
+	key := kitsune.NewKey("ttl-reset", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], _ int) (int, error) {
+		if err := ref.Set(ctx, 99); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Write again — resets the TTL clock.
+		if err := ref.Set(ctx, 99); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Should NOT be expired yet (TTL clock was reset by second write).
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 99 {
+		t.Errorf("expected 99 (not expired), got %d", gotValue)
+	}
+}
+
+func TestStateTTL_ZeroTTL_NoExpiry(t *testing.T) {
+	// Default key (no TTL) — value must never expire.
+	key := kitsune.NewKey("ttl-zero", 0)
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], _ int) (int, error) {
+		if err := ref.Set(ctx, 7); err != nil {
+			return 0, err
+		}
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 7 {
+		t.Errorf("expected 7 (no TTL), got %d", gotValue)
+	}
+}
+
+func TestStateTTL_UpdateResetsTimer(t *testing.T) {
+	ttl := 30 * time.Millisecond
+	key := kitsune.NewKey("ttl-update", 0, kitsune.StateTTL(ttl))
+	input := kitsune.FromSlice([]int{1})
+
+	var gotValue int
+	p := kitsune.MapWith(input, key, func(ctx context.Context, ref *kitsune.Ref[int], _ int) (int, error) {
+		if err := ref.Set(ctx, 5); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Update — resets the TTL clock.
+		if err := ref.Update(ctx, func(v int) (int, error) { return v + 1, nil }); err != nil {
+			return 0, err
+		}
+		time.Sleep(ttl / 2)
+		// Should NOT be expired.
+		v, err := ref.Get(ctx)
+		if err != nil {
+			return 0, err
+		}
+		gotValue = v
+		return v, nil
+	})
+	if _, err := p.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotValue != 6 {
+		t.Errorf("expected 6 (after Update, not expired), got %d", gotValue)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 3l. Ref[T] API — item 3l from parity-gaps.md
+// ---------------------------------------------------------------------------
+
+func TestRefWithMemoryStore(t *testing.T) {
+	// Get/Set/Update round-trip via MapWith (in-memory ref).
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mem", 0)
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		if err := ref.Set(ctx, v*10); err != nil {
+			return 0, err
+		}
+		return ref.Get(ctx)
+	}).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each item overwrites the ref, so we get 10, 20, 30.
+	want := []int{10, 20, 30}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestRef_GetOrSet(t *testing.T) {
+	// For store-backed refs, GetOrSet calls fn on the first access and returns
+	// the cached value on subsequent calls.
+	ctx := context.Background()
+	key := kitsune.NewKey[string]("gos", "")
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	calls := 0
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[string], v int) (string, error) {
+		return ref.GetOrSet(ctx, func() (string, error) {
+			calls++
+			return "first", nil
+		})
+	}).Collect(ctx, kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fn should be called exactly once; all items return "first".
+	if calls != 1 {
+		t.Errorf("fn called %d times, want 1", calls)
+	}
+	for i, s := range got {
+		if s != "first" {
+			t.Errorf("item %d: got %q, want %q", i, s, "first")
+		}
+	}
+}
+
+func TestRef_UpdateAndGet(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("uag", 0)
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(acc int) (int, error) { return acc + v, nil })
+	}).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Running sum: 1, 3, 6.
+	want := []int{1, 3, 6}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestRef_StoreBacked(t *testing.T) {
+	// Same Get/Set/Update semantics when backed by an explicit MemoryStore.
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("sbref", 0)
+	p := kitsune.FromSlice([]int{5, 10, 15})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(acc int) (int, error) { return acc + v, nil })
+	}).Collect(ctx, kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Running sum: 5, 15, 30.
+	want := []int{5, 15, 30}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestMapWithKey_SameKeySharesState(t *testing.T) {
+	// Two items with the same key increment the same counter.
+	ctx := context.Background()
+	countKey := kitsune.NewKey[int]("shared", 0)
+	p := kitsune.FromSlice([]string{"x", "x", "y", "x"})
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		countKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "x" seen 3 times → counts 1, 2, 3; "y" seen once → 1.
+	want := []int{1, 2, 1, 3}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestMapWithKey_StoreBacked(t *testing.T) {
+	// MapWithKey with an explicit MemoryStore.
+	ctx := context.Background()
+	countKey := kitsune.NewKey[int]("sbkey", 0)
+	p := kitsune.FromSlice([]string{"a", "b", "a"})
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		countKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+	).Collect(ctx, kitsune.WithStore(kitsune.MemoryStore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 1, 2}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestMapWithKey_WithTTL(t *testing.T) {
+	// A key with StateTTL expires between items. TTL is checked on Get, so we
+	// Set the value on the first item, sleep past TTL, then Get on the second.
+	ctx := context.Background()
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey("ttlkey", 0, kitsune.StateTTL(ttl))
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2}),
+		func(_ int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			if v == 1 {
+				// Set to 99 for first item.
+				if err := ref.Set(ctx, 99); err != nil {
+					return 0, err
+				}
+				return ref.Get(ctx)
+			}
+			// Second item: sleep past TTL, then Get — should return initial value (0).
+			time.Sleep(ttl * 2)
+			return ref.Get(ctx)
+		},
+	)
+	got, err := p.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(got))
+	}
+	if got[0] != 99 {
+		t.Errorf("first item: got %d, want 99", got[0])
+	}
+	// After TTL expiry, Get returns the initial value (0).
+	if got[1] != 0 {
+		t.Errorf("second item (after TTL expiry): got %d, want 0", got[1])
+	}
+}
+
+func TestFlatMapWithKey_MultipleOutputs(t *testing.T) {
+	// FlatMapWithKey emitting multiple items per input item.
+	ctx := context.Background()
+	cntKey := kitsune.NewKey[int]("fmwk", 0)
+	p := kitsune.FromSlice([]string{"a", "b", "a"})
+	got, err := kitsune.FlatMapWithKey(p,
+		func(s string) string { return s },
+		cntKey,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string, yield func(string) error) error {
+			n, err := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			if err != nil {
+				return err
+			}
+			// Emit n copies of s.
+			for i := 0; i < n; i++ {
+				if err := yield(s); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "a" first time → 1 copy; "b" first time → 1 copy; "a" second time → 2 copies.
+	want := []string{"a", "b", "a", "a"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OnError — all four operators
+// ---------------------------------------------------------------------------
+
+func TestMapWith_OnError_Skip(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("skip_test", 0)
+	boom := fmt.Errorf("boom")
+	calls := 0
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		calls++
+		if v == 2 {
+			return 0, boom
+		}
+		return v * 10, nil
+	}, kitsune.OnError(kitsune.Skip())).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// item 2 skipped; 1 and 3 emitted.
+	if len(got) != 2 || got[0] != 10 || got[1] != 30 {
+		t.Errorf("got %v, want [10 30]", got)
+	}
+	if calls != 3 {
+		t.Errorf("fn called %d times, want 3", calls)
+	}
+}
+
+func TestMapWith_OnError_Halt(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("halt_test", 0)
+	boom := fmt.Errorf("boom")
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		if v == 2 {
+			return 0, boom
+		}
+		return v, nil
+	}).Collect(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestFlatMapWith_OnError_Skip(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmw_skip", 0)
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.FlatMapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int, yield func(int) error) error {
+		if v == 2 {
+			return fmt.Errorf("skip me")
+		}
+		return yield(v * 10)
+	}, kitsune.OnError(kitsune.Skip())).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != 10 || got[1] != 30 {
+		t.Errorf("got %v, want [10 30]", got)
+	}
+}
+
+func TestMapWithKey_OnError_Skip(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_skip", 0)
+	p := kitsune.FromSlice([]string{"a", "b", "a"})
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+			if s == "b" {
+				return "", fmt.Errorf("skip b")
+			}
+			n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			return fmt.Sprintf("%s#%d", s, n), nil
+		},
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "b" skipped; "a" appears twice.
+	if len(got) != 2 || got[0] != "a#1" || got[1] != "a#2" {
+		t.Errorf("got %v, want [a#1 a#2]", got)
+	}
+}
+
+func TestFlatMapWithKey_OnError_Skip(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmwk_skip", 0)
+	p := kitsune.FromSlice([]string{"a", "b", "a"})
+	got, err := kitsune.FlatMapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string, yield func(string) error) error {
+			if s == "b" {
+				return fmt.Errorf("skip b")
+			}
+			return yield(s + "!")
+		},
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "a!" || got[1] != "a!" {
+		t.Errorf("got %v, want [a! a!]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Supervise — ref preserved across restart
+// ---------------------------------------------------------------------------
+
+func TestMapWith_Supervise_RestartOnError(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("sup_restart", 0)
+	attempt := 0
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		attempt++
+		// Fail on the very first call; succeed on restart.
+		if attempt == 1 {
+			return 0, fmt.Errorf("first attempt fail")
+		}
+		n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + v, nil })
+		return n, nil
+	}, kitsune.Supervise(kitsune.RestartOnError(3, nil))).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Item 1 was consumed from the channel before the error and is not re-delivered
+	// after restart (Supervise restarts the stage loop, not individual items).
+	// After restart: items 2,3 → running sum 2, 5.
+	if len(got) != 2 {
+		t.Fatalf("got %v (len %d), want 2 items", got, len(got))
+	}
+	if got[0] != 2 || got[1] != 5 {
+		t.Errorf("got %v, want [2 5]", got)
+	}
+}
+
+func TestMapWith_Supervise_RefPreservedAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("sup_ref_preserved", 0)
+
+	type state struct {
+		setOnFirst bool
+		refVal     int
+	}
+	var s state
+
+	p := kitsune.FromSlice([]int{1, 2})
+	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		if !s.setOnFirst {
+			// First item: set ref to 42 then fail — triggering a restart.
+			s.setOnFirst = true
+			if setErr := ref.Set(ctx, 42); setErr != nil {
+				return 0, setErr
+			}
+			return 0, fmt.Errorf("trigger restart")
+		}
+		// After restart: check ref still holds 42.
+		val, _ := ref.Get(ctx)
+		s.refVal = val
+		return val, nil
+	}, kitsune.Supervise(kitsune.RestartOnError(1, nil))).Collect(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.refVal != 42 {
+		t.Errorf("ref after restart: got %d, want 42", s.refVal)
+	}
+}
+
+func TestMapWithKey_Supervise_RestartOnError(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_sup", 0)
+	attempt := 0
+	p := kitsune.FromSlice([]string{"x", "y", "x"})
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+			attempt++
+			if attempt == 1 {
+				return "", fmt.Errorf("trigger restart")
+			}
+			n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			return fmt.Sprintf("%s#%d", s, n), nil
+		},
+		kitsune.Supervise(kitsune.RestartOnError(3, nil)),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first item ("x") was consumed before the error. After restart, "y" and
+	// the second "x" are processed. Supervise restarts the loop, not the item.
+	if len(got) != 2 {
+		t.Fatalf("got %v (len %d), want 2 items after restart", got, len(got))
+	}
+}
+
+func TestMapWithKey_Supervise_KeyedRefPreserved(t *testing.T) {
+	// Use two identical keys so the second occurrence is processed after restart,
+	// allowing us to verify the Ref value survived.
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_ref_preserved", 0)
+	calls := 0
+	p := kitsune.FromSlice([]string{"a", "a"}) // same key twice
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			calls++
+			if calls == 1 {
+				// Set "a"'s ref to 99, then fail — triggering restart.
+				_ = ref.Set(ctx, 99)
+				return 0, fmt.Errorf("trigger restart")
+			}
+			// After restart: the second "a" reads back the preserved ref.
+			return ref.Get(ctx)
+		},
+		kitsune.Supervise(kitsune.RestartOnError(1, nil)),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// First "a" was consumed before the error; after restart the second "a" is
+	// processed and reads ref["a"] = 99 (preserved across the restart).
+	if len(got) != 1 {
+		t.Fatalf("got %v (len %d), want 1 item", got, len(got))
+	}
+	if got[0] != 99 {
+		t.Errorf("ref value after restart: got %d, want 99", got[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MapWithKey — concurrency (key-sharded workers)
+// ---------------------------------------------------------------------------
+
+func TestMapWithKey_Concurrency_AllProcessed(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_conc", 0)
+	n := 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWithKey(p,
+		func(v int) string { return fmt.Sprintf("key%d", v%10) },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			return v * 2, nil
+		},
+		kitsune.Concurrency(4),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	sum := 0
+	for _, v := range got {
+		sum += v
+	}
+	wantSum := 0
+	for i := range n {
+		wantSum += i * 2
+	}
+	if sum != wantSum {
+		t.Errorf("sum of results: got %d, want %d", sum, wantSum)
+	}
+}
+
+func TestMapWithKey_Concurrency_KeyAffinity(t *testing.T) {
+	// Items with the same key must accumulate into the same counter.
+	// With 4 workers and key-sharding, "alice" and "bob" each map to one worker.
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_affinity", 0)
+	items := []string{"alice", "bob", "alice", "bob", "alice"}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.Concurrency(4),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sort got to get final counts; alice appears 3 times, bob 2.
+	sort.Ints(got)
+	// Counts: alice[1,2,3], bob[1,2] → sorted: [1,1,2,2,3]
+	want := []int{1, 1, 2, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("index %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestMapWithKey_Concurrency_Ordered(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_ordered", 0)
+	n := 50
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWithKey(p,
+		func(v int) string { return fmt.Sprintf("k%d", v%5) },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			return v, nil
+		},
+		kitsune.Concurrency(3),
+		kitsune.Ordered(),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	// Ordered() must preserve input order.
+	for i, v := range got {
+		if v != items[i] {
+			t.Errorf("position %d: got %d, want %d", i, v, items[i])
+		}
+	}
+}
+
+func TestMapWithKey_Concurrency_OnError_Skip(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_conc_skip", 0)
+	items := []string{"a", "b", "a", "b", "a"}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+			if s == "b" {
+				return "", fmt.Errorf("skip b")
+			}
+			n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			return fmt.Sprintf("a#%d", n), nil
+		},
+		kitsune.Concurrency(2),
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only "a" items survive: 3 of them.
+	if len(got) != 3 {
+		t.Fatalf("got %d items, want 3: %v", len(got), got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MapWith — concurrency (worker-local state)
+// ---------------------------------------------------------------------------
+
+func TestMapWith_Concurrency_AllProcessed(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mw_conc", 0)
+	n := 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i + 1
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return v * 2, nil
+	}, kitsune.Concurrency(4)).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	sum := 0
+	for _, v := range got {
+		sum += v
+	}
+	wantSum := 0
+	for i := range n {
+		wantSum += (i + 1) * 2
+	}
+	if sum != wantSum {
+		t.Errorf("sum: got %d, want %d", sum, wantSum)
+	}
+}
+
+func TestMapWith_Concurrency_WorkerLocalState(t *testing.T) {
+	// Each worker accumulates its own counter independently.
+	// With n=4 workers, the sum of all workers' final counts equals len(items).
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mw_worker_local", 0)
+	n := 40
+	items := make([]int, n)
+	for i := range items {
+		items[i] = 1
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(acc int) (int, error) { return acc + v, nil })
+	}, kitsune.Concurrency(4)).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	// All items were processed; individual counts are worker-local (not a global sum).
+	// Just verify total items processed and no panics.
+}
+
+func TestMapWith_Concurrency_Ordered(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mw_ordered", 0)
+	n := 50
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return v, nil
+	}, kitsune.Concurrency(3), kitsune.Ordered()).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d items, want %d", len(got), n)
+	}
+	for i, v := range got {
+		if v != items[i] {
+			t.Errorf("position %d: got %d, want %d", i, v, items[i])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FlatMapWithKey — concurrency (key-sharded workers)
+// ---------------------------------------------------------------------------
+
+func TestFlatMapWithKey_Concurrency_AllProcessed(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmwk_conc", 0)
+	items := []string{"a", "b", "a", "c", "b"}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.FlatMapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string, yield func(string) error) error {
+			n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			// Emit n copies.
+			for i := 0; i < n; i++ {
+				if err := yield(s); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		kitsune.Concurrency(3),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a:1 b:1 a:2 c:1 b:2 → 1+1+2+1+2 = 7 items
+	if len(got) != 7 {
+		t.Fatalf("got %d items, want 7: %v", len(got), got)
+	}
+}
+
+func TestFlatMapWithKey_Concurrency_Ordered(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmwk_ord", 0)
+	items := []string{"a", "b", "c"}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.FlatMapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string, yield func(string) error) error {
+			if err := yield(s + "1"); err != nil {
+				return err
+			}
+			return yield(s + "2")
+		},
+		kitsune.Concurrency(3),
+		kitsune.Ordered(),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a1", "a2", "b1", "b2", "c1", "c2"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("position %d: got %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FlatMapWith — concurrency (worker-local state)
+// ---------------------------------------------------------------------------
+
+func TestFlatMapWith_Concurrency_AllProcessed(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmw_conc", 0)
+	n := 30
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i + 1
+	}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.FlatMapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int, yield func(int) error) error {
+		if err := yield(v); err != nil {
+			return err
+		}
+		return yield(v * -1)
+	}, kitsune.Concurrency(3)).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n*2 {
+		t.Fatalf("got %d items, want %d", len(got), n*2)
+	}
+}
+
+func TestFlatMapWith_Concurrency_Ordered(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("fmw_ord", 0)
+	items := []int{1, 2, 3}
+	p := kitsune.FromSlice(items)
+	got, err := kitsune.FlatMapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int, yield func(int) error) error {
+		if err := yield(v * 10); err != nil {
+			return err
+		}
+		return yield(v * 100)
+	}, kitsune.Concurrency(3), kitsune.Ordered()).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 100, 20, 200, 30, 300}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("position %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Race detector — run with -race to validate lock-free key-sharding
+// ---------------------------------------------------------------------------
+
+func TestMapWithKey_Concurrency_Race(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("race_key", 0)
+	n := 500
+	items := make([]string, n)
+	keys := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	for i := range items {
+		items[i] = keys[i%len(keys)]
+	}
+	p := kitsune.FromSlice(items)
+	_, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.Concurrency(4),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMapWith_Concurrency_Race(t *testing.T) {
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mw_race", 0)
+	n := 500
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+		return ref.UpdateAndGet(ctx, func(acc int) (int, error) { return acc + 1, nil })
+	}, kitsune.Concurrency(4)).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

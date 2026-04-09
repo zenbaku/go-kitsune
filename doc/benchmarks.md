@@ -30,7 +30,7 @@ Each benchmark constructs and runs a complete pipeline from scratch, so the numb
 
 **MapConcurrent is slower than MapLinear** for this synthetic workload because the transformation (`n * 2`) is CPU-trivial — goroutine coordination overhead dominates. `Concurrency(n)` pays off for I/O-bound stages (HTTP calls, database queries) where goroutines block waiting for external systems rather than competing for CPU. The concurrent fast path skips per-item timing, hook dispatch, and `ProcessItem` overhead in the worker loop (same conditions as the `Concurrency(1)` fast path: `DefaultHandler + NoopHook`).
 
-**MapLinear throughput improved 2.4×** (1,845 µs → 768 µs) since the fusion era. Stage fusion collapses Map→Drain into a single goroutine. Receive-side micro-batching amortises the Source→Map channel cost. The drain protocol removes the per-item 3-case `select` in the source fast path entirely — the source now does plain `outCh <- item`, with downstream drain goroutines unblocking it on pipeline exit.
+**MapLinear throughput improved 2.4×** (1,845 µs → 768 µs). Stage fusion collapses Map→Drain into a single goroutine. Receive-side micro-batching amortises the Source→Map channel cost. The drain protocol removes the per-item 3-case `select` in the source fast path entirely — the source now does plain `outCh <- item`, with downstream drain goroutines unblocking it on pipeline exit.
 
 **FlatMap items/sec** is measured as output items (10,000) per ns/op, since the expansion ratio (1:10) is the primary cost driver.
 
@@ -117,12 +117,12 @@ All fast-path pipelines — fused or not — allocate a fixed setup overhead ind
 
 | Pipeline | allocs/run (1M items) | allocs/item |
 |---|---:|---:|
-| `Map` → `Filter` → `ForEach` (fused) | 47 | **0** |
-| Single `Map` + `Drain` (no fusion) | ~47 | **0** |
-| `FlatMap` + `Drain` | ~47 | **0** |
+| `Map` → `Filter` → `ForEach` (fused) | 54 | **0** |
+| Single `Map` + `Drain` (no fusion) | ~54 | **0** |
+| `FlatMap` + `Drain` | ~54 | **0** |
 | Any pipeline with `WithHook(...)` | scales with N | ~1–2 |
 
-The 47 allocs/run are pure setup (goroutine stacks, channels, sync primitives). Per-item cost is zero for all fast-path cases — fused and non-fused alike.
+The 54 allocs/run are pure setup (goroutine stacks, channels, sync primitives). Per-item cost is zero for all fast-path cases — fused and non-fused alike.
 
 ---
 
@@ -132,30 +132,30 @@ Measures a 3-stage linear pipeline (Map → Filter → Drain) at 1M items across
 
 **Pipeline**: Map `n*2` → Filter `n%3 != 0` (~67% pass-through) → Drain (discard)
 **Machine**: Apple M1, darwin/arm64, Go 1.26.1
-**Method**: `go test -bench=. -benchmem -count=5` in `bench/`, median of 5 runs
+**Method**: `go test -bench=. -benchmem -count=5` in `archive/bench/`, median of 5 runs
 
 | Implementation | ns/op | items/sec | B/op | allocs/op | vs raw |
 |---|---:|---:|---:|---:|---:|
-| Raw goroutines | 163 ms | ~6.12 M/s | 1 KB | 12 | — |
-| `sourcegraph/conc` | 163 ms | ~6.13 M/s | 1 KB | 12 | +0% |
-| **Kitsune** | **47 ms** | **~21.3 M/s** | **4 KB** | **47** | **-71%** |
-| `reugn/go-streams` | 725 ms | ~1.38 M/s | 30.5 MB | 2,000,000 | +345% |
+| Raw goroutines | 168 ms | ~5.95 M/s | 1 KB | 12 | — |
+| `sourcegraph/conc` | 168 ms | ~5.96 M/s | 1 KB | 12 | +0% |
+| **Kitsune** | **47 ms** | **~21.2 M/s** | **5 KB** | **54** | **-72%** |
+| `reugn/go-streams` | 741 ms | ~1.35 M/s | 30.5 MB | 2,000,000 | +341% |
 
-**Kitsune is 3.5× faster than raw goroutines** and 15× faster than `go-streams`. The gains stack:
+**Kitsune is 3.6× faster than raw goroutines** and 16× faster than `go-streams`. The gains stack:
 1. **Typed build-time fusion** collapses Map→Filter→Drain into one goroutine with zero inter-stage channel hops and zero boxing. `Pipeline[T]` carries a `fusionEntry` closure; when `ForEach` detects a single-consumer fast-path chain with `NoopHook` it calls `fusionEntry` directly, composing the entire chain.
 2. **Receive-side micro-batching** amortises the remaining Source→chain channel cost: one blocking receive + up to 15 non-blocking drains.
 3. **Drain protocol** removes the per-item 3-case `select` from the source: plain `outCh <- item` with a downstream drain goroutine providing the deadlock safety net.
 
-**Raw goroutines use 3 goroutines with 3 channel hops and plain `ch <- v` sends.** Kitsune uses 1 goroutine hop (Source → fused chain) with a plain send, then direct function calls within the fused chain. The drain protocol's safety net costs one `goroutine + for range` per stage exit — amortised to zero over a run.
+**Raw goroutines use 4 goroutines with 3 channel hops and plain `ch <- v` sends.** Kitsune uses 1 goroutine hop (Source → fused chain) with a plain send, then direct function calls within the fused chain. The drain protocol's safety net costs one `goroutine + for range` per stage exit — amortised to zero over a run.
 
-**`reugn/go-streams`** is ~1.38M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
+**`reugn/go-streams`** is ~1.35M items/sec — slower than Kitsune for two reasons: (1) all stage channels are unbuffered (vs Kitsune's default 16-slot buffers), creating a handshake per item, and (2) go-streams has no built-in slice source, so all N items must be pre-boxed into a `chan any` before the pipeline starts (accounting for the 2× memory overhead vs Kitsune).
 
-**When does Kitsune overhead matter?** Typed build-time fusion has zero per-item boxing: `chan T` stage boundaries mean the compiler can inline or at minimum avoid interface allocation at every hop. The only remaining cross-goroutine cost is the single channel receive from Source into the fused chain — hence ~21 M/s and a constant 47 allocs/run regardless of N.
+**When does Kitsune overhead matter?** Typed build-time fusion has zero per-item boxing: `chan T` stage boundaries mean the compiler can inline or at minimum avoid interface allocation at every hop. The only remaining cross-goroutine cost is the single channel receive from Source into the fused chain — hence ~21 M/s and a constant 54 allocs/run regardless of N.
 
 To reproduce:
 
 ```
-cd bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
+cd archive/bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
 ```
 
 Or via Task:
@@ -173,7 +173,7 @@ framework overhead because stage functions run in ~5 ns. Real pipelines do more
 work per item. Two additional tiers show how overhead scales with stage cost.
 
 **Machine**: Apple M1, darwin/arm64, Go 1.26.1
-**Method**: `go test -bench='BenchmarkLightCPU|BenchmarkIOBound' -benchmem -count=5` in `bench/`, median of 5 runs
+**Method**: `go test -bench='BenchmarkLightCPU|BenchmarkIOBound' -benchmem -count=5` in `archive/bench/`, median of 5 runs
 
 ### Light CPU — SHA-256 per item (~300 ns work)
 
@@ -182,10 +182,10 @@ Stage cost (~300 ns) is comparable to a single channel hop.
 
 | Implementation | ns/op | items/sec | vs raw |
 |---|---:|---:|---:|
-| Raw goroutines | 271 ms | ~3.69 M/s | — |
-| **Kitsune** | **152 ms** | **~6.59 M/s** | **-44%** |
+| Raw goroutines | 276 ms | ~3.63 M/s | — |
+| **Kitsune** | **122 ms** | **~8.17 M/s** | **-56%** |
 
-Kitsune is 44% **faster** than raw goroutines: fusion eliminates 2 goroutine handoffs per item, and the drain protocol eliminates the per-item select in the source. Even with SHA-256 stage work, eliminating goroutine handoffs is worth more.
+Kitsune is 56% **faster** than raw goroutines: fusion eliminates 2 goroutine handoffs per item, and the drain protocol eliminates the per-item select in the source. Even with SHA-256 stage work, eliminating goroutine handoffs is worth more.
 
 ### I/O bound — 1 µs sleep per item (~3 µs effective on M1)
 
@@ -195,21 +195,21 @@ both implementations sleep equally so the overhead ratio is still accurate.
 
 | Implementation | ns/op | items/sec | vs raw |
 |---|---:|---:|---:|
-| Raw goroutines | 31.8 ms | ~314 k/s | — |
-| **Kitsune** | **29.1 ms** | **~343 k/s** | **-8%** |
+| Raw goroutines | 31.6 ms | ~316 k/s | — |
+| **Kitsune** | **28.5 ms** | **~350 k/s** | **-10%** |
 
-Kitsune is 8% **faster** than raw goroutines for I/O-bound work.
+Kitsune is 10% **faster** than raw goroutines for I/O-bound work.
 
 ### Overhead vs stage cost
 
 | Stage cost | Kitsune overhead | Representative workload |
 |---|---:|---|
-| ~5 ns (trivial) | -71% (faster) | CPU-trivial transforms |
-| ~300 ns (SHA-256) | -44% (faster) | Hashing, encoding, validation |
-| ~3 µs (I/O sleep) | -8% (faster) | Database queries, HTTP calls |
+| ~5 ns (trivial) | -72% (faster) | CPU-trivial transforms |
+| ~300 ns (SHA-256) | -56% (faster) | Hashing, encoding, validation |
+| ~3 µs (I/O sleep) | -10% (faster) | Database queries, HTTP calls |
 | ~100 µs (network) | ~0% | Cross-datacenter RPC |
 
-**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, typed build-time fusion, and receive-side micro-batching together eliminate more overhead than the errgroup machinery adds. The typed engine uses `chan T` at every stage boundary — zero per-item boxing anywhere in the fast path — leaving only the single channel hop from Source into the fused chain.
+**Kitsune is faster than raw goroutines across all measured workloads.** The drain protocol, typed build-time fusion, and receive-side micro-batching together eliminate more overhead than the errgroup machinery adds. The typed engine uses `chan T` at every stage boundary — zero per-item boxing anywhere in the fast path — leaving only the single channel hop from Source into the fused chain. Gains are most pronounced for CPU-bound work (−72% for trivial transforms, −56% for SHA-256 hashing) where eliminating goroutine handoffs compounds with stage cost.
 
 ---
 
@@ -221,14 +221,14 @@ These bounds are enforced by `TestAllocBounds` in `bench_allocs_test.go` and run
 
 | Operator | Config | allocs/run (10K items) | Ceiling | Allocs/item | Key sources |
 |---|---|---:|---:|---:|---|
-| `Map` | `Concurrency(1)`, `n*2` (fast path, fused) | ~47 | 60 | **0** | setup only: goroutine stacks, channels |
+| `Map` | `Concurrency(1)`, `n*2` (fast path, fused) | ~54 | 65 | **0** | setup only: goroutine stacks, channels |
 | `Map` | `Concurrency(1)`, `n*2` (with hook) | ~19,675 | 21,000 | ~2 | hook dispatch allocations per item |
 | `FlatMap` | 1K items → 10K outputs | ~10,297 | 11,000 | ~1/output | yield closure per output item |
 | `Batch` | `Batch(100)`, 100 flushes | ~10,003 | 10,500 | ~1 | `make([]T)` per flush; buffer reused via `clear`+reslice |
-| `RateLimit` | wait mode, rate=1e9/s | ~47 | 60 | **0** | same as Map fast path (reservation amortised at high rate) |
-| `CircuitBreaker` | closed state, all-success | ~47 | 60 | **0** | same as Map fast path; `ref.Update` closures amortised |
+| `RateLimit` | wait mode, rate=1e9/s | ~54 | 65 | **0** | same as Map fast path (reservation amortised at high rate) |
+| `CircuitBreaker` | closed state, all-success | ~54 | 65 | **0** | same as Map fast path; `ref.Update` closures amortised |
 
-**Allocation count includes pipeline setup** (goroutine stacks, channels, engine graph). For fast-path pipelines (`Concurrency(1)`, `NoopHook`, default error handler), setup is ~47 allocs regardless of item count — per-item cost is zero.
+**Allocation count includes pipeline setup** (goroutine stacks, channels, sync primitives). For fast-path pipelines (`Concurrency(1)`, `NoopHook`, default error handler), setup is ~54 allocs regardless of item count — per-item cost is zero.
 
 **`RateLimit` and `CircuitBreaker`** on the fast path match plain `Map`: the `rate.Reservation` and `ref.Update` closure costs are amortised and do not scale with N.
 
@@ -251,7 +251,7 @@ go test -bench=. -benchmem -count=5 ./...
 **Comparison benchmarks** (Kitsune vs raw goroutines, conc, go-streams):
 
 ```
-cd bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
+cd archive/bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
 ```
 
 **Allocation regression tests** (hard-fail on ceiling violation):

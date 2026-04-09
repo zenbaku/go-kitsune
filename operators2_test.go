@@ -2,6 +2,7 @@ package kitsune_test
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/testkit"
 )
 
 // ---------------------------------------------------------------------------
@@ -773,5 +775,465 @@ func TestExhaustMapContextCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("pipeline did not terminate after context cancel")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SwitchMap — Timeout
+// ---------------------------------------------------------------------------
+
+func TestSwitchMapTimeout(t *testing.T) {
+	// Inner fn sleeps longer than the deadline; the item context should be
+	// cancelled, causing the fn to return an error and the pipeline to halt.
+	p := kitsune.FromSlice([]int{1})
+	_, err := kitsune.SwitchMap(p, func(ctx context.Context, v int, yield func(int) error) error {
+		select {
+		case <-time.After(5 * time.Second):
+			return yield(v)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}, kitsune.Timeout(20*time.Millisecond)).Collect(context.Background())
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestSwitchMapTimeoutSkip(t *testing.T) {
+	// Slow item with OnError(Skip) — the timed-out item is dropped, no pipeline error.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.SwitchMap(p, func(ctx context.Context, v int, yield func(int) error) error {
+		if v == 2 {
+			select {
+			case <-time.After(5 * time.Second):
+				return yield(v)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return yield(v * 10)
+	},
+		kitsune.Timeout(20*time.Millisecond),
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+
+	if err != nil {
+		t.Fatalf("expected nil error with Skip, got: %v", err)
+	}
+	// Items 1 and 3 processed; item 2 timed out and dropped.
+	if len(got) == 0 {
+		t.Fatal("expected some output, got none")
+	}
+	for _, v := range got {
+		if v == 2 {
+			t.Errorf("timed-out item 2 should not appear in output, got %v", got)
+		}
+	}
+}
+
+func TestSwitchMapTimeoutFastFn(t *testing.T) {
+	// Fast fn completes well within deadline — no error, all items processed.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.SwitchMap(p, func(_ context.Context, v int, yield func(int) error) error {
+		return yield(v * 10)
+	}, kitsune.Timeout(time.Second)).Collect(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected output, got none")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SwitchMap — Supervise
+// ---------------------------------------------------------------------------
+
+// waitForRestarts polls hook until at least n restarts are recorded or the
+// deadline passes. It returns true if the count was reached in time.
+func waitForRestarts(hook *testkit.RecordingHook, n int, deadline time.Duration) bool {
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		if len(hook.Restarts()) >= n {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
+}
+
+func TestSwitchMapSupervise(t *testing.T) {
+	// Send items one at a time via an unbuffered channel so that each item is
+	// only in-flight when we explicitly put it there. Item 1 errors, the stage
+	// restarts (detected via hook), then item 2 is processed successfully.
+	ctx := context.Background()
+	hook := &testkit.RecordingHook{}
+	ch := kitsune.NewChannel[int](0)
+
+	errored := make(chan struct{})
+	var calls atomic.Int64
+
+	resultCh := make(chan struct {
+		items []int
+		err   error
+	}, 1)
+	go func() {
+		items, err := kitsune.SwitchMap(ch.Source(), func(_ context.Context, v int, yield func(int) error) error {
+			c := calls.Add(1)
+			if c == 1 {
+				close(errored)
+				return errors.New("transient switchmap error")
+			}
+			return yield(v * 10)
+		},
+			kitsune.Supervise(kitsune.RestartOnError(3, nil)),
+			kitsune.WithName("sm-sup"),
+		).Collect(ctx, kitsune.WithHook(hook))
+		resultCh <- struct {
+			items []int
+			err   error
+		}{items, err}
+	}()
+
+	if err := ch.Send(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for fn to signal it errored, then wait for hook to record the restart.
+	select {
+	case <-errored:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for item 1 to error")
+	}
+	if !waitForRestarts(hook, 1, 2*time.Second) {
+		t.Fatal("timeout waiting for stage restart")
+	}
+
+	if err := ch.Send(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	ch.Close()
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("unexpected error after supervised restart: %v", r.err)
+		}
+		if len(r.items) == 0 {
+			t.Fatal("expected output after restart, got none")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for pipeline to complete")
+	}
+}
+
+func TestSwitchMapSuperviseExhausted(t *testing.T) {
+	// Send one item per restart cycle so that each restart sees a fresh item.
+	// After MaxRestarts the pipeline must return an error.
+	ctx := context.Background()
+	hook := &testkit.RecordingHook{}
+	ch := kitsune.NewChannel[int](0)
+
+	errored := make(chan struct{}, 10) // buffered so fn never blocks on send
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := kitsune.SwitchMap(ch.Source(), func(_ context.Context, _ int, _ func(int) error) error {
+			errored <- struct{}{}
+			return errors.New("always fails")
+		},
+			kitsune.Supervise(kitsune.RestartOnError(2, nil)),
+			kitsune.WithName("sm-sup-ex"),
+		).Collect(ctx, kitsune.WithHook(hook))
+		resultCh <- err
+	}()
+
+	// RestartOnError(2): allows 2 restarts (3 total attempts). Send 3 items,
+	// one per attempt, each time waiting for the previous error to propagate.
+	for i := 0; i < 3; i++ {
+		if err := ch.Send(ctx, i+1); err != nil {
+			t.Fatalf("Send(%d): %v", i+1, err)
+		}
+		select {
+		case <-errored:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for fn to error on attempt %d", i+1)
+		}
+		if i < 2 {
+			// Wait for the restart to be recorded before sending the next item.
+			if !waitForRestarts(hook, i+1, 2*time.Second) {
+				t.Fatalf("timeout waiting for restart %d", i+1)
+			}
+		}
+	}
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("expected error after restarts exhausted, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for pipeline to fail")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SwitchMap — Overflow
+// ---------------------------------------------------------------------------
+
+func TestSwitchMapOverflow(t *testing.T) {
+	// A slow consumer with DropNewest overflow must not deadlock.
+	// The pipeline should complete without hanging.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p2 := kitsune.SwitchMap(p, func(_ context.Context, v int, yield func(int) error) error {
+			for i := 0; i < 10; i++ {
+				if err := yield(v*100 + i); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+			kitsune.Buffer(1),
+			kitsune.Overflow(kitsune.DropNewest),
+		)
+		// Slow consumer: simulate backpressure.
+		ctx := context.Background()
+		seq, errFn := kitsune.Iter(ctx, p2)
+		for range seq {
+			time.Sleep(time.Millisecond)
+		}
+		if err := errFn(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline deadlocked under DropNewest overflow")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ExhaustMap — Timeout
+// ---------------------------------------------------------------------------
+
+func TestExhaustMapTimeout(t *testing.T) {
+	// Inner fn sleeps longer than the deadline; the item context should be
+	// cancelled, causing the fn to return an error and the pipeline to halt.
+	p := kitsune.FromSlice([]int{1})
+	_, err := kitsune.ExhaustMap(p, func(ctx context.Context, v int, yield func(int) error) error {
+		select {
+		case <-time.After(5 * time.Second):
+			return yield(v)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}, kitsune.Timeout(20*time.Millisecond)).Collect(context.Background())
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+}
+
+func TestExhaustMapTimeoutSkip(t *testing.T) {
+	// Slow item with OnError(Skip) — the timed-out item is dropped, no pipeline error.
+	// Use a slow source so item 1 is fully processed before item 2 arrives.
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		for _, v := range []int{1, 2, 3} {
+			if !yield(v) {
+				return nil
+			}
+			time.Sleep(150 * time.Millisecond) // space items out beyond the 20ms timeout
+		}
+		return nil
+	})
+	got, err := kitsune.ExhaustMap(p, func(ctx context.Context, v int, yield func(string) error) error {
+		if v == 2 {
+			select {
+			case <-time.After(5 * time.Second):
+				return yield("slow")
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return yield("ok")
+	},
+		kitsune.Timeout(20*time.Millisecond),
+		kitsune.OnError(kitsune.Skip()),
+	).Collect(context.Background())
+
+	if err != nil {
+		t.Fatalf("expected nil error with Skip, got: %v", err)
+	}
+	for _, v := range got {
+		if v == "slow" {
+			t.Errorf("timed-out item should not appear in output, got %v", got)
+		}
+	}
+}
+
+func TestExhaustMapTimeoutFastFn(t *testing.T) {
+	// Fast fn completes well within deadline — no error, all items processed.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.ExhaustMap(p, func(_ context.Context, v int, yield func(int) error) error {
+		return yield(v * 10)
+	}, kitsune.Timeout(time.Second)).Collect(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected output, got none")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ExhaustMap — Supervise
+// ---------------------------------------------------------------------------
+
+func TestExhaustMapSupervise(t *testing.T) {
+	// Same controlled-delivery pattern as the SwitchMap variant.
+	ctx := context.Background()
+	hook := &testkit.RecordingHook{}
+	ch := kitsune.NewChannel[int](0)
+
+	errored := make(chan struct{})
+	var calls atomic.Int64
+
+	resultCh := make(chan struct {
+		items []int
+		err   error
+	}, 1)
+	go func() {
+		items, err := kitsune.ExhaustMap(ch.Source(), func(_ context.Context, v int, yield func(int) error) error {
+			c := calls.Add(1)
+			if c == 1 {
+				close(errored)
+				return errors.New("transient exhaustmap error")
+			}
+			return yield(v * 10)
+		},
+			kitsune.Supervise(kitsune.RestartOnError(3, nil)),
+			kitsune.WithName("em-sup"),
+		).Collect(ctx, kitsune.WithHook(hook))
+		resultCh <- struct {
+			items []int
+			err   error
+		}{items, err}
+	}()
+
+	if err := ch.Send(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-errored:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for item 1 to error")
+	}
+	if !waitForRestarts(hook, 1, 2*time.Second) {
+		t.Fatal("timeout waiting for stage restart")
+	}
+
+	if err := ch.Send(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	ch.Close()
+
+	select {
+	case r := <-resultCh:
+		if r.err != nil {
+			t.Fatalf("unexpected error after supervised restart: %v", r.err)
+		}
+		if len(r.items) == 0 {
+			t.Fatal("expected output after restart, got none")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for pipeline to complete")
+	}
+}
+
+func TestExhaustMapSuperviseExhausted(t *testing.T) {
+	ctx := context.Background()
+	hook := &testkit.RecordingHook{}
+	ch := kitsune.NewChannel[int](0)
+
+	errored := make(chan struct{}, 10)
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := kitsune.ExhaustMap(ch.Source(), func(_ context.Context, _ int, _ func(string) error) error {
+			errored <- struct{}{}
+			return errors.New("always fails")
+		},
+			kitsune.Supervise(kitsune.RestartOnError(2, nil)),
+			kitsune.WithName("em-sup-ex"),
+		).Collect(ctx, kitsune.WithHook(hook))
+		resultCh <- err
+	}()
+
+	for i := 0; i < 3; i++ {
+		if err := ch.Send(ctx, i+1); err != nil {
+			t.Fatalf("Send(%d): %v", i+1, err)
+		}
+		select {
+		case <-errored:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for fn to error on attempt %d", i+1)
+		}
+		if i < 2 {
+			if !waitForRestarts(hook, i+1, 2*time.Second) {
+				t.Fatalf("timeout waiting for restart %d", i+1)
+			}
+		}
+	}
+
+	select {
+	case err := <-resultCh:
+		if err == nil {
+			t.Fatal("expected error after restarts exhausted, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for pipeline to fail")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ExhaustMap — Overflow
+// ---------------------------------------------------------------------------
+
+func TestExhaustMapOverflow(t *testing.T) {
+	// A slow consumer with DropNewest overflow must not deadlock.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p2 := kitsune.ExhaustMap(p, func(_ context.Context, v int, yield func(int) error) error {
+			for i := 0; i < 10; i++ {
+				if err := yield(v*100 + i); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+			kitsune.Buffer(1),
+			kitsune.Overflow(kitsune.DropNewest),
+		)
+		ctx := context.Background()
+		seq, errFn := kitsune.Iter(ctx, p2)
+		for range seq {
+			time.Sleep(time.Millisecond)
+		}
+		if err := errFn(); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline deadlocked under DropNewest overflow")
 	}
 }

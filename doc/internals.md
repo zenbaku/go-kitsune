@@ -25,127 +25,157 @@ flowchart LR
     construction -- "Run(ctx)" --> runtime
 ```
 
-The public `kitsune` package is a thin generic wrapper. All values flow through
-the runtime as `any`; generics only exist at the API boundary — erased to
-concrete types on entry and restored via type assertion on exit.
+The public `kitsune` package is the runtime. Each operator constructs a typed
+`*Pipeline[T]` carrying a `build` closure; no channels are allocated and no
+type information is lost until `Run` is called. Generics are preserved
+end-to-end — there is no type erasure in the hot path.
 
 ---
 
-## The Graph and Node
+## Pipeline[T] and stageMeta
 
 ```
-internal/engine/graph.go
+pipeline.go
 ```
 
-**`Graph`** is a thread-safe, append-only list of `*Node` values. It is created
-once per pipeline (by the first source call) and shared by reference through
-every `*Pipeline[T]` handle derived from it. The mutex only protects `AddNode`
-during construction; at run time the graph is read-only.
+**`Pipeline[T]`** is the core type — a lazy, reusable blueprint for one stage of
+computation. It holds:
 
-**`Node`** is the central configuration record for one stage:
+- `id int` — a process-unique stage ID (assigned at construction time via an
+  atomic counter, `nextPipelineID`).
+- `meta stageMeta` — static description of the stage (name, kind, inputs,
+  concurrency, buffer size, …).
+- `build func(*runCtx) chan T` — the closure that materialises the stage when
+  `Run` is called. It recursively calls `build` on upstream pipelines, allocates
+  a fresh typed channel, registers the stage's `stageFunc` into the `runCtx`,
+  and returns the channel so downstream stages can read from it. The closure is
+  memoised via `runCtx`: if this stage was already built in the current `Run`,
+  the existing channel is returned immediately without re-registering — this is
+  what makes diamond (shared-upstream) graphs safe.
+- `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc` — non-nil for
+  fast-path-eligible `Map` and `Filter` stages (see Stage fusion below).
+- `consumerCount atomic.Int32` — incremented at construction time by every
+  operator that consumes this pipeline. `fusionEntry` is safe to use only when
+  `consumerCount == 1`.
+
+**`stageMeta`** holds introspection data for a single stage:
 
 ```go
-Node {
-    ID           int              // position in g.Nodes; also the channel key namespace
-    Kind         NodeKind         // dispatch key — see the full list below
-    Name         string           // optional label used in hooks, logs, metrics
-    Fn           any              // type-erased processing function
-
-    Inputs       []InputRef       // upstream (node, port) pairs this stage reads from
-    Concurrency  int              // parallel workers (default 1)
-    Ordered      bool             // preserve input order when Concurrency > 1
-    Buffer       int              // output channel capacity (default 16)
-    Overflow     int              // 0=Block, 1=DropNewest, 2=DropOldest
-    ErrorHandler ErrorHandler     // retry / skip / halt policy
-    Supervision  SupervisionPolicy
-
-    // Kind-specific fields — only the relevant ones are set per node:
-    BatchSize         int
-    BatchTimeout      int64           // nanoseconds
-    BatchConvert      func([]any) any
-    TakeN             int
-    BroadcastN        int
-    ZipConvert        func(any, any) any  // also used by WithLatestFrom
-    ThrottleDuration  int64           // nanoseconds; shared by Throttle and Debounce
-    ReduceSeed        any             // initial accumulator for Reduce
-    CacheWrapFn       func(defaultCache any, defaultTTL time.Duration) any
-    MapResultErrWrap  func(input any, err error) any
+stageMeta {
+    id          int
+    name        string
+    kind        string         // "map", "filter", "source", "batch", …
+    inputs      []int          // upstream stage IDs
+    concurrency int
+    buffer      int
+    overflow    internal.Overflow
+    batchSize   int
+    timeout     time.Duration
+    hasRetry    bool
+    hasSuperv   bool
+    getChanLen  func() int     // set during build; queries live channel length
+    getChanCap  func() int     // set during build; queries channel capacity
 }
 ```
 
-An `InputRef` is `{Node int, Port int}` — a pointer to one output port of an
-upstream node. `Port` is almost always 0; the exceptions are multi-output nodes
-(`Partition`, `MapResultNode`) and multi-input nodes (`Zip`, `WithLatestFrom`,
-`Merge`).
+**`runCtx`** is created fresh on every `Runner.Run` call. As `build` functions
+are called recursively from the terminal back to sources, each stage registers
+its `stageFunc` here and its output channel is memoised by stage ID:
 
-`ChannelKey` pairs a node ID with a port number and is the map key used for
-both the channel map and the outbox map built at run time.
+```go
+runCtx {
+    stages []stageFunc         // goroutine bodies, one per stage
+    metas  []stageMeta         // static descriptions, one per stage
+    chans  map[int]any         // stage ID → typed channel (type-erased for storage)
+    hook   internal.Hook
+    refs   *refRegistry        // keyed state, populated during build phase
+    done   chan struct{}        // closed by early-exit stages (Take, TakeWhile)
+    // …cache, codec fields
+}
+```
 
-### NodeKind reference
+`inputs []int` on `stageMeta` lists the upstream stage IDs this stage reads
+from. It is almost always a single element; the exceptions are multi-input nodes
+(`Zip`, `WithLatestFrom`, `Merge`). Multi-output nodes (`Partition`, `MapResult`)
+are implemented as two independent `Pipeline` values that share the same build
+closure and memoisation ID — the second call to `build` returns the already-
+memoised channel immediately.
 
-| Kind | Stage function | Outputs |
+### Stage kind reference
+
+The `kind` string on `stageMeta` is used for graph visualisation and hooks. Each
+kind corresponds to a stage runner function:
+
+| Kind string | Stage runner | Channels out |
 |---|---|---|
-| `Source` | `runSource` | 1 port |
-| `Map` | `runMap` → `runMapSingle` / `runMapConcurrent` / `runMapConcurrentOrdered` | 1 port |
-| `FlatMap` | `runFlatMap` → same variants | 1 port |
-| `Filter` | `runFilter` | 1 port |
-| `Tap` | `runTap` | 1 port |
-| `Take` | `runTake` | 1 port |
-| `TakeWhile` | `runTakeWhile` | 1 port |
-| `Batch` | `runBatch` | 1 port |
-| `ReduceNode` | `runReduce` | 1 port (emits once on close) |
-| `ThrottleNode` | `runThrottle` | 1 port |
-| `DebounceNode` | `runDebounce` | 1 port |
-| `Partition` | `runPartition` | 2 ports (match / rest) |
-| `MapResultNode` | `runMapResult` | 2 ports (ok / error) |
-| `BroadcastNode` | `runBroadcast` | N ports |
-| `Merge` | `runMerge` | 1 port |
-| `ZipNode` | `runZip` | 1 port |
-| `WithLatestFromNode` | `runWithLatestFrom` | 1 port |
-| `Sink` | `runSink` | 0 ports (terminal) |
+| `"source"` | inline in source build closure | 1 |
+| `"map"` | `runMapSingle` / `runMapConcurrent` / `runMapConcurrentOrdered` | 1 |
+| `"flatmap"` | same variants as map | 1 |
+| `"filter"` | `runFilter` | 1 |
+| `"tap"` | part of Map fast path | 1 |
+| `"take"` | `runTake` | 1 |
+| `"takewhile"` | `runTakeWhile` | 1 |
+| `"batch"` | `runBatch` | 1 |
+| `"reduce"` | `runReduce` | 1 (emits once on close) |
+| `"throttle"` | `runThrottle` | 1 |
+| `"debounce"` | `runDebounce` | 1 |
+| `"partition"` | `runPartition` | 2 (match / rest) |
+| `"mapresult"` | `runMapResult` | 2 (ok / error) |
+| `"broadcast"` | `runBroadcast` | N |
+| `"merge"` | `runMerge` | 1 |
+| `"zip"` | `runZip` | 1 |
+| `"withlatestfrom"` | `runWithLatestFrom` | 1 |
+| `"sink"` / `"foreach"` | `runSink` | 0 (terminal) |
 
 ---
 
 ## Channel wiring
 
 ```
-internal/engine/compile.go: CreateChannels, CreateOutboxes
+internal/outbox.go: NewOutbox, NewBlockingOutbox
 ```
 
-At the start of `Run`, `CreateChannels` allocates one `chan any` per output
-port of every non-sink node. The result is a `map[ChannelKey]chan any`.
+Channels are **not** allocated in a centralised pass. Instead, each operator's
+`build` closure allocates its own typed output channel inline when called:
+
+```go
+// Inside Map's build closure:
+ch := make(chan O, cfg.buffer)
+rc.setChan(id, ch)   // memoised by stage ID for diamond-graph safety
+```
+
+The result is stored in `rc.chans map[int]any` keyed by stage ID. Downstream
+stages retrieve their input channel by calling `rc.getChan(upstreamID)` and
+type-asserting to the expected `chan T`.
 
 ```mermaid
 flowchart LR
-    N0["Node 0\nSource"] -->|"chan {0,0}"| N1["Node 1\nMap"]
-    N1 -->|"chan {1,0}"| N2["Node 2\nFilter"]
-    N2 -->|"chan {2,0}"| N3["Node 3\nSink"]
+    N0["stage 0\nSource"] -->|"chan T  (id=0)"| N1["stage 1\nMap"]
+    N1 -->|"chan U  (id=1)"| N2["stage 2\nFilter"]
+    N2 -->|"chan U  (id=2)"| N3["stage 3\nSink"]
 ```
 
-Multi-output nodes allocate one channel per port:
+Multi-output stages (`Partition`, `MapResult`, `Broadcast`) are implemented as
+two (or N) independent `Pipeline` values that share the same stage ID. The first
+`build` call allocates the channel and registers the stage function; subsequent
+calls hit the memoisation guard and return the existing channel:
 
 ```mermaid
 flowchart LR
-    P["Partition\n(node n)"] -->|"chan {n,0}\nmatch"| MA[branch A]
-    P -->|"chan {n,1}\nrest"| MB[branch B]
-
-    MR["MapResult\n(node n)"] -->|"chan {n,0}\nsuccess"| OK["ok branch"]
-    MR -->|"chan {n,1}\nerror"| FL["failed branch"]
-
-    BR["Broadcast\n(node n, k=3)"] -->|"chan {n,0}"| C0[consumer 0]
-    BR -->|"chan {n,1}"| C1[consumer 1]
-    BR -->|"chan {n,2}"| C2[consumer 2]
+    P["Partition\n(id=n)"] -->|"chan T true branch"| MA[match pipeline]
+    P -->|"chan T false branch"| MB[rest pipeline]
 ```
 
-`CreateOutboxes` then wraps each raw channel in an `Outbox` that enforces the
-overflow strategy configured on that node (see next section).
+Each build closure wraps its raw channel in an `Outbox` (via
+`internal.NewOutbox` or `internal.NewBlockingOutbox`) that enforces the overflow
+strategy configured on that stage (see next section).
 
 ---
 
 ## Outboxes and overflow
 
 ```
-internal/engine/outbox.go
+internal/outbox.go
 ```
 
 Every stage writes to its output through an `Outbox`, never to the raw channel
@@ -185,40 +215,47 @@ flowchart TD
 ## How Run ties it all together
 
 ```
-internal/engine/run.go: Run
+kitsune.go: Runner.Run
 ```
 
 ```mermaid
 flowchart TD
-    A[Run] --> B[Validate\nsingle-consumer + sink check]
-    B --> C[InitRefs\nmaterialise state keys]
-    C --> D[CreateChannels]
-    D --> E[CreateOutboxes]
-    E --> F[GraphHook.OnGraph\nif implemented]
-    F --> G[BufferHook.OnBuffers\nif implemented]
-    G --> H{DrainTimeout > 0?}
-    H -->|yes| I[runWithDrain]
-    H -->|no| J[errgroup per node]
-    I --> K[nodeRunner × N goroutines]
-    J --> K
+    A["Runner.Run"] --> B["newRunCtx()"]
+    B --> C["r.terminal(rc)\nrecursive build — allocates channels,\nregisters stageFuncs into rc"]
+    C --> D["rc.refs.init()\nmaterialise state keys"]
+    D --> E["GraphHook.OnGraph\nif implemented"]
+    E --> F["BufferHook.OnBuffers\nif implemented"]
+    F --> G{DrainTimeout > 0?}
+    G -->|yes| H["runWithDrain\n(kitsune.go)"]
+    G -->|no| I["internal.RunStages\nerrgroup per stage"]
+    H --> J["stageFunc × N goroutines"]
+    I --> J
 ```
 
-Each stage runs in its own goroutine inside an `errgroup`. When any goroutine
-returns a non-nil error the group's shared context (`egCtx`) is cancelled,
-causing every other goroutine to see `ctx.Done()` on its next check and exit.
+`r.terminal(rc)` starts the recursive build: the terminal stage calls `build`
+on its upstream pipeline, which calls `build` on its upstream, and so on back
+to the source. Each `build` closure allocates a typed channel and appends a
+`stageFunc` to `rc.stages`. When the recursion unwinds, every stage is
+registered and every channel is wired.
 
-**`nodeRunner`** is a closure factory that does three things before returning
-the `func() error` given to the errgroup:
+Each stage then runs in its own goroutine inside an `errgroup`. When any
+goroutine returns a non-nil error the group's shared context (`egCtx`) is
+cancelled, causing every other goroutine to see `ctx.Done()` on its next check
+and exit.
 
-1. Resolves the node's input channels from the channel map.
-2. Builds an `outCloser` that closes the node's output channel(s) when the stage exits —
-   this is how downstream stages learn the stream is exhausted (`ok == false`).
-3. Selects the right `runXxx` function and wraps it in `supervise`.
+Each `build` closure registers a stage goroutine that does two things before
+entering its processing loop:
+
+1. Defers closing its output channel(s) on exit — this is how downstream stages
+   learn the stream is exhausted (`range inCh` terminates, or `ok == false`).
+2. Wraps the processing function in `internal.Supervise` (see
+   `internal/process.go`) if supervision is configured.
 
 ```go
-nodeRunner returns func() error {
-    defer outCloser()            // closes output channel(s) on exit
-    return supervise(ctx, policy, hook, name, inner)
+// Conceptual shape of each build closure's registered stageFunc:
+func(ctx context.Context) error {
+    defer close(outCh)           // closes output channel(s) on exit
+    return internal.Supervise(ctx, policy, hook, name, inner)
 }
 ```
 
@@ -322,9 +359,8 @@ an error go to port 1, wrapped in an `ErrItem{Item, Err}` by the
 invokes the `ErrorHandler` — every error is always routed, never halted or
 retried.
 
-Both `Partition` and `MapResultNode` follow the same two-port pattern in the
-compiler (`CreateChannels`, `CreateOutboxes`) and are treated identically in
-the `BufferHook` buffer-query closure.
+Both `Partition` and `MapResult` follow the same shared-ID pattern in the build
+closures and are treated identically in the `BufferHook` buffer-query closure.
 
 **`runBroadcast`** sends every item to all N outboxes sequentially. Because the
 sends are sequential, a slow consumer on one branch will backpressure the entire
@@ -411,8 +447,8 @@ combined := kitsune.WithLatestFrom(reqBranch, cfgBranch)
 
 ## Time-based stages: Throttle and Debounce
 
-Both stages store their duration in `Node.ThrottleDuration` (nanoseconds,
-cast at run time to `time.Duration`).
+Both stages capture their duration directly in the build closure as a
+`time.Duration` local variable.
 
 **`runThrottle`** records the `lastEmit` timestamp. Each incoming item is
 compared against the elapsed time: if `now - lastEmit >= d`, the item is emitted
@@ -441,12 +477,12 @@ stale tick on the next `select`.
 
 ## Reduce and Scan
 
-**`runReduce`** accumulates into a single value using `Node.ReduceSeed` as the
-initial accumulator. It does *not* emit on every item; it only emits when the
+**`runReduce`** accumulates into a single value using the seed value captured in
+its build closure. It does *not* emit on every item; it only emits when the
 input channel closes:
 
 ```go
-acc := n.ReduceSeed
+acc := seed   // closed over from construction time
 for item := range inCh { acc = fn(acc, item) }
 outbox.Send(ctx, acc)  // emits once
 ```
@@ -463,7 +499,7 @@ engine support.
 
 ## Batching
 
-`runBatch` accumulates items in a `[]any` slice and flushes when either the
+`runBatch` accumulates items in a typed slice and flushes when either the
 size limit is reached or a timeout fires.
 
 ```mermaid
@@ -488,33 +524,33 @@ is emitted rather than silently discarded.
 
 ## Cache integration
 
-When a `Map` stage uses `CacheBy`, the construction-time code sets
-`Node.CacheWrapFn` — a factory that produces a cache-wrapped replacement for
-`Node.Fn`. The factory is not called at construction time; it is deferred to
-run time so it can receive runner-level defaults (`WithCache`).
+When a `Map` stage uses `CacheBy`, the construction-time code stores a
+`cacheWrapFn` — a factory that produces a cache-wrapped replacement for the
+stage function. The factory is not invoked at construction time; it is deferred
+to `build` time so it can receive runner-level defaults (`WithCache`) from `rc`.
 
-At run time, `nodeRunner` calls `resolveCacheWrap` before dispatching:
+Inside the `Map` `build` closure, the cache wrapper is resolved before the
+`stageFunc` is registered:
 
 ```go
-func resolveCacheWrap(n *Node, cfg RunConfig) *Node {
-    if n.CacheWrapFn == nil { return n }
-    wrapped := n.CacheWrapFn(cfg.DefaultCache, cfg.DefaultCacheTTL)
-    cp := *n           // shallow copy — do not mutate the shared graph
-    cp.Fn = wrapped
-    return &cp
+fn := userFn
+if cfg.cacheWrapFn != nil {
+    fn = cfg.cacheWrapFn(rc.cache, rc.cacheTTL)
 }
+// fn is now closed over by the stageFunc registered into rc
 ```
 
-The shallow copy is critical: the graph is shared across repeated `Run` calls,
-so mutating `n.Fn` in place would corrupt subsequent runs.
+Because `Pipeline[T]` build closures are called fresh on every `Runner.Run`, the
+resolved function is scoped to a single run — there is no shared mutable state
+that could be corrupted across repeated runs.
 
-The `Timeout` StageOption wraps `Fn` at *construction* time (before
-`CacheWrapFn` is built), ensuring both the direct call path and any cache-miss
-path get the per-item deadline:
+The `Timeout` StageOption wraps the user function at *construction* time (before
+the `cacheWrapFn` factory is built), ensuring both the direct call path and any
+cache-miss path get the per-item deadline:
 
 ```
-construction time:   fn → timeout-wrapped fn → CacheWrapFn factory (closes over it)
-run time:            resolveCacheWrap invokes factory → cache-wrapped fn
+construction time:   userFn → timeout-wrapped fn → cacheWrapFn factory (closes over it)
+build time (Run):    factory invoked → cache-wrapped fn
                      cache miss path calls the timeout-wrapped inner fn
 ```
 
@@ -522,17 +558,18 @@ run time:            resolveCacheWrap invokes factory → cache-wrapped fn
 
 ## State management
 
-`Graph` carries two maps for pipeline-level state:
+`runCtx` carries a `refRegistry` for pipeline-level state (`pipeline.go`):
 
-- **`KeyInits`**: `map[string]func(store any) any` — registered at construction
-  time by `NewKey`. Associates a key name with a factory that creates a `*Ref[T]`
-  given the store backend.
-- **`Refs`**: `map[string]any` — populated at run time by `InitRefs`. Each
-  factory is called once, producing the concrete `*Ref[T]` that stages share.
+- **`inits`**: `map[string]func(Store, Codec) any` — registered during the build
+  phase by `MapWith`/`FlatMapWith` build closures. Associates a key name with a
+  factory that creates a `*Ref[T]` given the store backend and codec.
+- **`vals`**: `map[string]any` — populated by `rc.refs.init(store, codec)` at
+  run time. Each factory is called once, producing the concrete `*Ref[T]` that
+  stages share.
 
-Stage functions that use `MapWith`/`FlatMapWith` close over `g.GetRef(name)` —
-they receive the materialised ref from `Refs`, not the factory. This means the
-same stage definition can be run against different store backends simply by
+Stage functions that use `MapWith`/`FlatMapWith` close over `rc.refs.get(name)`
+— they receive the materialised ref from `vals`, not the factory. This means the
+same pipeline definition can be run against different store backends simply by
 passing a different `WithStore(s)` run option.
 
 ---
@@ -540,10 +577,10 @@ passing a different `WithStore(s)` run option.
 ## Supervision
 
 ```
-internal/engine/supervise.go
+internal/process.go: Supervise
 ```
 
-`supervise` is a **zero-cost abstraction** when inactive
+`internal.Supervise` is a **zero-cost abstraction** when inactive
 (`MaxRestarts == 0 && OnPanic == PanicPropagate`): it calls the stage function
 directly and returns, with no overhead.
 
@@ -605,7 +642,7 @@ collection interval.
 ## Graceful drain
 
 ```
-internal/engine/run.go: runWithDrain
+kitsune.go: runWithDrain
 ```
 
 When `WithDrain(timeout)` is set, `Run` uses a two-phase shutdown:
@@ -644,28 +681,27 @@ normal pipeline completion would leave the monitor blocking on
 
 ---
 
-## Type erasure
+## Type safety
 
-All engine values are `any`. The public kitsune layer bridges in and out:
+The current engine is **fully typed end-to-end**. `Pipeline[T]` carries the
+item type as a Go type parameter; every channel is a concrete `chan T`; every
+stage function closes over typed values directly. There is no `any` in the hot
+path and no type assertions at item-processing time.
+
+The only place `any` appears is in `runCtx.chans map[int]any`, which stores
+channels type-erased for storage. Each build closure performs a single
+type-assertion when retrieving its input channel:
 
 ```go
-// At the operator call site, the user's typed fn is wrapped:
-wrapped := func(ctx context.Context, in any) (any, error) {
-    return userFn(ctx, in.(I))  // type-assert on the way in
-}
-
-// At a Collect terminal, the output is unwrapped:
-for item := range outCh {
-    results = append(results, item.(T))  // type-assert on the way out
-}
+inCh := rc.getChan(upstreamID).(chan I)
 ```
 
-This keeps the entire engine free of type parameters. The `Fn any` field on
-`Node` holds whichever of the concrete function signatures the dispatcher will
-cast it to at run time. No reflection is used; every cast is to a concrete
-function type known statically in the dispatcher.
+This assertion happens once per stage per `Run`, not per item. It is safe
+because the only code that sets a channel in `rc.chans` is the build closure for
+that specific stage — the type is always correct by construction.
 
-The cost of this design is that type errors (e.g., passing the wrong kind of
-node function) become panics at run time rather than compile errors. This is
-acceptable because the only code that constructs nodes is the kitsune package
-itself — user code never creates `engine.Node` directly.
+`rc.refs.vals map[string]any` similarly stores `*Ref[T]` values type-erased.
+Again, the retrieval is a one-time assertion scoped to the build phase.
+
+The practical effect is that type errors surface as compile errors at the API
+level (wrong `fn` signature passed to `Map`), not as panics at run time.

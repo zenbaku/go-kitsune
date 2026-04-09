@@ -6,20 +6,29 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ## Active / Near-term
 
-- [ ] **`doc/internals.md` refresh** — update architecture diagrams and file paths for the build-closure model; the current doc still references `internal/engine/`
-- [ ] **Benchmarks cleanup** — strip any v1/v2 labelling from `doc/benchmarks.md`; present current engine numbers as "Kitsune"
-- [ ] **Hooks-only tails** — migrate `kotel`, `kdatadog`, `kprometheus` to import `github.com/zenbaku/go-kitsune/hooks` directly instead of the root module, so they work without depending on the pipeline engine
-- [ ] **`bench/` revival** — update `archive/bench` to remove the v2 replace directive and benchmark against the current root module only
-
-## Longer-term ideas
-
-- [ ] **`ForEach` supervision** — supervision is wired into `mapSerial`; extend to `ForEach` slow path
-- [ ] **Per-item timeout in FlatMap** — `Timeout` option is implemented for `Map`; apply the same to `FlatMap`
-- [ ] **Distributed dedup** — document the `WithDedupSet` + Redis SETNX pattern more prominently; consider a `BloomDedupSet` reference implementation
+No active work items.
 
 ---
 
 ## Completed milestones
+
+### Test coverage & correctness
+
+- [x] **`Pool.Put` and `Pool.Warmup`** — `Pool.Put(*Pooled[T])` exports the previously internal `put` method, allowing callers to return a pooled object without going through `Pooled.Release`. `Pool.Warmup(n int)` pre-populates the pool by calling the factory `n` times and immediately returning the objects; reduces first-request latency for latency-sensitive start-up paths. No-op for `n ≤ 0`. Best-effort per `sync.Pool` semantics (GC may evict objects at any time).
+
+- [x] **`CircuitBreaker` `HalfOpenTimeout`** — new `HalfOpenTimeout(d time.Duration) CircuitBreakerOpt`; if the required number of successful probes has not been received within `d`, the circuit opens again (resetting the cooldown clock). Implemented in `circuitBreaker.allow()` by recording a `halfOpenDeadline` on each Closed→HalfOpen transition and checking it on every subsequent `allow()` call in the half-open state. Cleared when the circuit closes normally.
+
+- [x] **`RateLimit` accepts `StageOption`** — signature changed from `opts ...RateLimitOpt` to `rlOpts []RateLimitOpt, stageOpts ...StageOption`, matching the `CircuitBreaker` API pattern. `WithName` and `Buffer` are applied to the stage metadata. All existing call sites updated.
+
+- [x] **Test coverage parity with v1** — ported 51 missing test scenarios from the v1 archive across 10 test files: overflow (`DropNewest`, `DropOldest`, hook callbacks, broadcast, concurrent load), `WithDrain` (partial flush, hard stop, normal completion), `RunAsync`/pause-resume (7 scenarios), `WithPauseGate`, State TTL (4 scenarios), cache TTL/eviction, error handler combos (`ExponentialBackoff`, `RetryThenFallback`, `RestartAlways`), merge/broadcast edge cases, ordered concurrency edge cases, `Sort`/`SortBy`/`Unzip`, `Timeout` on `FlatMap`, CircuitBreaker (all gaps now closed), RateLimit (all gaps now closed). All skip stubs removed.
+
+- [x] **Gate/Pause wired into sources** — `WithPauseGate` set `cfg.gate` but the gate was never propagated to `runCtx` or checked by any source stage, making `Pause()` / `Resume()` a no-op. Fixed by adding `gate *internal.Gate` to `runCtx`, threading it through `Runner.Run`, and checking it in `sourceStage`, `Generate` (both paths), and `FromSlice`.
+
+- [x] **`WithDrain` two-phase shutdown** — `runWithDrain` cancelled `drainCtx` to stop sources, but this simultaneously cancelled the processing context that downstream stages (e.g. `Batch`) needed to flush buffered items. Fixed by calling `rc.signalDone()` in Phase 1 (sources watch `rc.done` via a goroutine in `Generate` that cancels `stageCtx`), so sources stop cleanly while downstream stages retain a live drain context. Context errors from the hard-stop timeout are suppressed on return.
+
+- [x] **`RateLimit` swallowed preemptive context deadline errors** — `rate.Limiter.Wait` returns a custom `"rate: Wait(n=1) would exceed context deadline"` error before the context deadline actually fires. The stage was doing `return ctx.Err()` (which is nil at that point) instead of `return err`. Fixed.
+
+---
 
 ### Foundation & typed engine
 
@@ -193,6 +202,8 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **`WithDedupSet` wired into operators** — `DistinctBy` and `DedupeBy` check `cfg.dedupSet`; when set, uses the external backend with string keys; for `DedupeBy`, presence of a set upgrades consecutive dedup to global dedup.
 
+- [x] **`BloomDedupSet`** — a probabilistic Bloom filter backend for `DedupSet`; bounded memory with approximate correctness, useful when exact dedup is not required and the key space is huge. Implemented in `internal/bloom.go` using `hash/maphash` double-hashing (Kirsch-Mitzenmacker) with a `[]uint64` bit array. Constructor: `BloomDedupSet(expectedItems int, falsePositiveRate float64)`; panics on invalid input. Thread-safe via `sync.RWMutex`. Zero false-negative rate guaranteed; false-positive rate bounded by the configured probability.
+
 ---
 
 ### Testing infrastructure
@@ -242,7 +253,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ### API: Go 1.23 iterator protocol
 
-- [x] **`Pipeline[T]` as `iter.Seq[T]`** — `.Iter(ctx, opts…)` terminal exposes a pipeline as an `iter.Seq[T]` for range-over-func. Returns `(iter.Seq[T], func() error)`. Breaking out of the loop early cancels the pipeline and suppresses the resulting `context.Canceled`.
+- [x] **`Pipeline[T]` as `iter.Seq[T]`** — `Iter(ctx, p, opts…)` exposes a pipeline as an `iter.Seq[T]` for range-over-func. Returns `(iter.Seq[T], func() error)`. Breaking out of the loop early cancels the pipeline and suppresses the resulting `context.Canceled`.
 
 ---
 

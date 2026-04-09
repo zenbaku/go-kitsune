@@ -1,7 +1,7 @@
 // Package kdatadog provides a Datadog DogStatsD metrics hook for Kitsune
 // pipelines.
 //
-// DatadogHook implements kitsune.Hook plus the optional OverflowHook and
+// DatadogHook implements hooks.Hook plus the optional OverflowHook and
 // SupervisionHook interfaces. Pass it to kitsune.WithHook to emit per-stage
 // DogStatsD metrics via an existing [statsd.Client].
 //
@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/v5/statsd"
-	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/hooks"
 )
 
 // DatadogHook records Kitsune pipeline events as Datadog DogStatsD metrics.
@@ -35,9 +35,9 @@ type DatadogHook struct {
 
 // Verify interface compliance at compile time.
 var (
-	_ kitsune.Hook            = (*DatadogHook)(nil)
-	_ kitsune.OverflowHook    = (*DatadogHook)(nil)
-	_ kitsune.SupervisionHook = (*DatadogHook)(nil)
+	_ hooks.Hook            = (*DatadogHook)(nil)
+	_ hooks.OverflowHook    = (*DatadogHook)(nil)
+	_ hooks.SupervisionHook = (*DatadogHook)(nil)
 )
 
 // New creates a DatadogHook that sends metrics via client. The client is not
@@ -46,10 +46,10 @@ func New(client *statsd.Client) *DatadogHook {
 	return &DatadogHook{client: client}
 }
 
-// OnStageStart implements kitsune.Hook.
+// OnStageStart implements hooks.Hook.
 func (h *DatadogHook) OnStageStart(_ context.Context, _ string) {}
 
-// OnItem implements kitsune.Hook.
+// OnItem implements hooks.Hook.
 func (h *DatadogHook) OnItem(_ context.Context, stage string, dur time.Duration, err error) {
 	status := "ok"
 	if err != nil {
@@ -66,15 +66,15 @@ func (h *DatadogHook) OnItem(_ context.Context, stage string, dur time.Duration,
 	}
 }
 
-// OnStageDone implements kitsune.Hook.
+// OnStageDone implements hooks.Hook.
 func (h *DatadogHook) OnStageDone(_ context.Context, _ string, _ int64, _ int64) {}
 
-// OnDrop implements kitsune.OverflowHook.
+// OnDrop implements hooks.OverflowHook.
 func (h *DatadogHook) OnDrop(_ context.Context, stage string, _ any) {
 	_ = h.client.Count("stage.drops_total", 1, []string{"stage:" + stage}, 1)
 }
 
-// OnStageRestart implements kitsune.SupervisionHook.
+// OnStageRestart implements hooks.SupervisionHook.
 func (h *DatadogHook) OnStageRestart(_ context.Context, stage string, _ int, _ error) {
 	_ = h.client.Count("stage.restarts_total", 1, []string{"stage:" + stage}, 1)
 }

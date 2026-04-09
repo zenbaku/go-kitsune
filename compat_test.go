@@ -334,6 +334,56 @@ func TestOr_ComposesWithThen(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Or (free function)
+// ---------------------------------------------------------------------------
+
+func TestOr_PrimarySucceeds(t *testing.T) {
+	ctx := context.Background()
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "primary", nil },
+		func(_ context.Context, n int) (string, error) { return "fallback", nil },
+	)
+	results, err := stage.Apply(kitsune.FromSlice([]int{1, 2, 3})).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r != "primary" {
+			t.Errorf("expected primary result, got %q", r)
+		}
+	}
+}
+
+func TestOr_FallbackOnPrimaryError(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("boom")
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "", boom },
+		func(_ context.Context, n int) (string, error) { return "fallback", nil },
+	)
+	results, err := stage.Apply(kitsune.FromSlice([]int{1})).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0] != "fallback" {
+		t.Errorf("got %v, want [fallback]", results)
+	}
+}
+
+func TestOr_BothFail(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("boom")
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "", boom },
+		func(_ context.Context, n int) (string, error) { return "", boom },
+	)
+	_, err := stage.Apply(kitsune.FromSlice([]int{1})).Collect(ctx)
+	if !errors.Is(err, boom) {
+		t.Errorf("expected boom, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // WindowByTime
 // ---------------------------------------------------------------------------
 
@@ -579,7 +629,10 @@ func TestCountBy_MultipleInstances(t *testing.T) {
 
 func TestSumBy_EmptyStream(t *testing.T) {
 	ctx := context.Background()
-	type item struct{ k string; v int }
+	type item struct {
+		k string
+		v int
+	}
 	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
 		kitsune.FromSlice([]item{}),
 		func(i item) string { return i.k },
@@ -594,7 +647,10 @@ func TestSumBy_EmptyStream(t *testing.T) {
 }
 
 func TestSumBy_SnapshotIsolation(t *testing.T) {
-	type item struct{ k string; v int }
+	type item struct {
+		k string
+		v int
+	}
 	ctx := context.Background()
 	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
 		kitsune.FromSlice([]item{{"a", 10}, {"a", 20}}),

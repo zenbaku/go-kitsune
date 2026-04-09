@@ -180,3 +180,65 @@ func TestDedupeByWithExternalDedupSetGlobalDedup(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MemoryCache TTL / eviction
+// ---------------------------------------------------------------------------
+
+func TestMemoryCacheTTL(t *testing.T) {
+	cache := kitsune.MemoryCache(10)
+	ctx := context.Background()
+
+	// 1 nanosecond TTL — effectively expired immediately.
+	_ = cache.Set(ctx, "k", []byte("v"), 1)
+	_, ok, _ := cache.Get(ctx, "k")
+	if ok {
+		t.Fatal("expected cache miss for expired entry")
+	}
+}
+
+func TestMemoryCacheEviction(t *testing.T) {
+	cache := kitsune.MemoryCache(2)
+	ctx := context.Background()
+
+	_ = cache.Set(ctx, "a", []byte("1"), 0)
+	_ = cache.Set(ctx, "b", []byte("2"), 0)
+	_ = cache.Set(ctx, "c", []byte("3"), 0) // evicts "a"
+
+	_, ok, _ := cache.Get(ctx, "a")
+	if ok {
+		t.Fatal("expected 'a' to be evicted")
+	}
+	data, ok, _ := cache.Get(ctx, "b")
+	if !ok || string(data) != "2" {
+		t.Fatalf("expected 'b'='2', got ok=%v data=%q", ok, data)
+	}
+}
+
+func TestMapWithCache(t *testing.T) {
+	ctx := context.Background()
+	var calls atomic.Int64
+	input := kitsune.FromSlice([]string{"a", "b", "a", "c", "a"})
+
+	cached := kitsune.Map(input, func(_ context.Context, s string) (string, error) {
+		calls.Add(1)
+		return s + "!", nil
+	}, kitsune.CacheBy(func(s string) string { return s }, kitsune.CacheBackend(kitsune.MemoryCache(100))))
+
+	results, err := cached.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
+	}
+	// "a" appears 3 times but fn should only be called once for it.
+	if calls.Load() != 3 { // a, b, c
+		t.Fatalf("expected 3 fn calls (cached), got %d", calls.Load())
+	}
+	for _, r := range results {
+		if r != "a!" && r != "b!" && r != "c!" {
+			t.Errorf("unexpected result: %q", r)
+		}
+	}
+}

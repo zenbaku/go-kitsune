@@ -306,6 +306,9 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 // session buffer is emitted when the gap timer fires.
 // An empty session is never emitted.
 func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption) *Pipeline[[]T] {
+	if gap <= 0 {
+		panic("kitsune: SessionWindow gap must be > 0")
+	}
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
