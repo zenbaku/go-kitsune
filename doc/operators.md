@@ -6,28 +6,28 @@ This document covers every operator in go-kitsune. Each entry shows the exact Go
 
 ---
 
-## Contents
+## :material-table-of-contents: Contents
 
-1. [Sources](#sources)
-2. [1:1 Transforms](#11-transforms)
-3. [1:N Expansion](#1n-expansion)
-4. [Filtering & Selection](#filtering--selection)
-5. [Stateful Transforms](#stateful-transforms)
-6. [Batching & Windowing](#batching--windowing)
-7. [Fan-Out & Fan-In](#fan-out--fan-in)
-8. [Enrichment](#enrichment)
-9. [Aggregation & Collection](#aggregation--collection)
-10. [Time-Based Operators](#time-based-operators)
-11. [Resilience](#resilience)
-12. [Utility & Metadata](#utility--metadata)
-13. [Terminal Operators](#terminal-operators)
-14. [Stage Composition](#stage-composition)
-15. [Error Handling Options](#error-handling-options)
-16. [Stage Options Reference](#stage-options-reference)
+1. [:material-database-import-outline: Sources](#sources)
+2. [:material-swap-horizontal: 1:1 Transforms](#11-transforms)
+3. [:material-call-split: 1:N Expansion](#1n-expansion)
+4. [:material-filter-outline: Filtering & Selection](#filtering--selection)
+5. [:material-memory: Stateful Transforms](#stateful-transforms)
+6. [:material-layers-outline: Batching & Windowing](#batching--windowing)
+7. [:material-source-branch: Fan-Out & Fan-In](#fan-out--fan-in)
+8. [:material-database-plus-outline: Enrichment](#enrichment)
+9. [:material-sigma: Aggregation & Collection](#aggregation--collection)
+10. [:material-clock-outline: Time-Based Operators](#time-based-operators)
+11. [:material-shield-check-outline: Resilience](#resilience)
+12. [:material-tools: Utility & Metadata](#utility--metadata)
+13. [:material-flag-checkered: Terminal Operators](#terminal-operators)
+14. [:material-puzzle-outline: Stage Composition](#stage-composition)
+15. [:material-alert-circle-outline: Error Handling Options](#error-handling-options)
+16. [:material-tune: Stage Options Reference](#stage-options-reference)
 
 ---
 
-## Sources
+## :material-database-import-outline: Sources
 
 Sources are the entry point of every pipeline. They have no input pipeline; they produce items from an external data source, a collection, or a generator function.
 
@@ -37,11 +37,11 @@ Sources are the entry point of every pipeline. They have no input pipeline; they
 func FromSlice[T any](items []T) *Pipeline[T]
 ```
 
-Creates a pipeline that emits each element of `items` in order, then closes. The slice is captured by reference at construction time — do not modify it after calling `FromSlice`.
+Creates a pipeline that emits each element of `items` in order, then closes. The slice is captured by reference at construction time; do not modify it after calling `FromSlice`.
 
 **When to use:** Tests, small fixed datasets, or any time you already have all the data in memory.
 
-**When not to use:** Large datasets where you want to stream lazily — use `Generate` or `FromIter` instead.
+**When not to use:** Large datasets where you want to stream lazily; use `Generate` or `FromIter` instead.
 
 **Options:** none (sources take no `StageOption`).
 
@@ -63,7 +63,7 @@ Wraps an existing channel as a pipeline source. The pipeline completes when `src
 
 **When to use:** Bridging existing channel-based code (Kafka consumer channels, `os/signal` channels, etc.) into a kitsune pipeline.
 
-**When not to use:** When you control the producer — `NewChannel` or `Generate` give you better lifecycle management.
+**When not to use:** When you control the producer; `NewChannel` or `Generate` give you better lifecycle management.
 
 **Options:** none.
 
@@ -83,7 +83,7 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 
 Creates a push-based source from a generator function. Call `yield(item)` for each item to emit; `yield` returns `false` when the pipeline is shutting down. Return `nil` on clean completion or an error to propagate it.
 
-`Generate` is the lowest-level source primitive — all other sources are implemented with it. The context passed to `fn` is cancelled when the pipeline shuts down, so any blocking I/O inside `fn` (long-poll RPCs, database cursors) is interrupted cleanly.
+`Generate` is the lowest-level source primitive; all other sources are implemented with it. The context passed to `fn` is cancelled when the pipeline shuts down, so any blocking I/O inside `fn` (long-poll RPCs, database cursors) is interrupted cleanly.
 
 **When to use:** Paginated APIs, database cursors, WebSocket feeds, or any external source you can drive with a loop.
 
@@ -192,7 +192,7 @@ func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64]
 
 Emits a monotonically increasing `int64` (0, 1, 2, …) at regular intervals. The first value fires after `d`. Useful when you need a sequence number alongside the tick.
 
-**When to use:** When you need both a timer signal and an incrementing index — for example, labelling periodic snapshots.
+**When to use:** When you need both a timer signal and an incrementing index, for example labelling periodic snapshots.
 
 **Options:** `WithClock`, `WithName`.
 
@@ -302,9 +302,9 @@ kitsune.Cycle([]string{"a", "b", "c"}).Take(7)
 func Concat[T any](factories ...func() *Pipeline[T]) *Pipeline[T]
 ```
 
-Runs each pipeline factory in order: all items from factory[0] are emitted before factory[1] starts. Factories are called lazily — each one is invoked only after the previous pipeline has fully completed. Accepts factories (not `*Pipeline` values directly) so each run creates a fresh pipeline graph.
+Runs each pipeline factory in order: all items from factory[0] are emitted before factory[1] starts. Factories are called lazily; each one is invoked only after the previous pipeline has fully completed. Accepts factories (not `*Pipeline` values directly) so each run creates a fresh pipeline graph.
 
-**When to use:** Sequential sources that must not overlap — first emit a header, then body rows, then a footer.
+**When to use:** Sequential sources that must not overlap, such as first emitting a header, then body rows, then a footer.
 
 **Options:** none.
 
@@ -326,7 +326,7 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T]
 
 Subscribes to all factories concurrently and forwards items exclusively from whichever factory emits first, immediately cancelling all others. If no factory emits before the context is cancelled, the pipeline produces no items.
 
-**When to use:** Hedged requests — try a primary and a replica simultaneously, use whichever responds first.
+**When to use:** Hedged requests: try a primary and a replica simultaneously, use whichever responds first.
 
 **Options:** none.
 
@@ -345,7 +345,7 @@ result := kitsune.Amb(
 func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T]
 ```
 
-Runs `p` normally. If `p` returns a non-nil, non-context error, `fn` is called with the error and the returned fallback pipeline is subscribed — items already emitted by `p` are kept and the fallback's items follow. If `p` completes without error, the fallback is never started.
+Runs `p` normally. If `p` returns a non-nil, non-context error, `fn` is called with the error and the returned fallback pipeline is subscribed; items already emitted by `p` are kept and the fallback's items follow. If `p` completes without error, the fallback is never started.
 
 **When to use:** Streaming fallback to a secondary source when the primary fails.
 
@@ -370,7 +370,7 @@ func Using[T, R any](
 ) *Pipeline[T]
 ```
 
-Acquires a resource, builds a pipeline from it, and guarantees `release` is called exactly once when the pipeline exits — regardless of success, error, or cancellation. If `acquire` returns an error, no items are emitted and `release` is not called.
+Acquires a resource, builds a pipeline from it, and guarantees `release` is called exactly once when the pipeline exits, regardless of success, error, or cancellation. If `acquire` returns an error, no items are emitted and `release` is not called.
 
 **When to use:** Database connections, file handles, or any resource that must be explicitly released when the pipeline finishes.
 
@@ -401,7 +401,7 @@ p := kitsune.Using(
 
 ---
 
-## 1:1 Transforms
+## :material-swap-horizontal: 1:1 Transforms
 
 Each item in produces exactly one item out, potentially of a different type.
 
@@ -411,13 +411,13 @@ Each item in produces exactly one item out, potentially of a different type.
 func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) *Pipeline[O]
 ```
 
-Applies `fn` to each item, potentially changing the element type from `I` to `O`. The context passed to `fn` is cancelled if the pipeline shuts down — always use it for any I/O calls inside `fn`.
+Applies `fn` to each item, potentially changing the element type from `I` to `O`. The context passed to `fn` is cancelled if the pipeline shuts down; always use it for any I/O calls inside `fn`.
 
-With `Concurrency(n)` > 1, `fn` is called from `n` goroutines in parallel. Results arrive in completion order unless you add `Ordered()`. The engine has a serial fast path that activates when concurrency is 1, there is no error handler override, and no hook — this path avoids all overhead per item.
+With `Concurrency(n)` > 1, `fn` is called from `n` goroutines in parallel. Results arrive in completion order unless you add `Ordered()`. The engine has a serial fast path that activates when concurrency is 1, there is no error handler override, and no hook; this path avoids all overhead per item.
 
-**When to use:** Any 1:1 transformation — JSON parsing, struct conversion, external API calls.
+**When to use:** Any 1:1 transformation: JSON parsing, struct conversion, external API calls.
 
-**When not to use:** When you need to emit zero or multiple outputs per item — use `Filter` or `FlatMap`.
+**When not to use:** When you need to emit zero or multiple outputs per item; use `Filter` or `FlatMap`.
 
 **Options:** `Concurrency`, `Ordered`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`, `CacheBy`.
 
@@ -441,7 +441,7 @@ func MapRecover[I, O any](
 ) *Pipeline[O]
 ```
 
-Applies `fn` to each item. If `fn` returns an error or panics, `recover` is called with the original item and the error to produce a fallback output value. The output pipeline always emits exactly one item per input — no items are dropped and the pipeline never halts on a per-item failure.
+Applies `fn` to each item. If `fn` returns an error or panics, `recover` is called with the original item and the error to produce a fallback output value. The output pipeline always emits exactly one item per input; no items are dropped and the pipeline never halts on a per-item failure.
 
 **When to use:** When you want a guaranteed-1:1 transform that substitutes a sentinel or default on failure, rather than propagating the error or dropping the item.
 
@@ -481,9 +481,9 @@ type ErrItem[I any] struct {
 }
 ```
 
-Unlike `DeadLetter`, `MapResult` does not retry — every failure routes to the error pipeline immediately. Unlike `OnError(Skip())`, failed items are not silently discarded; they are available for inspection, logging, or dead-letter storage.
+Unlike `DeadLetter`, `MapResult` does not retry; every failure routes to the error pipeline immediately. Unlike `OnError(Skip())`, failed items are not silently discarded; they are available for inspection, logging, or dead-letter storage.
 
-**When to use:** When you want to process failures separately without halting the pipeline — audit trails, error reporting pipelines, reprocessing queues.
+**When to use:** When you want to process failures separately without halting the pipeline: audit trails, error reporting pipelines, reprocessing queues.
 
 **Options:** `Buffer`, `Timeout`, `WithName`.
 
@@ -668,7 +668,7 @@ doubled := kitsune.Map(p, kitsune.LiftPure(func(n int) int { return n * 2 }))
 
 ---
 
-## 1:N Expansion
+## :material-call-split: 1:N Expansion
 
 These operators allow each input item to produce zero or more output items.
 
@@ -717,7 +717,7 @@ func ConcatMap[I, O any](
 ) *Pipeline[O]
 ```
 
-Like `FlatMap` but always processes items sequentially — the next item starts only after the current item's inner pipeline has fully emitted. Output order is fully preserved. This is equivalent to `FlatMap` with `Concurrency(1)`, but the intent is made explicit.
+Like `FlatMap` but always processes items sequentially; the next item starts only after the current item's inner pipeline has fully emitted. Output order is fully preserved. This is equivalent to `FlatMap` with `Concurrency(1)`, but the intent is made explicit.
 
 **When to use:** When you need strictly ordered output or when sub-streams have side effects that must not overlap.
 
@@ -754,9 +754,9 @@ func SwitchMap[I, O any](
 ) *Pipeline[O]
 ```
 
-Transforms each input into a sub-stream. When a new input arrives, the currently running sub-stream is cancelled immediately and the new one begins. Only the most-recently-started sub-stream's outputs reach downstream — older sub-streams are abandoned even if they have not finished emitting.
+Transforms each input into a sub-stream. When a new input arrives, the currently running sub-stream is cancelled immediately and the new one begins. Only the most-recently-started sub-stream's outputs reach downstream; older sub-streams are abandoned even if they have not finished emitting.
 
-**When to use:** Typeahead search (cancel the previous request when the user types again), "latest wins" streaming — only the most recent input matters.
+**When to use:** Typeahead search (cancel the previous request when the user types again), "latest wins" streaming; only the most recent input matters.
 
 **When not to use:** When you need all outputs from all inputs, or when sub-streams have committed side effects that cannot be safely cancelled mid-flight.
 
@@ -791,9 +791,9 @@ func ExhaustMap[I, O any](
 ) *Pipeline[O]
 ```
 
-Transforms each input into a sub-stream, but while a sub-stream is in progress, new input items are silently dropped. Only when the current sub-stream finishes is the next item accepted. The opposite of `SwitchMap` — "first wins" rather than "latest wins".
+Transforms each input into a sub-stream, but while a sub-stream is in progress, new input items are silently dropped. Only when the current sub-stream finishes is the next item accepted. The opposite of `SwitchMap`, using "first wins" rather than "latest wins".
 
-**When to use:** Rate-limited refresh operations where you want to ignore duplicate triggers while one is already running — e.g., a cache refresh that should not run concurrently with itself.
+**When to use:** Rate-limited refresh operations where you want to ignore duplicate triggers while one is already running, e.g., a cache refresh that should not run concurrently with itself.
 
 **Options:** `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`.
 
@@ -823,7 +823,7 @@ func ExpandMap[T any](
 
 BFS graph expansion. For each item, `fn` returns a child pipeline (or `nil` for leaf items). Items are emitted in BFS order. Use `VisitedBy` to detect and skip cycles.
 
-**When to use:** Tree or DAG traversal where each node can produce more nodes of the same type — directory trees, dependency graphs, org charts.
+**When to use:** Tree or DAG traversal where each node can produce more nodes of the same type: directory trees, dependency graphs, org charts.
 
 **Options:** `Buffer`, `WithName`, `VisitedBy` (for cycle detection), `WithDedupSet`.
 
@@ -891,7 +891,7 @@ items := kitsune.Unbatch(kitsune.Map(pages, fetchPage))
 
 ---
 
-## Filtering & Selection
+## :material-filter-outline: Filtering & Selection
 
 ### Filter
 
@@ -978,7 +978,7 @@ data := kitsune.Drop(csvLines, 1)
 func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T]
 ```
 
-Emits items as long as `pred` returns `true`. As soon as `pred` returns `false`, the pipeline stops — the item that failed the predicate is not emitted. Unlike `Filter`, which drops individual items, `TakeWhile` terminates the pipeline.
+Emits items as long as `pred` returns `true`. As soon as `pred` returns `false`, the pipeline stops; the item that failed the predicate is not emitted. Unlike `Filter`, which drops individual items, `TakeWhile` terminates the pipeline.
 
 **Options:** none.
 
@@ -1046,7 +1046,7 @@ filtered := kitsune.DropEvery(events, 5)
 func Distinct[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T]
 ```
 
-Emits only items that have not been seen before in the entire stream, using `==` equality. Keeps an in-memory set of all seen values — memory usage grows with the number of unique items.
+Emits only items that have not been seen before in the entire stream, using `==` equality. Keeps an in-memory set of all seen values; memory usage grows with the number of unique items.
 
 **Options:** `WithDedupSet` (to use a Redis or Bloom filter backend), `Buffer`, `WithName`.
 
@@ -1082,7 +1082,7 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 
 Drops consecutive duplicate items (adjacent-only deduplication). Unlike `Distinct`, non-adjacent duplicates are not suppressed. `Dedupe` uses `==` equality; `DedupeBy` uses a key function.
 
-If a `WithDedupSet` backend is provided, deduplication becomes global (not just consecutive) — any item whose key was seen anywhere in the stream is dropped.
+If a `WithDedupSet` backend is provided, deduplication becomes global (not just consecutive); any item whose key was seen anywhere in the stream is dropped.
 
 The method form `p.Dedupe(keyFn)` uses a `MemoryDedupSet` by default for global deduplication.
 
@@ -1111,9 +1111,9 @@ third, ok, err := kitsune.ElementAt(ctx, p, 2)
 
 ---
 
-## Stateful Transforms
+## :material-memory: Stateful Transforms
 
-These operators inject a `*Ref[S]` — a concurrent-safe state handle — into the stage function, enabling accumulators, counters, and running state across items.
+These operators inject a `*Ref[S]`, a concurrent-safe state handle, into the stage function, enabling accumulators, counters, and running state across items.
 
 ### Key / NewKey / Ref
 
@@ -1129,11 +1129,11 @@ var callCountKey = kitsune.NewKey[int]("call_count", 0)
 
 A `Ref[T]` injected by `MapWith` provides:
 
-- `Get(ctx)` — read current value
-- `Set(ctx, value)` — overwrite
-- `Update(ctx, fn)` — atomic read-modify-write
-- `UpdateAndGet(ctx, fn)` — atomic read-modify-write, returns new value
-- `GetOrSet(ctx, fn)` — return existing or initialise
+- `Get(ctx)`: read current value
+- `Set(ctx, value)`: overwrite
+- `Update(ctx, fn)`: atomic read-modify-write
+- `UpdateAndGet(ctx, fn)`: atomic read-modify-write, returns new value
+- `GetOrSet(ctx, fn)`: return existing or initialise
 
 ---
 
@@ -1148,7 +1148,7 @@ func MapWith[I, O, S any](
 ) *Pipeline[O]
 ```
 
-Like `Map` but injects a `*Ref[S]` carrying persistent state identified by `key`. At `Concurrency(1)` (the default), a single `Ref` is shared across all items in sequence — perfect for running totals, accumulators, or event counters. With `Concurrency(n)` > 1, each worker goroutine gets its own independent `Ref` (worker-local state).
+Like `Map` but injects a `*Ref[S]` carrying persistent state identified by `key`. At `Concurrency(1)` (the default), a single `Ref` is shared across all items in sequence; this is perfect for running totals, accumulators, or event counters. With `Concurrency(n)` > 1, each worker goroutine gets its own independent `Ref` (worker-local state).
 
 State survives across items within a single `runner.Run`. Use `WithStore` at run time to persist state to Redis, DynamoDB, etc.
 
@@ -1222,7 +1222,7 @@ func MapWithKey[I, O, S any](
 
 Like `MapWith` but maintains one independent `Ref[S]` per entity key (derived from each item via `keyFn`). Items with the same key share state; items with different keys are isolated. This enables per-user, per-session, or per-device aggregation in a single stage.
 
-**When to use:** Per-entity state in a multiplexed stream — event counts per user, session tracking, per-device rate limiting.
+**When to use:** Per-entity state in a multiplexed stream: event counts per user, session tracking, per-device rate limiting.
 
 **Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`.
 
@@ -1262,7 +1262,7 @@ Like `MapWithKey` but allows emitting zero or more outputs per item while mainta
 
 ---
 
-## Batching & Windowing
+## :material-layers-outline: Batching & Windowing
 
 ### Batch
 
@@ -1272,11 +1272,11 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T]
 
 Collects items into `[]T` slices of up to `size` elements. When the source closes, any remaining items are flushed as a partial batch. An empty batch is never emitted.
 
-With `BatchTimeout(d)`, a partial batch is also flushed when the timeout elapses — useful for low-throughput streams where you do not want to wait for a full batch.
+With `BatchTimeout(d)`, a partial batch is also flushed when the timeout elapses; this is useful for low-throughput streams where you do not want to wait for a full batch.
 
 **When to use:** Bulk database inserts, batched API calls, reducing per-item overhead for expensive operations.
 
-**When not to use:** When you need overlapping windows — use `SlidingWindow` or `SessionWindow`.
+**When not to use:** When you need overlapping windows; use `SlidingWindow` or `SessionWindow`.
 
 **Options:** `BatchTimeout`, `WithClock`, `Buffer`, `WithName`.
 
@@ -1377,7 +1377,7 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 
 Groups consecutive items that share the same key (returned by `keyFn`) into slices. A new chunk begins whenever the key changes. The last chunk is emitted when the source completes.
 
-**When to use:** Run-length grouping — group consecutive log lines by severity, transactions by account.
+**When to use:** Run-length grouping: group consecutive log lines by severity, transactions by account.
 
 **Options:** `Buffer`, `WithName`.
 
@@ -1429,7 +1429,7 @@ grouped := kitsune.GroupByStream(events, func(e Event) string { return e.Type })
 
 ---
 
-## Fan-Out & Fan-In
+## :material-source-branch: Fan-Out & Fan-In
 
 ### Merge
 
@@ -1439,7 +1439,7 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T]
 
 Combines multiple pipelines of the same type into one. Items are emitted as they arrive from any source (race order). The merged pipeline completes when all inputs have completed.
 
-**When to use:** Combining results from multiple concurrent sources — multiple Kafka partitions, multiple API endpoints running in parallel.
+**When to use:** Combining results from multiple concurrent sources: multiple Kafka partitions, multiple API endpoints running in parallel.
 
 **Options:** none (buffer is fixed internally).
 
@@ -1455,7 +1455,7 @@ merged := kitsune.Merge(partitionA, partitionB, partitionC)
 func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*Pipeline[T], *Pipeline[T])
 ```
 
-Splits a pipeline into two: items for which `pred` returns `true` go to the first pipeline; items for which `pred` returns `false` go to the second. Both pipelines must be consumed — use `MergeRunners` to run them together.
+Splits a pipeline into two: items for which `pred` returns `true` go to the first pipeline; items for which `pred` returns `false` go to the second. Both pipelines must be consumed; use `MergeRunners` to run them together.
 
 **Options:** `Buffer`, `WithName`.
 
@@ -1479,7 +1479,7 @@ func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T
 
 Fans out each item to `n` identical output pipelines. Every item is delivered to every branch (synchronised fan-out). A slow branch backpressures upstream and all other branches. All `n` pipelines must be consumed. Panics if `n < 2`.
 
-**When to use:** When you know the exact number of consumers at construction time and need each one to see every item — metrics + storage + audit.
+**When to use:** When you know the exact number of consumers at construction time and need each one to see every item: metrics + storage + audit.
 
 **Options:** `Buffer`, `WithName`.
 
@@ -1500,11 +1500,11 @@ runner.Run(ctx)
 func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pipeline[T]
 ```
 
-Returns a subscription factory for dynamic multicast. Call the returned function once per desired branch; each branch receives every item from `p`. Unlike `Broadcast`, the number of consumers does not need to be known upfront — branches are registered dynamically before `Run` is called.
+Returns a subscription factory for dynamic multicast. Call the returned function once per desired branch; each branch receives every item from `p`. Unlike `Broadcast`, the number of consumers does not need to be known upfront; branches are registered dynamically before `Run` is called.
 
 Options passed to `Share` are defaults for all branches; options passed to individual subscribe calls override them per-branch.
 
-**When to use:** When consumers are built in a loop, from config, or from a plugin registry — when `Broadcast`'s fixed `n` is inconvenient.
+**When to use:** When consumers are built in a loop, from config, or from a plugin registry, when `Broadcast`'s fixed `n` is inconvenient.
 
 **Options on the factory:** `Buffer`, `WithName` (defaults for all branches). Per-subscribe calls can also pass `Buffer`, `WithName`.
 
@@ -1581,7 +1581,7 @@ func ZipWith[A, B, O any](
 
 `Zip` pairs items from `a` and `b` positionally into `Pair[A, B]` values. `ZipWith` pairs them and transforms the pair using `fn`. The pipeline completes when either input completes; the other's remaining items are discarded.
 
-**When to use:** Correlating two aligned streams positionally — test inputs with expected outputs, requests with responses.
+**When to use:** Correlating two aligned streams positionally: test inputs with expected outputs, requests with responses.
 
 **Options (ZipWith):** `Buffer`, `WithName`.
 
@@ -1623,9 +1623,9 @@ func WithLatestFromWith[A, B, O any](
 
 Combines each item from `main` with the most-recently-seen item from `other`. Items from `main` are only emitted after `other` has emitted at least one item. Items from `other` that arrive between `main` items update the "latest" snapshot but are not independently emitted.
 
-This models a "sample the latest state of other on each main event" pattern — `main` drives the output rate; `other` provides current state.
+This models a "sample the latest state of other on each main event" pattern: `main` drives the output rate; `other` provides current state.
 
-**When to use:** Combining a high-frequency event stream with a low-frequency configuration or rate stream — e.g., apply the latest exchange rate to each transaction.
+**When to use:** Combining a high-frequency event stream with a low-frequency configuration or rate stream, e.g., apply the latest exchange rate to each transaction.
 
 **Options (WithLatestFromWith):** `Buffer`, `WithName`.
 
@@ -1652,7 +1652,7 @@ func CombineLatestWith[A, B, O any](
 
 Emits a new value whenever either `a` or `b` emits, combining the latest values from each. Emitting begins only after both pipelines have emitted at least one item. Unlike `WithLatestFrom`, both pipelines drive the output.
 
-**When to use:** UI state combinations, sensor fusion where you want a new output whenever either reading changes — e.g., combine temperature and humidity sensors into a comfort index.
+**When to use:** UI state combinations, sensor fusion where you want a new output whenever either reading changes, e.g., combine temperature and humidity sensors into a comfort index.
 
 **Options (CombineLatestWith):** `Buffer`, `WithName`.
 
@@ -1667,9 +1667,9 @@ risk := kitsune.CombineLatestWith(creditScore, marketIndex,
 
 ---
 
-## Enrichment
+## :material-database-plus-outline: Enrichment
 
-Enrichment operators bulk-fetch external data for a batch of items and attach it to each item. Keys are deduplicated before each fetch call — if multiple items share a key, only one lookup is made.
+Enrichment operators bulk-fetch external data for a batch of items and attach it to each item. Keys are deduplicated before each fetch call; if multiple items share a key, only one lookup is made.
 
 ### LookupBy
 
@@ -1683,9 +1683,9 @@ func LookupBy[T any, K comparable, V any](
 
 Enriches each item with a value fetched in bulk, emitting `Pair[T, V]`. Items whose key is absent from the fetch result carry the zero value for `V`. `LookupConfig` carries:
 
-- `Key func(T) K` — extracts the lookup key from each item
-- `Fetch func(context.Context, []K) (map[K]V, error)` — bulk fetcher
-- `BatchSize int` — how many items to collect before calling `Fetch` (default: 100)
+- `Key func(T) K`: extracts the lookup key from each item
+- `Fetch func(context.Context, []K) (map[K]V, error)`: bulk fetcher
+- `BatchSize int`: how many items to collect before calling `Fetch` (default: 100)
 
 **Options:** `Buffer`, `WithName`, `BatchTimeout`.
 
@@ -1736,7 +1736,7 @@ enriched := kitsune.Enrich(events, cfg)
 
 ---
 
-## Aggregation & Collection
+## :material-sigma: Aggregation & Collection
 
 ### Scan
 
@@ -1859,7 +1859,7 @@ func Find[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ..
 func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error)
 ```
 
-Terminal collectors. All run the pipeline and block until completion. `First`, `Any`, `All`, `Find`, and `Contains` short-circuit — they stop the pipeline as soon as the answer is known. `First` and `Last` return `(zero, false, nil)` if the pipeline is empty.
+Terminal collectors. All run the pipeline and block until completion. `First`, `Any`, `All`, `Find`, and `Contains` short-circuit; they stop the pipeline as soon as the answer is known. `First` and `Last` return `(zero, false, nil)` if the pipeline is empty.
 
 All are also available as methods on `*Pipeline[T]` (except `Find` and `Contains`, which require type parameters).
 
@@ -1943,7 +1943,7 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 func SortBy[T any, K any](p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...StageOption) *Pipeline[T]
 ```
 
-Collects all items, sorts them, then emits in sorted order. The source pipeline must be finite. This is a blocking, memory-intensive operation — the entire stream is buffered before any output is emitted.
+Collects all items, sorts them, then emits in sorted order. The source pipeline must be finite. This is a blocking, memory-intensive operation; the entire stream is buffered before any output is emitted.
 
 **Options:** `Buffer`, `WithName`.
 
@@ -1953,7 +1953,7 @@ sorted := kitsune.Sort(items, func(a, b Item) bool { return a.Timestamp.Before(b
 
 ---
 
-## Time-Based Operators
+## :material-clock-outline: Time-Based Operators
 
 ### Throttle
 
@@ -2026,8 +2026,8 @@ func RateLimit[T any](
 Limits throughput to `ratePerSec` items per second using a token bucket. In `RateLimitWait` mode (default), the pipeline blocks when the bucket is empty (backpressure). In `RateLimitDrop` mode, excess items are silently discarded.
 
 Rate-limit options (`rlOpts`):
-- `Burst(n)` — allow short bursts of up to `n` tokens above the steady rate
-- `RateMode(RateLimitDrop)` — drop items instead of blocking
+- `Burst(n)`: allow short bursts of up to `n` tokens above the steady rate
+- `RateMode(RateLimitDrop)`: drop items instead of blocking
 
 **Options (stageOpts):** `Buffer`, `WithName`.
 
@@ -2041,7 +2041,7 @@ lossy := kitsune.RateLimit(events, 50, []kitsune.RateLimitOpt{kitsune.RateMode(k
 
 ---
 
-## Resilience
+## :material-shield-check-outline: Resilience
 
 ### CircuitBreaker
 
@@ -2063,10 +2063,10 @@ Wraps `fn` in a three-state circuit breaker:
 The circuit breaker is built on top of `Map`, so all `StageOption` values apply. Use `OnError(Skip())` to silently drop items while the circuit is open, or `OnError(Return(zero))` to substitute a default.
 
 Circuit-breaker options (`cbOpts`):
-- `FailureThreshold(n)` — consecutive failures to open (default: 5)
-- `CooldownDuration(d)` — open duration before probing (default: 10s)
-- `HalfOpenProbes(n)` — successes required to close from half-open (default: 1)
-- `HalfOpenTimeout(d)` — deadline on the half-open state
+- `FailureThreshold(n)`: consecutive failures to open (default: 5)
+- `CooldownDuration(d)`: open duration before probing (default: 10s)
+- `HalfOpenProbes(n)`: successes required to close from half-open (default: 1)
+- `HalfOpenTimeout(d)`: deadline on the half-open state
 
 **Options (stageOpts):** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`.
 
@@ -2099,7 +2099,7 @@ Transforms each item using `fn`, acquiring a pre-allocated `*Pooled[O]` from `po
 
 If `fn` returns an error, the slot is automatically released back to the pool.
 
-**When to use:** High-throughput transforms where allocating a new output buffer per item is expensive — JSON encoding, protobuf marshalling, audio/video frame processing.
+**When to use:** High-throughput transforms where allocating a new output buffer per item is expensive: JSON encoding, protobuf marshalling, audio/video frame processing.
 
 **Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`.
 
@@ -2121,7 +2121,7 @@ encoded.ForEach(func(_ context.Context, buf *kitsune.Pooled[[]byte]) error {
 
 ---
 
-## Utility & Metadata
+## :material-tools: Utility & Metadata
 
 ### WithIndex
 
@@ -2171,7 +2171,7 @@ p.Tap(func(e Event) { metrics.Inc("events_processed") }).
 
 ---
 
-## Terminal Operators
+## :material-flag-checkered: Terminal Operators
 
 ### ForEach
 
@@ -2182,8 +2182,8 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 Returns a `ForEachRunner` that calls `fn` for every item. No processing occurs until `Run` or `RunAsync` is called.
 
 `ForEachRunner` has:
-- `Run(ctx, opts...)` — blocks until complete
-- `Build()` — returns a `Runner` for use with `MergeRunners`
+- `Run(ctx, opts...)`: blocks until complete
+- `Build()`: returns a `Runner` for use with `MergeRunners`
 
 With `Concurrency(n)` > 1, `fn` is called from `n` goroutines. Add `Ordered()` to call `fn` in input order even with concurrency.
 
@@ -2222,19 +2222,19 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle
 `Run` executes the pipeline, blocking until completion. `RunAsync` starts the pipeline in a background goroutine and returns a `RunHandle`.
 
 `RunHandle` provides:
-- `Wait() error` — block until done
-- `Done() <-chan struct{}` — closed when done
-- `Err() <-chan error` — receives exactly one value
-- `Pause()` / `Resume()` / `Paused()` — pause/resume source stages
+- `Wait() error`: block until done
+- `Done() <-chan struct{}`: closed when done
+- `Err() <-chan error`: receives exactly one value
+- `Pause()` / `Resume()` / `Paused()`: pause/resume source stages
 
 **Run options:**
-- `WithStore(s Store)` — state backend for `MapWith`, `FlatMapWith`
-- `WithHook(h Hook)` — observability hook
-- `WithDrain(timeout)` — graceful drain on context cancellation
-- `WithCache(cache, ttl)` — default cache backend for `CacheBy` stages
-- `WithErrorStrategy(h)` — pipeline-wide default error handler
-- `WithPauseGate(gate)` — attach an external gate
-- `WithCodec(c)` — serialisation codec for state and cache
+- `WithStore(s Store)`: state backend for `MapWith`, `FlatMapWith`
+- `WithHook(h Hook)`: observability hook
+- `WithDrain(timeout)`: graceful drain on context cancellation
+- `WithCache(cache, ttl)`: default cache backend for `CacheBy` stages
+- `WithErrorStrategy(h)`: pipeline-wide default error handler
+- `WithPauseGate(gate)`: attach an external gate
+- `WithCodec(c)`: serialisation codec for state and cache
 
 ```go
 handle := runner.RunAsync(ctx)
@@ -2264,7 +2264,7 @@ runner.Run(ctx)
 
 ---
 
-## Stage Composition
+## :material-puzzle-outline: Stage Composition
 
 ### Stage[I, O] / Then / Through / Or
 
@@ -2277,13 +2277,13 @@ func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T]
 func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ...StageOption) Stage[I, O]
 ```
 
-`Stage[I, O]` is a composable pipeline transformer — a function from `*Pipeline[I]` to `*Pipeline[O]`. It lets you name and reuse multi-step pipeline fragments.
+`Stage[I, O]` is a composable pipeline transformer: a function from `*Pipeline[I]` to `*Pipeline[O]`. It lets you name and reuse multi-step pipeline fragments.
 
 `Then` chains two stages: the output of `s` becomes the input of `next`.
 
 `Apply` is syntactic sugar for calling the stage as a function.
 
-`Through` applies a same-type stage to a pipeline inline — useful for chaining stages that preserve the element type.
+`Through` applies a same-type stage to a pipeline inline; useful for chaining stages that preserve the element type.
 
 `Or` creates a `Stage` that tries `primary` and falls back to `fallback` if `primary` returns an error. Both functions are called with the same item.
 
@@ -2314,7 +2314,7 @@ fetch := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
 
 ---
 
-## Error Handling Options
+## :material-alert-circle-outline: Error Handling Options
 
 Error handling is configured per-stage with `OnError(handler)` or pipeline-wide with `WithErrorStrategy(handler)` in run options.
 
@@ -2371,7 +2371,7 @@ kitsune.OnError(kitsune.RetryThen(3,
 
 ---
 
-## Stage Options Reference
+## :material-tune: Stage Options Reference
 
 | Option | Type | Applies to | Description |
 |---|---|---|---|
