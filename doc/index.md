@@ -40,27 +40,27 @@ go get github.com/zenbaku/go-kitsune
 
 <div class="grid cards" markdown>
 
-- :material-valve: **Automatic backpressure**
+- :material-valve: **[Automatic backpressure](features.md#automatic-backpressure)**
 
     Bounded channels between every stage. A slow consumer blocks its upstream: no unbounded queuing, no dropped items.
 
-- :material-shield-check-outline: **Compile-time type safety**
+- :material-shield-check-outline: **[Compile-time type safety](features.md#compile-time-type-safety)**
 
     `Pipeline[T]` carries its element type through the graph. Every stage transition is checked at compile time via Go generics.
 
-- :material-lightning-bolt-outline: **Per-stage concurrency**
+- :material-lightning-bolt-outline: **[Per-stage concurrency](features.md#per-stage-concurrency)**
 
     Add `Concurrency(20)` to any stage to spin up parallel workers. Preserve arrival order with `Ordered()`.
 
-- :material-shield-sync-outline: **Error routing**
+- :material-shield-sync-outline: **[Error routing](features.md#error-routing)**
 
     Per-stage `OnError`: `Skip`, `Retry` with exponential backoff, `RetryThen`, `Return`, or `DeadLetter`. Errors are values, not panics.
 
-- :material-chart-timeline-variant: **Observability**
+- :material-chart-timeline-variant: **[Observability](features.md#observability)**
 
     `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). OTel, Prometheus, and Datadog via [tails](tails.md).
 
-- :material-power-plug-outline: **27 integrations**
+- :material-power-plug-outline: **[27 integrations](features.md#27-integrations)**
 
     Kafka, NATS, RabbitMQ, Postgres, Redis, S3, MongoDB, ClickHouse, SQS, Kinesis, Pub/Sub, and more. Each a separate module via [tails](tails.md).
 
