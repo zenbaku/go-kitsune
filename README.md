@@ -18,6 +18,24 @@ err    := parsed.Filter(isCritical).ForEach(notify).Run(ctx)
 go get github.com/zenbaku/go-kitsune
 ```
 
+## Features
+
+- **13 M items/sec** throughput on Apple M1 — stage fusion, micro-batching, and a zero-alloc fast path
+- **Automatic backpressure** — bounded channels between every stage; slow consumers block upstream, nothing is dropped silently
+- **Compile-time type safety** — `Pipeline[T]` carries its element type; every stage transition checked at compile time via generics
+- **Per-stage concurrency** — `Concurrency(n)` spins up parallel workers; `Ordered()` preserves arrival order with a slot-based resequencer
+- **Fan-out & fan-in** — `Partition`, `Broadcast`, `Share`, `Balance`, `KeyedBalance`, `Merge`, `Zip`, `WithLatestFrom`
+- **Batching & windowing** — `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy` — by count, timeout, gap, or key
+- **Stateful processing** — `MapWith` / `MapWithKey`: typed `Ref` per run; key-sharded concurrency = in-process actor model, lock-free
+- **Error routing** — per-stage `Skip`, `Retry` (exponential backoff), `RetryThen`, `Return`, `DeadLetter` — errors are values, not panics
+- **Circuit breaker** — configurable failure threshold, cooldown, and half-open probes; fast-fails when a dependency is unhealthy
+- **Rate limiting** — token-bucket `RateLimit` (wait or drop); `MapWithKey` enables per-entity limits with zero mutex contention
+- **Supervision & restart** — `Supervise` wraps any stage with restart-on-error or restart-on-panic, with configurable backoff
+- **Stage composition** — `Stage[I,O]` is a first-class type; `Then` composes, `Or` adds a typed fallback; fragments test in isolation
+- **100+ operators** — sources, transforms, filters, expansion, aggregation, time-based, enrichment, and utility operators
+- **Observability** — `Hook` interface, `MetricsHook`, `LogHook` (structured `slog`), live [inspector dashboard](doc/inspector.md); OTel, Prometheus, Datadog tails
+- **27 integrations** — Kafka, NATS, RabbitMQ, Postgres, Redis, S3, MongoDB, ClickHouse, SQS, Kinesis, Pub/Sub, and more via `tails/`
+
 ## When to use Kitsune
 
 Kitsune is a good fit for **in-process data pipelines** where you want typed composition, backpressure, and concurrency control without boilerplate:
