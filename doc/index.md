@@ -80,19 +80,19 @@ Add one line to any running pipeline to open a real-time web dashboard with a li
 
 <div class="grid cards" markdown>
 
-- [**Getting Started**](getting-started.md)
+- :material-rocket-launch-outline: [**Getting Started**](getting-started.md)
 
     Mental model, first pipeline, concurrency, error handling, branching, and testing in ~10 minutes.
 
-- [**Operator Catalog**](operators.md)
+- :material-format-list-bulleted: [**Operator Catalog**](operators.md)
 
     Every source, transform, terminal, and option: with exact signatures and descriptions.
 
-- [**Tails**](tails.md)
+- :material-power-plug-outline: [**Tails**](tails.md)
 
     Connect pipelines to Kafka, Redis, S3, Postgres, NATS, SQS, MongoDB, and 15+ more systems.
 
-- [**Tuning Guide**](tuning.md)
+- :material-tune: [**Tuning Guide**](tuning.md)
 
     Buffer sizing, concurrency settings, batching strategies, and GC-pressure trade-offs.
 

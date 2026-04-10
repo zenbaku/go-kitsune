@@ -4,7 +4,7 @@ This guide takes you from zero to a working pipeline in about 10 minutes. It cov
 
 ---
 
-## Mental model
+## :material-head-lightbulb-outline: Mental model
 
 A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages. You assemble it by calling functions: no goroutines start, no channels are allocated. Everything is lazy. When you call `Run` (or [`Collect`](operators.md#collect-first-last-count-any-all-find-contains), or [`First`](operators.md#collect-first-last-count-any-all-find-contains)), the runtime:
 
@@ -39,7 +39,7 @@ Not every operator fits neatly. `Reject` keeps the type but is a free function b
 
 ---
 
-## Your first pipeline
+## :material-pipe: Your first pipeline
 
 ```go
 package main
@@ -74,7 +74,7 @@ func main() {
 
 ---
 
-## Consuming output with [`Iter`](operators.md#iter)
+## :material-export: Consuming output with [`Iter`](operators.md#iter)
 
 [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the right terminal when you need the full result set: a test assertion, a bulk insert, or building a response. But sometimes you want to process items one-by-one as they arrive, without buffering the whole stream. That's what [`Iter`](operators.md#iter) is for.
 
@@ -127,7 +127,7 @@ For the common case of "run the whole pipeline and give me a slice", [`Collect`]
 
 ---
 
-## Pausing and resuming a pipeline
+## :material-pause-circle-outline: Pausing and resuming a pipeline
 
 Sometimes you need to temporarily stop a pipeline without cancelling it, for example, during a maintenance window, when a downstream system signals it's overloaded, or to implement rate-adaptive ingestion. `Pause` and `Resume` handle this without tearing down the pipeline or losing in-flight work.
 
@@ -183,7 +183,7 @@ See [`examples/pause`](../examples/pause) for a runnable version.
 
 ---
 
-## Adding concurrency
+## :material-lightning-bolt-outline: Adding concurrency
 
 Stage functions receive a `context.Context` as their first argument:
 
@@ -213,7 +213,7 @@ See [`examples/concurrent`](../examples/concurrent) for a runnable version with 
 
 ---
 
-## Error handling
+## :material-alert-circle-outline: Error handling
 
 Every stage function returns `(O, error)`. By default, any error halts the entire pipeline (context cancelled, `Run` returns the error). You can change this per stage with `OnError`:
 
@@ -269,7 +269,7 @@ See [`examples/errors`](../examples/errors), [`examples/mapresult`](../examples/
 
 ---
 
-## Branching: fan-out and fan-in
+## :material-source-branch: Branching: fan-out and fan-in
 
 **[`Partition`](operators.md#partition)** routes each item to one of two outputs based on a predicate:
 
@@ -302,7 +302,7 @@ See [`examples/fanout`](../examples/fanout) and [`examples/broadcast`](../exampl
 
 ---
 
-## Testing pipelines
+## :material-test-tube: Testing pipelines
 
 Because pipelines are assembled lazily, you can test any fragment in isolation:
 
@@ -354,7 +354,7 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 
 ---
 
-## Where to go next
+## :material-map-marker-path: Where to go next
 
 **Reference:**
 - [Operator catalog](operators.md): every operator with signature and description
