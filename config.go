@@ -32,6 +32,7 @@ type stageConfig struct {
 	timeout      time.Duration
 	dedupSet     DedupSet
 	clock        internal.Clock
+	visitedKeyFn any // func(T) string, type-erased; set by VisitedBy[T]
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -129,10 +130,23 @@ func WithClock(c internal.Clock) StageOption {
 	return func(cfg *stageConfig) { cfg.clock = c }
 }
 
-// WithDedupSet specifies the [DedupSet] backend for a [Dedupe] stage.
-// Defaults to an in-process [MemoryDedupSet] when not set.
+// WithDedupSet specifies the [DedupSet] backend for a [Dedupe] or [ExpandMap]
+// stage. Defaults to an in-process [MemoryDedupSet] when not set.
 func WithDedupSet(s DedupSet) StageOption {
 	return func(c *stageConfig) { c.dedupSet = s }
+}
+
+// VisitedBy enables cycle detection during [ExpandMap] graph walks. keyFn
+// extracts a string key from each item; items whose key has already been seen
+// are skipped, along with their entire subtree. Defaults to an in-process
+// [MemoryDedupSet]; supply a different backend with [WithDedupSet].
+//
+// VisitedBy is only meaningful on [ExpandMap]. It is silently ignored on all
+// other operators.
+func VisitedBy[T any](keyFn func(T) string) StageOption {
+	return func(c *stageConfig) {
+		c.visitedKeyFn = keyFn
+	}
 }
 
 // Timeout sets a per-item deadline for [Map] and [FlatMap] stages.

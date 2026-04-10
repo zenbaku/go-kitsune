@@ -508,6 +508,83 @@ func TestExpandMap_ExpandMapFunc(t *testing.T) {
 	}
 }
 
+func TestExpandMap_WithName(t *testing.T) {
+	// WithName should not affect correctness.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		expandTree,
+		kitsune.WithName("my_expand"),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("got %v, want [1 2 3 4 5]", got)
+	}
+}
+
+func TestExpandMap_VisitedBy_BreaksCycle(t *testing.T) {
+	// Graph: 1→[2], 2→[3], 3→[1] (cycle). Without VisitedBy this never terminates.
+	fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
+		next := (v % 3) + 1 // 1→2, 2→3, 3→1
+		return kitsune.FromSlice([]int{next})
+	}
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		fn,
+		kitsune.VisitedBy(func(v int) string { return fmt.Sprint(v) }),
+	)
+	got := collectAll(t, p)
+	// 1 emitted → enqueues [2]; 2 emitted → enqueues [3]; 3 emitted → enqueues [1];
+	// 1 already seen → skip. Output: [1, 2, 3].
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
+func TestExpandMap_VisitedBy_SkipsSubtreeOfSeenItem(t *testing.T) {
+	// DAG: 1→[2,3], 2→[4], 3→[2]. Without dedup: 1,2,3,4,2,4 (2 and 4 twice).
+	// With VisitedBy: when 3 tries to expand 2, it's already seen — skip.
+	fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
+		switch v {
+		case 1:
+			return kitsune.FromSlice([]int{2, 3})
+		case 2:
+			return kitsune.FromSlice([]int{4})
+		case 3:
+			return kitsune.FromSlice([]int{2}) // points back at 2
+		default:
+			return nil
+		}
+	}
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		fn,
+		kitsune.VisitedBy(func(v int) string { return fmt.Sprint(v) }),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4}) {
+		t.Fatalf("got %v, want [1 2 3 4]", got)
+	}
+}
+
+func TestExpandMap_VisitedBy_ExternalDedupSet(t *testing.T) {
+	// WithDedupSet overrides the default MemoryDedupSet.
+	set := kitsune.MemoryDedupSet()
+	fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
+		next := (v % 3) + 1
+		return kitsune.FromSlice([]int{next})
+	}
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		fn,
+		kitsune.VisitedBy(func(v int) string { return fmt.Sprint(v) }),
+		kitsune.WithDedupSet(set),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Take / Drop
 // ---------------------------------------------------------------------------

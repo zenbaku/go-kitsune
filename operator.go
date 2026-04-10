@@ -1166,6 +1166,12 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 // Emission order is BFS: all items at depth N are emitted before any item at
 // depth N+1. fn may return nil to signal that an item has no children.
 //
+// Options:
+//   - [WithName] labels the stage for metrics and traces.
+//   - [VisitedBy] prevents re-visiting items whose key was already seen,
+//     breaking infinite loops in cyclic graphs. Defaults to [MemoryDedupSet];
+//     override the backend with [WithDedupSet].
+//
 // Typical uses: tree traversal, recursive API pagination, graph walks where
 // each node expands into its neighbours.
 //
@@ -1174,40 +1180,96 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 //	    children, _ := dir.ReadChildren(ctx)
 //	    return kitsune.FromSlice(children)
 //	})
-func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T]) *Pipeline[T] {
-	return Generate(func(ctx context.Context, yield func(T) bool) error {
-		queue := []*Pipeline[T]{p}
-		for len(queue) > 0 {
-			current := queue[0]
-			queue = queue[1:]
+func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], opts ...StageOption) *Pipeline[T] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "expand_map",
+		name:   orDefault(cfg.name, "expand_map"),
+		buffer: cfg.buffer,
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
 
-			innerCtx, cancel := context.WithCancel(ctx)
-			stopped := false
-			err := current.ForEach(func(_ context.Context, item T) error {
-				if !yield(item) {
-					stopped = true
-					cancel()
-					return nil
-				}
-				if child := fn(ctx, item); child != nil {
-					queue = append(queue, child)
-				}
-				return nil
-			}).Run(innerCtx)
-			cancel()
-
-			if stopped {
-				return nil
-			}
-			if err != nil && ctx.Err() == nil {
-				return err
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
+		// Resolve dedup: VisitedBy sets visitedKeyFn; WithDedupSet overrides the backend.
+		var keyFn func(T) string
+		if raw := cfg.visitedKeyFn; raw != nil {
+			keyFn = raw.(func(T) string)
+		}
+		var set DedupSet
+		if keyFn != nil {
+			if cfg.dedupSet != nil {
+				set = cfg.dedupSet
+			} else {
+				set = MemoryDedupSet()
 			}
 		}
-		return nil
-	})
+
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			outbox := internal.NewBlockingOutbox(ch)
+
+			queue := []*Pipeline[T]{p}
+			for len(queue) > 0 {
+				current := queue[0]
+				queue = queue[1:]
+
+				innerCtx, cancel := context.WithCancel(ctx)
+				var sendErr error
+				err := current.ForEach(func(_ context.Context, item T) error {
+					// Dedup check — skip item and its subtree if already visited.
+					if set != nil {
+						key := keyFn(item)
+						dup, err := set.Contains(innerCtx, key)
+						if err != nil {
+							return err
+						}
+						if dup {
+							return nil
+						}
+						if err := set.Add(innerCtx, key); err != nil {
+							return err
+						}
+					}
+					// Emit item to downstream.
+					if err := outbox.Send(ctx, item); err != nil {
+						sendErr = err
+						cancel()
+						return nil
+					}
+					// Enqueue children for BFS expansion.
+					if child := fn(ctx, item); child != nil {
+						queue = append(queue, child)
+					}
+					return nil
+				}).Run(innerCtx)
+				cancel()
+
+				if sendErr != nil {
+					return sendErr
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
