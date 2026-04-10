@@ -6,12 +6,12 @@ hide:
 ---
 
 <p align="center">
-  <img src="go-kitsune-cover.png" alt="Kitsune — type-safe concurrent pipelines for Go" style="max-width: 520px; width: 100%;">
+  <img src="go-kitsune-cover.png" alt="Kitsune: type-safe concurrent pipelines for Go" style="max-width: 520px; width: 100%;">
 </p>
 
 <p align="center">
   Type-safe, concurrent data pipelines for Go.<br>
-  Compose functions into stages — channels, goroutines, backpressure, and error routing are handled for you.
+  Compose functions into stages: channels, goroutines, backpressure, and error routing are handled for you.
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ go get github.com/zenbaku/go-kitsune
 
 - **Backpressure**
 
-    Bounded channels between every stage. A slow consumer never causes unbounded queuing — it blocks the upstream instead.
+    Bounded channels between every stage. A slow consumer never causes unbounded queuing: it blocks the upstream instead.
 
 - **Type safety**
 
@@ -54,7 +54,7 @@ go get github.com/zenbaku/go-kitsune
 
 - **Error routing**
 
-    Skip, retry with backoff, dead-letter, or circuit-break — configured per stage, composably.
+    Skip, retry with backoff, dead-letter, or circuit-break: configured per stage, composably.
 
 - **Observability**
 
@@ -62,7 +62,7 @@ go get github.com/zenbaku/go-kitsune
 
 - **20+ integrations**
 
-    Kafka, Redis, S3, Postgres, NATS, Pub/Sub, SQS, MongoDB, and more — each a separate module via [tails](tails.md).
+    Kafka, Redis, S3, Postgres, NATS, Pub/Sub, SQS, MongoDB, and more: each a separate module via [tails](tails.md).
 
 </div>
 
@@ -70,7 +70,7 @@ go get github.com/zenbaku/go-kitsune
 
 ## Live inspector
 
-![Kitsune Inspector — live pipeline view](screenshoot.png)
+![Kitsune Inspector: live pipeline view](screenshoot.png)
 
 Add one line to any running pipeline to open a real-time web dashboard with a live DAG, per-stage metrics, and stop/restart controls. [See the inspector guide →](inspector.md)
 
@@ -86,7 +86,7 @@ Add one line to any running pipeline to open a real-time web dashboard with a li
 
 - [**Operator Catalog**](operators.md)
 
-    Every source, transform, terminal, and option — with exact signatures and descriptions.
+    Every source, transform, terminal, and option: with exact signatures and descriptions.
 
 - [**Tails**](tails.md)
 

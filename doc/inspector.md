@@ -1,6 +1,6 @@
 # Inspector
 
-The `inspector` sub-package serves a real-time web dashboard that shows your pipeline graph, per-stage metrics, live throughput and latency, and a scrollable event log — all updated as items flow through the pipeline.
+The `inspector` sub-package serves a real-time web dashboard that shows your pipeline graph, per-stage metrics, live throughput and latency, and a scrollable event log, all updated as items flow through the pipeline.
 
 ## Install
 
@@ -42,8 +42,8 @@ The dashboard has three panels:
 ### 1. KPI bar (top)
 
 Two global counters update continuously:
-- **Total Items (sink)** — total items that have reached the final stage(s)
-- **Throughput** — current items/sec at the sink, averaged over a rolling window
+- **Total Items (sink)**: total items that have reached the final stage(s)
+- **Throughput**: current items/sec at the sink, averaged over a rolling window
 
 ### 2. Pipeline Graph (left)
 
@@ -80,14 +80,14 @@ A scrollable log of pipeline lifecycle events: stage starts, completions, errors
 
 Click any graph node to open the sidebar for that stage. The sidebar shows:
 
-- **Status** — current stage status with color indicator
-- **Items** — total items processed
-- **Throughput** — current items/sec
-- **Avg Latency** — mean processing time
-- **Errors / Drops / Restarts** — counts, highlighted in red/yellow when non-zero
-- **Buffer** — fill bar (current / capacity)
-- **Configuration** — concurrency, buffer size, overflow strategy (if non-default)
-- **Recent Samples** — the last few item values seen at this stage (~every 10th item), formatted with `%v`
+- **Status**: current stage status with color indicator
+- **Items**: total items processed
+- **Throughput**: current items/sec
+- **Avg Latency**: mean processing time
+- **Errors / Drops / Restarts**: counts, highlighted in red/yellow when non-zero
+- **Buffer**: fill bar (current / capacity)
+- **Configuration**: concurrency, buffer size, overflow strategy (if non-default)
+- **Recent Samples**: the last few item values seen at this stage (~every 10th item), formatted with `%v`
 
 Close the sidebar with the `×` button or by clicking elsewhere.
 
@@ -95,10 +95,10 @@ Close the sidebar with the `×` button or by clicking elsewhere.
 
 The dashboard has two control buttons:
 
-- **■ Stop** — signals the pipeline to stop (sends to `CancelCh`)
-- **↺ Restart** — signals the pipeline to restart (sends to `RestartCh`)
+- **■ Stop**: signals the pipeline to stop (sends to `CancelCh`)
+- **↺ Restart**: signals the pipeline to restart (sends to `RestartCh`)
 
-These buttons only send signals — they don't stop or restart the pipeline automatically. You wire them to your application's context in a run loop:
+These buttons only send signals, they don't stop or restart the pipeline automatically. You wire them to your application's context in a run loop:
 
 ```go
 insp := inspector.New()
@@ -145,5 +145,5 @@ Toggle between dark and light themes with the **☀** button in the top-right co
 
 - The inspector starts an HTTP server on an ephemeral port (`localhost:0`). It is not suitable for exposure to the internet without authentication.
 - Each connected browser tab receives all pipeline events via Server-Sent Events. Multiple tabs are supported but each consumes memory proportional to the event log capacity (200 events by default).
-- The inspector adds `OnItem` overhead for every item processed — comparable to a structured log write per item. For extremely high-throughput pipelines (>1 million items/sec), consider using a sampling hook (`SampleHook`) instead.
+- The inspector adds `OnItem` overhead for every item processed, comparable to a structured log write per item. For extremely high-throughput pipelines (>1 million items/sec), consider using a sampling hook (`SampleHook`) instead.
 - The buffer fill gauge (`BufferHook`) polls channel fill levels every 250 ms. This overhead is fixed regardless of throughput.

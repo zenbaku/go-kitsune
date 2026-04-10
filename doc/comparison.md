@@ -33,7 +33,7 @@ Kitsune adds value when: you need fan-out/fan-in, per-stage concurrency control,
 
 ### sourcegraph/conc
 
-Use when: you need structured concurrency primitives — a bounded worker pool, a parallel map over a slice, or safe error collection from a group of goroutines.
+Use when: you need structured concurrency primitives: a bounded worker pool, a parallel map over a slice, or safe error collection from a group of goroutines.
 
 `conc` and Kitsune solve different problems. `conc` is "better `errgroup`"; Kitsune is "typed pipeline DAG". They can coexist: use `conc` inside a Kitsune stage function for sub-task parallelism, and Kitsune to compose those stages into a pipeline.
 
@@ -59,7 +59,7 @@ If migrating from RxGo: Kitsune's operator names differ (`Observable`/`Observer`
 
 Use when: your primary concern is routing messages between external brokers (Kafka, RabbitMQ, Google Pub/Sub, NATS, etc.) with at-least-once delivery guarantees and durable subscriptions.
 
-Watermill is a messaging framework; Kitsune is an in-process pipeline library. They complement each other: use Watermill for inter-service message routing and Kitsune for the transformation logic within a service. Kitsune's tails (`kkafka`, `kpubsub`, `knats`, etc.) overlap with Watermill's subscriber adapters — if you only need one direction of a broker connection with in-process transformation, Kitsune's tails are enough; if you need durable subscriptions, consumer groups, or message routing between services, Watermill is the right layer.
+Watermill is a messaging framework; Kitsune is an in-process pipeline library. They complement each other: use Watermill for inter-service message routing and Kitsune for the transformation logic within a service. Kitsune's tails (`kkafka`, `kpubsub`, `knats`, etc.) overlap with Watermill's subscriber adapters: if you only need one direction of a broker connection with in-process transformation, Kitsune's tails are enough; if you need durable subscriptions, consumer groups, or message routing between services, Watermill is the right layer.
 
 ---
 

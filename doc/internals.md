@@ -1,6 +1,6 @@
 # Kitsune Internals
 
-This document explains how Kitsune works under the hood — the data structures,
+This document explains how Kitsune works under the hood: the data structures,
 concurrency model, and runtime machinery that powers every pipeline. It is
 aimed at contributors and at users who want a mental model deeper than the
 public API.
@@ -10,8 +10,8 @@ public API.
 ## The big picture
 
 A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages.
-That graph is assembled lazily during pipeline construction — no goroutines
-start, no channels are allocated — and then materialised at a single point when
+That graph is assembled lazily during pipeline construction: no goroutines
+start, no channels are allocated: and then materialised at a single point when
 `Run` (or `Collect`) is called.
 
 ```mermaid
@@ -28,7 +28,7 @@ flowchart LR
 The public `kitsune` package is the runtime. Each operator constructs a typed
 `*Pipeline[T]` carrying a `build` closure; no channels are allocated and no
 type information is lost until `Run` is called. Generics are preserved
-end-to-end — there is no type erasure in the hot path.
+end-to-end: there is no type erasure in the hot path.
 
 ---
 
@@ -38,23 +38,23 @@ end-to-end — there is no type erasure in the hot path.
 pipeline.go
 ```
 
-**`Pipeline[T]`** is the core type — a lazy, reusable blueprint for one stage of
+**`Pipeline[T]`** is the core type: a lazy, reusable blueprint for one stage of
 computation. It holds:
 
-- `id int` — a process-unique stage ID (assigned at construction time via an
+- `id int`: a process-unique stage ID (assigned at construction time via an
   atomic counter, `nextPipelineID`).
-- `meta stageMeta` — static description of the stage (name, kind, inputs,
+- `meta stageMeta`: static description of the stage (name, kind, inputs,
   concurrency, buffer size, …).
-- `build func(*runCtx) chan T` — the closure that materialises the stage when
+- `build func(*runCtx) chan T`: the closure that materialises the stage when
   `Run` is called. It recursively calls `build` on upstream pipelines, allocates
   a fresh typed channel, registers the stage's `stageFunc` into the `runCtx`,
   and returns the channel so downstream stages can read from it. The closure is
   memoised via `runCtx`: if this stage was already built in the current `Run`,
-  the existing channel is returned immediately without re-registering — this is
+  the existing channel is returned immediately without re-registering: this is
   what makes diamond (shared-upstream) graphs safe.
-- `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc` — non-nil for
+- `fusionEntry func(*runCtx, func(ctx, T) error) stageFunc`: non-nil for
   fast-path-eligible `Map` and `Filter` stages (see Stage fusion below).
-- `consumerCount atomic.Int32` — incremented at construction time by every
+- `consumerCount atomic.Int32`: incremented at construction time by every
   operator that consumes this pipeline. `fusionEntry` is safe to use only when
   `consumerCount == 1`.
 
@@ -98,7 +98,7 @@ runCtx {
 from. It is almost always a single element; the exceptions are multi-input nodes
 (`Zip`, `WithLatestFrom`, `Merge`). Multi-output nodes (`Partition`, `MapResult`)
 are implemented as two independent `Pipeline` values that share the same build
-closure and memoisation ID — the second call to `build` returns the already-
+closure and memoisation ID: the second call to `build` returns the already-
 memoised channel immediately.
 
 ### Stage kind reference
@@ -188,14 +188,14 @@ Dropped() int64
 
 This indirection is where the three overflow strategies diverge:
 
-**Block (default)** — a simple `select` that sends the item or returns
+**Block (default)**: a simple `select` that sends the item or returns
 `ctx.Err()` on cancellation. Zero overhead; no counters.
 
-**DropNewest** — a non-blocking try-send. If the buffer is full the incoming
+**DropNewest**: a non-blocking try-send. If the buffer is full the incoming
 item is discarded immediately. An atomic counter records the drop and
 `OverflowHook.OnDrop` is called if the hook implements it. No locks.
 
-**DropOldest** — evicts the oldest buffered item to make room. The fast path
+**DropOldest**: evicts the oldest buffered item to make room. The fast path
 (buffer has space) is identical to Block. The slow path (buffer full) takes a
 mutex, reads one item from the channel to free a slot, then writes the new item.
 The mutex is held only during that eviction, so normal sends remain
@@ -246,7 +246,7 @@ and exit.
 Each `build` closure registers a stage goroutine that does two things before
 entering its processing loop:
 
-1. Defers closing its output channel(s) on exit — this is how downstream stages
+1. Defers closing its output channel(s) on exit: this is how downstream stages
    learn the stream is exhausted (`range inCh` terminates, or `ok == false`).
 2. Wraps the processing function in `internal.Supervise` (see
    `internal/process.go`) if supervision is configured.
@@ -290,7 +290,7 @@ flowchart LR
     SC -->|"ctx.Err() suppressed\n= clean exit"| RS[runSource]
 ```
 
-This means sources never need to know about `done` directly — they only see a
+This means sources never need to know about `done` directly: they only see a
 context that happens to cancel when the pipeline no longer needs them.
 
 ---
@@ -302,10 +302,10 @@ context that happens to cancel when the pipeline no longer needs them.
 The inner loop is a straightforward `for { select { case item := <-inCh: … } }`.
 No synchronisation beyond the channel itself.
 
-### Concurrent unordered — `Concurrency(n)`
+### Concurrent unordered: `Concurrency(n)`
 
 `runMapConcurrent` spawns `n` worker goroutines that all read from the same
-input channel. The channel is Go's natural work queue — no extra synchronisation
+input channel. The channel is Go's natural work queue: no extra synchronisation
 needed for item distribution.
 
 ```mermaid
@@ -323,7 +323,7 @@ worker to hit an error atomically records it, calls `innerCancel()` to stop
 the others, and a `sync.WaitGroup` ensures the caller waits for all workers
 before returning the error.
 
-### Concurrent ordered — `Concurrency(n)` + `Ordered()`
+### Concurrent ordered: `Concurrency(n)` + `Ordered()`
 
 `runMapConcurrentOrdered` preserves input order using a slot pipeline:
 
@@ -356,7 +356,7 @@ of two outboxes. Every item goes to exactly one branch (port 0 = true, port
 it succeeded. Successful outputs go to port 0; items where the function returns
 an error go to port 1, wrapped in an `ErrItem{Item, Err}` by the
 `MapResultErrWrap` function stored on the node. Unlike regular `Map`, it never
-invokes the `ErrorHandler` — every error is always routed, never halted or
+invokes the `ErrorHandler`: every error is always routed, never halted or
 retried.
 
 Both `Partition` and `MapResult` follow the same shared-ID pattern in the build
@@ -425,14 +425,14 @@ flowchart LR
 ```
 
 Primary items that arrive before the secondary has emitted a single value are
-silently dropped — this matches RxJS semantics. The background goroutine exits
+silently dropped: this matches RxJS semantics. The background goroutine exits
 when `secondaryCh` is closed or `ctx` is cancelled.
 
 **Independent-graph support**: `WithLatestFrom` (like `Merge` and `Zip`) works
 with pipelines from separate graphs. When the two pipelines share a graph the
 engine-native node is used; otherwise the secondary pipeline drains into a
 mutex-protected `latest` value in a background goroutine while the primary is
-forwarded through a channel — mirroring the engine implementation but at the
+forwarded through a channel: mirroring the engine implementation but at the
 `Generate` layer. The `Partition` pattern is still useful when config updates
 and primary events are multiplexed into the same source channel:
 
@@ -470,7 +470,7 @@ with no new arrivals, `pending` is emitted. On input close, any remaining
 `pending` item is flushed immediately.
 
 The timer management is careful to drain `timer.C` after a `Stop()` that may
-have already fired — a standard Go timer-reset pattern to avoid receiving a
+have already fired: a standard Go timer-reset pattern to avoid receiving a
 stale tick on the next `select`.
 
 ---
@@ -487,7 +487,7 @@ for item := range inCh { acc = fn(acc, item) }
 outbox.Send(ctx, acc)  // emits once
 ```
 
-This means `Reduce` always emits exactly one value — even on an empty stream
+This means `Reduce` always emits exactly one value: even on an empty stream
 (it emits the seed).
 
 **Scan** is implemented at the kitsune layer as a `Map` with a closure that
@@ -525,7 +525,7 @@ is emitted rather than silently discarded.
 ## Cache integration
 
 When a `Map` stage uses `CacheBy`, the construction-time code stores a
-`cacheWrapFn` — a factory that produces a cache-wrapped replacement for the
+`cacheWrapFn`: a factory that produces a cache-wrapped replacement for the
 stage function. The factory is not invoked at construction time; it is deferred
 to `build` time so it can receive runner-level defaults (`WithCache`) from `rc`.
 
@@ -541,7 +541,7 @@ if cfg.cacheWrapFn != nil {
 ```
 
 Because `Pipeline[T]` build closures are called fresh on every `Runner.Run`, the
-resolved function is scoped to a single run — there is no shared mutable state
+resolved function is scoped to a single run: there is no shared mutable state
 that could be corrupted across repeated runs.
 
 The `Timeout` StageOption wraps the user function at *construction* time (before
@@ -560,10 +560,10 @@ build time (Run):    factory invoked → cache-wrapped fn
 
 `runCtx` carries a `refRegistry` for pipeline-level state (`pipeline.go`):
 
-- **`inits`**: `map[string]func(Store, Codec) any` — registered during the build
+- **`inits`**: `map[string]func(Store, Codec) any`: registered during the build
   phase by `MapWith`/`FlatMapWith` build closures. Associates a key name with a
   factory that creates a `*Ref[T]` given the store backend and codec.
-- **`vals`**: `map[string]any` — populated by `rc.refs.init(store, codec)` at
+- **`vals`**: `map[string]any`: populated by `rc.refs.init(store, codec)` at
   run time. Each factory is called once, producing the concrete `*Ref[T]` that
   stages share.
 
@@ -584,8 +584,8 @@ internal/process.go: Supervise
 (`MaxRestarts == 0 && OnPanic == PanicPropagate`): it calls the stage function
 directly and returns, with no overhead.
 
-When active, it wraps each execution in `runProtected` — a `defer recover()`
-guard — and loops up to `MaxRestarts` times:
+When active, it wraps each execution in `runProtected`: a `defer recover()`
+guard: and loops up to `MaxRestarts` times:
 
 ```mermaid
 flowchart TD
@@ -610,7 +610,7 @@ a stage with occasional hiccups from eventually exhausting its budget.
 
 ## Observability hooks
 
-The hook system uses **optional interface extension** — a single base `Hook`
+The hook system uses **optional interface extension**: a single base `Hook`
 with several opt-in extensions checked via type assertion at run time. This
 means existing `Hook` implementations never need to be updated when new
 extension points are added.
@@ -698,7 +698,7 @@ inCh := rc.getChan(upstreamID).(chan I)
 
 This assertion happens once per stage per `Run`, not per item. It is safe
 because the only code that sets a channel in `rc.chans` is the build closure for
-that specific stage — the type is always correct by construction.
+that specific stage: the type is always correct by construction.
 
 `rc.refs.vals map[string]any` similarly stores `*Ref[T]` values type-erased.
 Again, the retrieval is a one-time assertion scoped to the build phase.

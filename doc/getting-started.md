@@ -6,7 +6,7 @@ This guide takes you from zero to a working pipeline in about 10 minutes. It cov
 
 ## Mental model
 
-A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages. You assemble it by calling functions — no goroutines start, no channels are allocated. Everything is lazy. When you call `Run` (or `Collect`, or `First`), the runtime:
+A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages. You assemble it by calling functions: no goroutines start, no channels are allocated. Everything is lazy. When you call `Run` (or [`Collect`](operators.md#collect-first-last-count-any-all-find-contains), or [`First`](operators.md#collect-first-last-count-any-all-find-contains)), the runtime:
 
 1. validates the graph
 2. allocates bounded channels between every pair of stages
@@ -17,7 +17,7 @@ A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages. Y
 
 **Context propagates everywhere.** Cancelling the context stops all stages cleanly.
 
-### Vertical style — not fluent chains
+### Vertical style, not fluent chains
 
 Go's type system requires a specific code style. **Methods** preserve the element type and can be chained. **Free functions** change the type and must be assigned to a new variable:
 
@@ -29,13 +29,13 @@ batched  := kitsune.Batch(critical, 100)    // *Pipeline[[]LogEntry] — type ch
 err      := batched.ForEach(store).Run(ctx)
 ```
 
-This is a Go language constraint — methods cannot introduce new type parameters — but the style is an asset: each variable name documents what's flowing, and the compiler checks every type transition.
+This is a Go language constraint: methods cannot introduce new type parameters. But the style is an asset: each variable name documents what's flowing, and the compiler checks every type transition.
 
 **Rule of thumb:**
-- **Free functions** (type may change, or extra type parameters required): `Map`, `FlatMap`, `Batch`, `Unbatch`, `MapWith`, `FlatMapWith`, `Reject`, `ChunkBy`, `Sort`, `SortBy`, `ZipWith`, `Unzip`, `Enrich`, …
-- **Methods** (type-preserving, no extra type parameters): `.Filter`, `.Tap`, `.Take`, `.Skip`, `.Through`, `.ForEach`, `.Drain`
+- **Free functions** (type may change, or extra type parameters required): [`Map`](operators.md#map), [`FlatMap`](operators.md#flatmap), [`Batch`](operators.md#batch), [`Unbatch`](operators.md#unbatch), [`MapWith`](operators.md#mapwith), [`FlatMapWith`](operators.md#flatmapwith), [`Reject`](operators.md#reject), [`ChunkBy`](operators.md#chunkby), [`Sort`](operators.md#sort-sortby), [`SortBy`](operators.md#sort-sortby), [`ZipWith`](operators.md#zip-zipwith), [`Unzip`](operators.md#unzip), [`Enrich`](operators.md#enrich), …
+- **Methods** (type-preserving, no extra type parameters): [`.Filter`](operators.md#filter), [`.Tap`](operators.md#tap-taperror-finally), [`.Take`](operators.md#take), `.Skip`, [`.Through`](operators.md#stagei-o-then-through-or), [`.ForEach`](operators.md#foreach), [`.Drain`](operators.md#drain)
 
-Not every operator fits neatly — `Reject` keeps the type but is a free function because the method form would be ambiguous with complex generics. When in doubt, look for it in both places; the [operator catalog](operators.md) lists every operator with its exact call form.
+Not every operator fits neatly. `Reject` keeps the type but is a free function because the method form would be ambiguous with complex generics. When in doubt, look for it in both places; the [operator catalog](operators.md) lists every operator with its exact call form.
 
 ---
 
@@ -70,15 +70,15 @@ func main() {
 }
 ```
 
-`FromSlice` + `Collect` is the testing pattern too — deterministic, no goroutines, no infrastructure. See [`examples/basic`](../examples/basic) for the runnable version.
+[`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the testing pattern too: deterministic, no goroutines, no infrastructure. See [`examples/basic`](../examples/basic) for the runnable version.
 
 ---
 
-## Consuming output with `Iter`
+## Consuming output with [`Iter`](operators.md#iter)
 
-`Collect` is the right terminal when you need the full result set — a test assertion, a bulk insert, or building a response. But sometimes you want to process items one-by-one as they arrive, without buffering the whole stream. That's what `Iter` is for.
+[`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the right terminal when you need the full result set: a test assertion, a bulk insert, or building a response. But sometimes you want to process items one-by-one as they arrive, without buffering the whole stream. That's what [`Iter`](operators.md#iter) is for.
 
-`Iter` returns two values: an `iter.Seq[T]` for use with `range`, and an error function to call once the loop finishes:
+[`Iter`](operators.md#iter) returns two values: an `iter.Seq[T]` for use with `range`, and an error function to call once the loop finishes:
 
 ```go
 seq, errFn := kitsune.Map(events, enrich, kitsune.Concurrency(20)).Iter(ctx)
@@ -92,11 +92,11 @@ if err := errFn(); err != nil {
 
 The pipeline starts in the background as soon as `Iter` is called. Items flow from the pipeline into the `for range` loop through a buffered channel; the loop blocks when the pipeline hasn't produced anything yet, and the pipeline backs off when the consumer is too slow.
 
-**The error function must always be called** — it blocks until the pipeline finishes and reports any stage error. Think of it like `rows.Close()` or `resp.Body.Close()`: forgetting it leaks resources.
+**The error function must always be called**: it blocks until the pipeline finishes and reports any stage error. Think of it like `rows.Close()` or `resp.Body.Close()`: forgetting it leaks resources.
 
 ### Breaking out early
 
-If you only need the first few results, `break` as usual. Kitsune detects the break, cancels the pipeline, and drains any in-flight items. The error function returns `nil` — the `context.Canceled` caused by the break is suppressed, since it was expected:
+If you only need the first few results, `break` as usual. Kitsune detects the break, cancels the pipeline, and drains any in-flight items. The error function returns `nil`: the `context.Canceled` caused by the break is suppressed, since it was expected:
 
 ```go
 seq, errFn := kitsune.FromIter(infiniteStream).Iter(ctx)
@@ -112,26 +112,26 @@ if err := errFn(); err != nil { // nil — break-induced cancellation is suppres
 }
 ```
 
-If the *caller's own context* is cancelled (timeout, shutdown signal), `errFn` returns `context.Canceled` as normal — only the break-path suppresses it.
+If the *caller's own context* is cancelled (timeout, shutdown signal), `errFn` returns `context.Canceled` as normal, only the break-path suppresses it.
 
 ### When to use `Iter` vs `Collect`
 
-| | `Iter` | `Collect` |
+| | [`Iter`](operators.md#iter) | [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) |
 |---|---|---|
 | Output size | Unbounded or large | Bounded, fits in memory |
 | Processing | Item-by-item as they arrive | After all items are in hand |
-| Early exit | Natural with `break` | Use `.Take(n)` then `Collect` |
+| Early exit | Natural with `break` | Use [`.Take(n)`](operators.md#take) then `Collect` |
 | Composability | Works with `slices.Collect`, `maps.Collect`, any `iter.Seq[T]` consumer | Returns `[]T` directly |
 
-For the common case of "run the whole pipeline and give me a slice", `Collect` is more concise. Reach for `Iter` when streaming, when memory matters, or when you want to feed pipeline output directly into another `iter.Seq[T]`-based API.
+For the common case of "run the whole pipeline and give me a slice", [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is more concise. Reach for [`Iter`](operators.md#iter) when streaming, when memory matters, or when you want to feed pipeline output directly into another `iter.Seq[T]`-based API.
 
 ---
 
 ## Pausing and resuming a pipeline
 
-Sometimes you need to temporarily stop a pipeline without cancelling it — for example, during a maintenance window, when a downstream system signals it's overloaded, or to implement rate-adaptive ingestion. `Pause` and `Resume` handle this without tearing down the pipeline or losing in-flight work.
+Sometimes you need to temporarily stop a pipeline without cancelling it, for example, during a maintenance window, when a downstream system signals it's overloaded, or to implement rate-adaptive ingestion. `Pause` and `Resume` handle this without tearing down the pipeline or losing in-flight work.
 
-`RunAsync` automatically creates a `Gate` and exposes it on the returned `RunHandle`:
+[`RunAsync`](operators.md#runner-runasync) automatically creates a `Gate` and exposes it on the returned `RunHandle`:
 
 ```go
 h := pipeline.ForEach(store).RunAsync(ctx)
@@ -141,7 +141,7 @@ h.Pause()  // sources stop emitting; in-flight items continue draining
 h.Resume() // sources start again
 ```
 
-While paused, sources block before sending each item into the pipeline. Downstream stages — Map, Filter, Batch, sinks — continue running and drain whatever is already in-flight. No items are dropped and no goroutines exit.
+While paused, sources block before sending each item into the pipeline. Downstream stages, [`Map`](operators.md#map), [`Filter`](operators.md#filter), [`Batch`](operators.md#batch), sinks, continue running and drain whatever is already in-flight. No items are dropped and no goroutines exit.
 
 ### Checking pause state
 
@@ -153,7 +153,7 @@ if h.Paused() {
 
 ### External gate for synchronous Run
 
-`RunHandle` requires `RunAsync`. To pause a pipeline running under the blocking `Runner.Run`, create a `Gate` externally and attach it with `WithPauseGate`:
+`RunHandle` requires [`RunAsync`](operators.md#runner-runasync). To pause a pipeline running under the blocking `Runner.Run`, create a `Gate` externally and attach it with `WithPauseGate`:
 
 ```go
 gate := kitsune.NewGate()
@@ -177,7 +177,7 @@ Cancelling the context while the pipeline is paused unblocks sources immediately
 
 ### When not to use pause
 
-Pause is a coarse control — it stops all sources simultaneously. For fine-grained flow control on a single stage, use `RateLimit` or the `Overflow(DropOldest)` buffer strategy instead. For stopping the pipeline entirely, cancel the context.
+Pause is a coarse control: it stops all sources simultaneously. For fine-grained flow control on a single stage, use [`RateLimit`](operators.md#ratelimit) or the `Overflow(DropOldest)` buffer strategy instead. For stopping the pipeline entirely, cancel the context.
 
 See [`examples/pause`](../examples/pause) for a runnable version.
 
@@ -199,7 +199,7 @@ To run multiple requests in parallel, add `Concurrency(n)`:
 users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20))
 ```
 
-This starts 20 goroutines that all read from the same input channel. **Output order is not preserved** — goroutines finish in whatever order the I/O completes. If you need input order preserved in output:
+This starts 20 goroutines that all read from the same input channel. **Output order is not preserved**, goroutines finish in whatever order the I/O completes. If you need input order preserved in output:
 
 ```go
 users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20), kitsune.Ordered())
@@ -238,7 +238,7 @@ results := kitsune.Map(queries, callAPI,
 )
 ```
 
-For more advanced routing — send failures to a dead-letter queue instead of discarding them — use `DeadLetter`:
+For more advanced routing: send failures to a dead-letter queue instead of discarding them. Use [`DeadLetter`](operators.md#deadletter):
 
 ```go
 // DeadLetter embeds retry; exhausted items route to the second pipeline.
@@ -271,7 +271,7 @@ See [`examples/errors`](../examples/errors), [`examples/mapresult`](../examples/
 
 ## Branching: fan-out and fan-in
 
-**`Partition`** routes each item to one of two outputs based on a predicate:
+**[`Partition`](operators.md#partition)** routes each item to one of two outputs based on a predicate:
 
 ```go
 orders := kitsune.FromSlice(allOrders)
@@ -280,19 +280,19 @@ high, regular := kitsune.Partition(orders, func(o Order) bool { return o.Amount 
 vip := kitsune.Map(high, priorityProcess).ForEach(notifyVIP)
 std := kitsune.Map(regular, standardProcess).ForEach(store)
 
-// MergeRunners runs both branches — blocks until both complete
+// MergeRunners runs both branches, blocks until both complete
 merged, err := kitsune.MergeRunners(vip, std)
 if err != nil { /* handle */ }
 err = merged.Run(ctx)
 ```
 
-**`Broadcast`** copies every item to all N output pipelines (unlike Partition, where each item goes to exactly one):
+**[`Broadcast`](operators.md#broadcast-broadcastn)** copies every item to all N output pipelines (unlike [`Partition`](operators.md#partition), where each item goes to exactly one):
 
 ```go
 original, audit := kitsune.Broadcast(events, 2)
 ```
 
-**`Merge`** fans multiple same-type pipelines back into one:
+**[`Merge`](operators.md#merge)** fans multiple same-type pipelines back into one:
 
 ```go
 combined := kitsune.Merge(stream1, stream2, stream3)
@@ -318,7 +318,7 @@ func TestParseLine(t *testing.T) {
 }
 ```
 
-`FromSlice` + `Collect` is the core test pattern: no goroutines to manage, no ports to open, fully deterministic output.
+[`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the core test pattern: no goroutines to manage, no ports to open, fully deterministic output.
 
 The `kitsune/testkit` package wraps this pattern with assertion helpers:
 
@@ -357,19 +357,19 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 ## Where to go next
 
 **Reference:**
-- [Operator catalog](operators.md) — every operator with signature and description
-- [Testing guide](testing.md) — mocking clients, error paths, time-sensitive operators, and testkit reference
-- [Tuning guide](tuning.md) — buffer sizing, concurrency, batching, memory trade-offs
-- [Benchmarks](benchmarks.md) — throughput numbers on Apple M1
+- [Operator catalog](operators.md): every operator with signature and description
+- [Testing guide](testing.md): mocking clients, error paths, time-sensitive operators, and testkit reference
+- [Tuning guide](tuning.md): buffer sizing, concurrency, batching, memory trade-offs
+- [Benchmarks](benchmarks.md): throughput numbers on Apple M1
 
 **Deeper understanding:**
-- [Internals](internals.md) — DAG construction, runtime compilation, concurrency models, supervision, graceful drain
+- [Internals](internals.md): DAG construction, runtime compilation, concurrency models, supervision, graceful drain
 
 **External systems:**
-- [Tails](tails.md) — connecting to Kafka, Redis, S3, Postgres, and 18 more systems
+- [Tails](tails.md): connecting to Kafka, Redis, S3, Postgres, and 18 more systems
 
 **Live observability:**
-- [Inspector](inspector.md) — real-time web dashboard for running pipelines
+- [Inspector](inspector.md): real-time web dashboard for running pipelines
 
 **Runnable examples** (all in [`examples/`](../examples/)):
 
@@ -380,23 +380,23 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 | `batch` | Batch, Unbatch, BatchTimeout |
 | `concurrent` | Concurrency, Ordered, LogHook |
 | `errors` | Skip, Retry, RetryThen, StageError |
-| `deadletter` | DeadLetter, DeadLetterSink — retry-embedded dead-letter routing |
+| `deadletter` | DeadLetter, DeadLetterSink: retry-embedded dead-letter routing |
 | `fanout` | Partition, MergeRunners |
 | `stages` | Stage[I,O], Then, swappable sources |
 | `channel` | NewChannel, RunAsync |
 | `state` | MapWith, FlatMapWith, Ref |
 | `supervise` | Supervise, RestartOnError, RestartOnPanic |
 | `inspector` | Live web dashboard with full branching topology |
-| `streams` | Unfold, Iterate, Repeatedly, Cycle, Concat — generative sources |
+| `streams` | Unfold, Iterate, Repeatedly, Cycle, Concat: generative sources |
 | `transform` | Reject, WithIndex, Intersperse, TakeEvery, DropEvery, MapEvery, ConsecutiveDedup |
 | `reshape` | ChunkBy, ChunkWhile, Sort, SortBy, Unzip |
 | `aggregate` | Sum, Min, Max, MinMax, MinBy, MaxBy, Find, Frequencies, ReduceWhile, TakeRandom |
-| `enrich` | MapBatch, LookupBy, Enrich — bulk-fetch with key deduplication |
-| `zipwith` | ZipWith — combine two branches without an intermediate Pair |
-| `pairwise` | Pairwise, SlidingWindow — consecutive pair and window patterns |
-| `concatmap` | ConcatMap vs FlatMap — ordered sequential expansion |
-| `mapresult` | MapResult — route errors to a separate pipeline |
+| `enrich` | MapBatch, LookupBy, Enrich: bulk-fetch with key deduplication |
+| `zipwith` | ZipWith: combine two branches without an intermediate Pair |
+| `pairwise` | Pairwise, SlidingWindow: consecutive pair and window patterns |
+| `concatmap` | ConcatMap vs FlatMap: ordered sequential expansion |
+| `mapresult` | MapResult: route errors to a separate pipeline |
 | `dedupe` | Dedupe, Distinct, DistinctBy, CacheBy |
-| `timeout` | Timeout StageOption — per-item deadline |
-| `ticker` | Ticker, Interval — scheduled sources |
-| `withlatestfrom` | WithLatestFrom — combine a primary stream with the latest secondary value |
+| `timeout` | Timeout StageOption: per-item deadline |
+| `ticker` | Ticker, Interval: scheduled sources |
+| `withlatestfrom` | WithLatestFrom: combine a primary stream with the latest secondary value |

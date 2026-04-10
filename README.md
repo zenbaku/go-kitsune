@@ -2,7 +2,7 @@
   <img src="doc/go-kitsune-cover.png" alt="go-kitsune" width="100%">
 </p>
 
-> **Note:** This project is an AI code exploration — the codebase is partially written using AI agents as an experiment in AI-assisted software development.
+> **Note:** This project is an AI code exploration: the codebase is partially written using AI agents as an experiment in AI-assisted software development.
 
 Type-safe, concurrent data pipelines for Go. Compose functions into stages; channels, goroutines, backpressure, and error routing are handled for you.
 
@@ -90,13 +90,13 @@ fmt.Println("Inspector:", insp.URL()) // open in browser
 err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
 ```
 
-![Kitsune Inspector — live pipeline view](doc/screenshoot.png)
+![Kitsune Inspector: live pipeline view](doc/screenshoot.png)
 
 Try it: `task inspector` or `go run ./examples/inspector`. See [`doc/inspector.md`](doc/inspector.md) for the full reference.
 
 ## Tails
 
-Tails are optional extension packages that connect pipelines to external systems. Each tail is a separate Go module — you only pull in the dependencies you use.
+Tails are optional extension packages that connect pipelines to external systems. Each tail is a separate Go module: you only pull in the dependencies you use.
 
 | Tail | Import | What |
 |---|---|---|
@@ -152,13 +152,13 @@ The [`examples/`](examples/) directory contains standalone programs. Run any wit
 | `aggregate` | Sum, Min, Max, Frequencies, ReduceWhile, TakeRandom |
 | `enrich` | MapBatch, LookupBy, Enrich |
 | `dedupe` | Dedupe, Distinct, CacheBy |
-| `timeout` | Timeout StageOption — per-item deadline |
-| `ticker` | Ticker, Interval — scheduled sources |
+| `timeout` | Timeout StageOption: per-item deadline |
+| `ticker` | Ticker, Interval: scheduled sources |
 | `pairwise` | Pairwise, SlidingWindow |
-| `concatmap` | ConcatMap vs FlatMap — ordered sequential expansion |
-| `mapresult` | MapResult — route errors to a separate pipeline |
-| `withlatestfrom` | WithLatestFrom — combine stream with latest secondary value |
-| `zipwith` | ZipWith — combine two branches into a custom type |
+| `concatmap` | ConcatMap vs FlatMap: ordered sequential expansion |
+| `mapresult` | MapResult: route errors to a separate pipeline |
+| `withlatestfrom` | WithLatestFrom: combine stream with latest secondary value |
+| `zipwith` | ZipWith: combine two branches into a custom type |
 
 Six additional examples live in their own modules (they import tail packages):
 

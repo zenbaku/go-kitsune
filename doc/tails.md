@@ -1,10 +1,10 @@
 # Tails Guide
 
-Tails are optional packages that connect Kitsune pipelines to external systems. Each tail is a separate Go module — you only import and pay for the dependencies you use.
+Tails are optional packages that connect Kitsune pipelines to external systems. Each tail is a separate Go module: you only import and pay for the dependencies you use.
 
 ## The user-managed connections principle
 
-Every tail follows the same rule: **you create, configure, and close clients; Kitsune never opens or closes connections.** This gives you full control over connection pooling, TLS, retries, and lifecycle — none of that is hidden inside the library.
+Every tail follows the same rule: **you create, configure, and close clients; Kitsune never opens or closes connections.** This gives you full control over connection pooling, TLS, retries, and lifecycle, and none of that is hidden inside the library.
 
 ```go
 // You own the Kafka reader
@@ -29,19 +29,19 @@ Every tail is one of three shapes:
 | **Sink** | Returns a `func(ctx, T) error` for use with `ForEach` | `kkafka.Produce`, `kpostgres.Insert`, `ks3.Upload` |
 | **Hook** | Implements `kitsune.Hook` for use with `WithHook` | `kotel.New`, `kprometheus.New`, `kdatadog.New` |
 
-Some tails (like `kredis`) provide multiple shapes — a source, a sink, and a `Store`/`Cache` backend.
+Some tails (like `kredis`) provide multiple shapes, a source, a sink, and a `Store`/`Cache` backend.
 
 ---
 
 ## Messaging
 
-### kkafka — Apache Kafka
+### kkafka: Apache Kafka
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kkafka
 ```
 
-**Source** — consume messages from a topic:
+**Source**: consume messages from a topic:
 
 ```go
 reader := kafka.NewReader(kafka.ReaderConfig{
@@ -58,7 +58,7 @@ pipe := kkafka.Consume(reader, func(m kafka.Message) (Event, error) {
 pipe.ForEach(handle).Run(ctx)
 ```
 
-**Sink** — produce messages to a topic:
+**Sink**: produce messages to a topic:
 
 ```go
 writer := kafka.NewWriter(kafka.WriterConfig{
@@ -78,7 +78,7 @@ See [`examples/` in the kkafka module](../tails/kkafka/) for a complete example.
 
 ---
 
-### knats — NATS
+### knats: NATS
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/knats
@@ -88,13 +88,13 @@ Provides NATS core subscribe/publish sources and sinks, and JetStream consume/pu
 
 ---
 
-### kamqp — RabbitMQ / AMQP 0-9-1
+### kamqp: RabbitMQ / AMQP 0-9-1
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kamqp
 ```
 
-**Source** — consume messages from a queue (manual ack, at-least-once):
+**Source**: consume messages from a queue (manual ack, at-least-once):
 
 ```go
 conn, _ := amqp091.Dial("amqp://guest:guest@localhost:5672/")
@@ -112,7 +112,7 @@ pipe.ForEach(handle).Run(ctx)
 
 Each delivery is acked after a successful downstream yield. On unmarshal failure the delivery is nacked (requeue=true by default) and the pipeline terminates. Use `kamqp.WithAutoAck()` to delegate acknowledgement to the broker, or `kamqp.WithRequeueOnNack(false)` to dead-letter failed messages.
 
-**Sink** — publish to an exchange with a routing key:
+**Sink**: publish to an exchange with a routing key:
 
 ```go
 sink := kamqp.Publish(ch, "events.exchange", "events.created",
@@ -131,7 +131,7 @@ To publish directly to a queue (default exchange), pass `exchange=""` and `routi
 
 ---
 
-### kpubsub — Google Cloud Pub/Sub
+### kpubsub: Google Cloud Pub/Sub
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kpubsub
@@ -141,7 +141,7 @@ Pub/Sub subscribe source and publish sink. You own the `*pubsub.Client`.
 
 ---
 
-### ksqs — AWS SQS
+### ksqs: AWS SQS
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/ksqs
@@ -151,7 +151,7 @@ Provides a receive source, a send sink, and a batch send sink. You own the `*sqs
 
 ---
 
-### kkinesis — AWS Kinesis
+### kkinesis: AWS Kinesis
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kkinesis
@@ -161,7 +161,7 @@ Shard consumer source and PutRecords batch sink. You own the `*kinesis.Client`.
 
 ---
 
-### kpulsar — Apache Pulsar
+### kpulsar: Apache Pulsar
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kpulsar
@@ -171,7 +171,7 @@ Consumer source and producer sink. You own the `pulsar.Client`.
 
 ---
 
-### kmqtt — MQTT
+### kmqtt: MQTT
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kmqtt
@@ -181,7 +181,7 @@ Subscribe source and publish sink. You own the `mqtt.Client`.
 
 ---
 
-### kwebsocket — WebSocket
+### kwebsocket: WebSocket
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kwebsocket
@@ -191,7 +191,7 @@ Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/web
 
 ---
 
-### kgrpc — gRPC
+### kgrpc: gRPC
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kgrpc
@@ -203,13 +203,13 @@ Server-streaming source and client-streaming sink. You own the gRPC connection.
 
 ## Databases
 
-### kpostgres — PostgreSQL
+### kpostgres: PostgreSQL
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kpostgres
 ```
 
-**Source** — LISTEN/NOTIFY for event-driven pipelines:
+**Source**: LISTEN/NOTIFY for event-driven pipelines:
 
 ```go
 conn, _ := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
@@ -222,7 +222,7 @@ pipe := kpostgres.Listen[Event](conn, "events", func(payload string) (Event, err
 pipe.ForEach(handle).Run(ctx)
 ```
 
-**Sink** — bulk insert via COPY (high throughput):
+**Sink**: bulk insert via COPY (high throughput):
 
 ```go
 pool, _ := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
@@ -235,7 +235,7 @@ sink := kpostgres.CopyFrom[Row](pool, "my_table",
 kitsune.Batch(pipe, 500).ForEach(sink).Run(ctx)
 ```
 
-**Sink** — single-row insert:
+**Sink**: single-row insert:
 
 ```go
 sink := kpostgres.Insert[Row](pool,
@@ -247,15 +247,15 @@ pipe.ForEach(sink).Run(ctx)
 
 ---
 
-### kredis — Redis
+### kredis: Redis
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kredis
 ```
 
-`kredis` is the most feature-rich tail — it provides four distinct capabilities:
+`kredis` is the most feature-rich tail: it provides four distinct capabilities:
 
-**Store backend** — distributed state across pipeline runs:
+**Store backend**: distributed state across pipeline runs:
 
 ```go
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
@@ -263,14 +263,14 @@ store := kredis.NewStore(rdb, "myapp:")
 runner.Run(ctx, kitsune.WithStore(store))
 ```
 
-**Cache backend** — shared LRU cache for `CacheBy`:
+**Cache backend**: shared LRU cache for `CacheBy`:
 
 ```go
 cache := kredis.NewCache(rdb, "myapp:cache:", 5*time.Minute)
 runner.Run(ctx, kitsune.WithCache(cache, 5*time.Minute))
 ```
 
-**DedupSet** — distributed deduplication for long-running pipelines:
+**DedupSet**: distributed deduplication for long-running pipelines:
 
 `MemoryDedupSet` (the default) accumulates every seen key in a `map[string]struct{}`. For long-running pipelines this grows without bound. `kredis.NewDedupSet` stores keys in a Redis Set, bounding memory to your Redis instance.
 
@@ -282,7 +282,7 @@ enriched := kitsune.Dedupe(events, kitsune.WithDedupSet(dedup))
 //   p.Dedupe(kitsune.WithDedupSet(dedup))
 ```
 
-The `DedupSet` interface has two methods — `Contains` and `Add` — called in sequence per item. This means two Redis round-trips per item and a theoretical race window (another process could add the same key between the two calls). In practice this is harmless for dedup: a duplicate that slips through is equivalent to the check arriving slightly later. If you need strictly atomic check-and-add, implement `DedupSet` using a Lua script or `SADD`'s return value (which is `0` when the member already exists):
+The `DedupSet` interface has two methods, `Contains` and `Add`, called in sequence per item. This means two Redis round-trips per item and a theoretical race window (another process could add the same key between the two calls). In practice this is harmless for dedup: a duplicate that slips through is equivalent to the check arriving slightly later. If you need strictly atomic check-and-add, implement `DedupSet` using a Lua script or `SADD`'s return value (which is `0` when the member already exists):
 
 ```go
 // Atomic single-call implementation using SADD return value.
@@ -295,9 +295,9 @@ func (s *redisDedupSet) Add(ctx context.Context, key string) error {
 }
 ```
 
-For probabilistic dedup with bounded memory (useful when approximate correctness is acceptable and the key space is huge), a Bloom filter backend implementing `DedupSet` is a natural extension — no built-in implementation is provided yet.
+For probabilistic dedup with bounded memory (useful when approximate correctness is acceptable and the key space is huge), a Bloom filter backend implementing `DedupSet` is a natural extension, and no built-in implementation is provided yet.
 
-**Source / sink** — Redis list-based queues:
+**Source / sink**: Redis list-based queues:
 
 ```go
 // List pop source (BLPOP)
@@ -311,7 +311,7 @@ See [`examples/redis`](../examples/redis) for a complete example covering all fo
 
 ---
 
-### ksqlite — SQLite
+### ksqlite: SQLite
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/ksqlite
@@ -321,7 +321,7 @@ Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`example
 
 ---
 
-### kmongo — MongoDB
+### kmongo: MongoDB
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kmongo
@@ -331,7 +331,7 @@ Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
 
 ---
 
-### kdynamo — AWS DynamoDB
+### kdynamo: AWS DynamoDB
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kdynamo
@@ -341,7 +341,7 @@ Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
 
 ---
 
-### kclickhouse — ClickHouse
+### kclickhouse: ClickHouse
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kclickhouse
@@ -351,7 +351,7 @@ Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
 
 ---
 
-### kes — Elasticsearch
+### kes: Elasticsearch
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kes
@@ -363,7 +363,7 @@ Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`
 
 ## Object storage
 
-### ks3 — S3-compatible object storage
+### ks3: S3-compatible object storage
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/ks3
@@ -371,7 +371,7 @@ go get github.com/zenbaku/go-kitsune/tails/ks3
 
 Works with AWS S3, Google Cloud Storage (via S3-interop API), MinIO, and any other S3-compatible store.
 
-**Source** — list and parse all objects under a prefix:
+**Source**: list and parse all objects under a prefix:
 
 ```go
 cfg, _ := config.LoadDefaultConfig(ctx)
@@ -383,7 +383,7 @@ pipe := ks3.ListObjects(client, "my-bucket", "data/2024/", func(key string, body
 pipe.ForEach(handle).Run(ctx)
 ```
 
-**Source** — stream lines from a single object:
+**Source**: stream lines from a single object:
 
 ```go
 pipe := ks3.Lines(client, "my-bucket", "data/large-file.txt")
@@ -394,7 +394,7 @@ pipe.ForEach(processLine).Run(ctx)
 
 ## Files
 
-### kfile — Local files (CSV, JSONL, raw)
+### kfile: Local files (CSV, JSONL, raw)
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kfile
@@ -406,7 +406,7 @@ Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CS
 
 ## HTTP
 
-### khttp — HTTP pagination source and webhook sink
+### khttp: HTTP pagination source and webhook sink
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/khttp
@@ -424,7 +424,7 @@ Observability tails implement `kitsune.Hook` (and optional extensions like `Over
 runner.Run(ctx, kitsune.WithHook(hook))
 ```
 
-### kotel — OpenTelemetry
+### kotel: OpenTelemetry
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kotel
@@ -449,7 +449,7 @@ runner.Run(ctx, kitsune.WithHook(hook))
 
 ---
 
-### kprometheus — Prometheus
+### kprometheus: Prometheus
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kprometheus
@@ -474,7 +474,7 @@ See [`examples/prometheus`](../examples/prometheus) for a complete example with 
 
 ---
 
-### kdatadog — Datadog DogStatsD
+### kdatadog: Datadog DogStatsD
 
 ```
 go get github.com/zenbaku/go-kitsune/tails/kdatadog

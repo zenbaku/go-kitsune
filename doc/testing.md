@@ -6,7 +6,7 @@ A guide to writing fast, deterministic tests for Kitsune stages and pipelines.
 
 ## The core pattern
 
-Every pipeline is assembled lazily — no goroutines start until you call a terminal function. This makes any fragment testable in isolation: give it a `FromSlice` source and collect the output.
+Every pipeline is assembled lazily: no goroutines start until you call a terminal function. This makes any fragment testable in isolation: give it a `FromSlice` source and collect the output.
 
 ```go
 func TestParseStage(t *testing.T) {
@@ -96,7 +96,7 @@ func enrichStage(svc Enricher) kitsune.Stage[LogEntry, LogEntry] {
 }
 ```
 
-Production wiring — the real client is injected once and flows into every stage that needs it:
+Production wiring: the real client is injected once and flows into every stage that needs it:
 
 ```go
 svc := enrichment.NewClient(cfg)
@@ -106,7 +106,7 @@ pipeline := kitsune.From(source).
     Through(enrichStage(svc))
 ```
 
-Testing each stage independently — swap the real client for a mock:
+Testing each stage independently: swap the real client for a mock:
 
 ```go
 func TestEnrichStage(t *testing.T) {
@@ -137,7 +137,7 @@ func (m *mockEnricher) Enrich(ctx context.Context, e LogEntry) (LogEntry, error)
 }
 ```
 
-**Rule of thumb**: define clients as narrow interfaces — only the methods each stage actually uses. A stage that only calls `Lookup` should depend on a `Lookuper`, not the full API client. This keeps mocks minimal and makes the stage's intent clear.
+**Rule of thumb**: define clients as narrow interfaces, only the methods each stage actually uses. A stage that only calls `Lookup` should depend on a `Lookuper`, not the full API client. This keeps mocks minimal and makes the stage's intent clear.
 
 ---
 
@@ -251,7 +251,7 @@ testkit.AssertNoErrors(t, hook)
 
 ## Testing time-sensitive operators
 
-Operators like `Debounce`, `Throttle`, `Batch` (with `BatchTimeout`), `Ticker`, `Interval`, and `SessionWindow` depend on wall-clock time. Use `TestClock` to control time deterministically — no sleeps, no flaky tests.
+Operators like `Debounce`, `Throttle`, `Batch` (with `BatchTimeout`), `Ticker`, `Interval`, and `SessionWindow` depend on wall-clock time. Use `TestClock` to control time deterministically: no sleeps, no flaky tests.
 
 ### Batch with a timeout flush
 
@@ -414,10 +414,10 @@ go test -tags=property -rapid.failfile=testdata/rapid/TestPropBalanceItemCount/.
 
 When you add a new fan-in/fan-out operator or an order-preserving combinator, add a corresponding property to `properties_test.go`. Good candidates for property tests are:
 
-- **Multiset invariants** — does the operator preserve, add, or remove items?
-- **Order invariants** — when is order guaranteed to be preserved or changed?
-- **Composition laws** — does `f ∘ g == g ∘ f`? Does `f ∘ f == f`?
-- **Count invariants** — does a fan-out operator deliver the right total across all branches?
+- **Multiset invariants**: does the operator preserve, add, or remove items?
+- **Order invariants**: when is order guaranteed to be preserved or changed?
+- **Composition laws**: does `f ∘ g == g ∘ f`? Does `f ∘ f == f`?
+- **Count invariants**: does a fan-out operator deliver the right total across all branches?
 
 ---
 
