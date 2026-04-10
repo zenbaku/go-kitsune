@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -953,6 +954,105 @@ func TestBalance(t *testing.T) {
 	// Round-robin: 3 items each
 	if count0.Load() != 3 || count1.Load() != 3 {
 		t.Fatalf("expected 3/3 split, got %d/%d", count0.Load(), count1.Load())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// KeyedBalance
+// ---------------------------------------------------------------------------
+
+func TestKeyedBalance(t *testing.T) {
+	// Items with same key prefix must always go to the same branch.
+	items := []string{
+		"a#1", "b#1", "a#2", "c#1", "b#2", "a#3", "c#2", "b#3",
+	}
+	p := kitsune.FromSlice(items)
+	branches := kitsune.KeyedBalance(p, 3, func(s string) string { return s[:1] })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var mu sync.Mutex
+	keyToBranch := map[string]int{}
+	counts := make([]int, 3)
+	runners := make([]*kitsune.Runner, 3)
+	for i := 0; i < 3; i++ {
+		i := i
+		runners[i] = branches[i].ForEach(func(_ context.Context, s string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			counts[i]++
+			key := s[:1]
+			if prev, ok := keyToBranch[key]; ok && prev != i {
+				t.Errorf("key %q seen on branch %d and %d", key, prev, i)
+			}
+			keyToBranch[key] = i
+			return nil
+		}).Build()
+	}
+
+	runner, err := kitsune.MergeRunners(runners...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	total := counts[0] + counts[1] + counts[2]
+	if total != len(items) {
+		t.Fatalf("expected %d total items, got %d (%v)", len(items), total, counts)
+	}
+	if len(keyToBranch) != 3 {
+		t.Fatalf("expected 3 distinct keys, got %d", len(keyToBranch))
+	}
+}
+
+func TestKeyedBalanceN2(t *testing.T) {
+	p := kitsune.FromSlice([]string{"x1", "y1", "x2", "y2", "x3"})
+	branches := kitsune.KeyedBalance(p, 2, func(s string) string { return s[:1] })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var total atomic.Int64
+	r0 := branches[0].ForEach(func(_ context.Context, _ string) error {
+		total.Add(1)
+		return nil
+	}).Build()
+	r1 := branches[1].ForEach(func(_ context.Context, _ string) error {
+		total.Add(1)
+		return nil
+	}).Build()
+
+	runner, err := kitsune.MergeRunners(r0, r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if total.Load() != 5 {
+		t.Fatalf("expected 5 items, got %d", total.Load())
+	}
+}
+
+func TestKeyedBalanceWithName(t *testing.T) {
+	p := kitsune.FromSlice([]string{"a", "b"})
+	branches := kitsune.KeyedBalance(p, 2, func(s string) string { return s }, kitsune.WithName("shards"))
+	if len(branches) != 2 {
+		t.Fatalf("expected 2 branches, got %d", len(branches))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	r0 := branches[0].ForEach(func(_ context.Context, _ string) error { return nil }).Build()
+	r1 := branches[1].ForEach(func(_ context.Context, _ string) error { return nil }).Build()
+	runner, err := kitsune.MergeRunners(r0, r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

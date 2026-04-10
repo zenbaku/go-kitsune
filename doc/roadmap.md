@@ -16,7 +16,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **`ExpandMap[T]`** — recursive BFS expansion. `fn(item)` returns a new `*Pipeline[T]`; all emitted items are fed back through `fn` again until the inner pipeline is empty. The defining primitive for tree traversal, recursive API pagination, and graph walks. Emits items at depth N before depth N+1. fn may return nil for leaf nodes. `ExpandMapFunc` provided as a context-free convenience wrapper. Accepts `...StageOption`: `WithName` (stage label for hooks/metrics), `Buffer`, and `VisitedBy(keyFn)` (cycle detection — skips items whose key was already seen, along with their subtrees; defaults to `MemoryDedupSet`, overridable with `WithDedupSet`).
 
-- [ ] **`KeyedBalance[T]`** — content-based fan-out by consistent hash. Routes all items with the same key to the same downstream branch, enabling per-entity parallelism without lock contention. Complements `MapWithKey` for stateful workloads. Counterpart to the round-robin `Balance`.
+- [x] **`KeyedBalance[T]`** — content-based fan-out by consistent hash. Routes all items with the same key to the same downstream branch, enabling per-entity parallelism without lock contention. Complements `MapWithKey` for stateful workloads. Counterpart to the round-robin `Balance`.
 
 - [ ] **`Share`** — hot multicast without a fixed subscriber count. Unlike `Broadcast(n)`, `Share` lets downstream stages subscribe at any point; late subscribers receive items from the moment they attach. Design note: late-subscriber semantics need speccing before implementation (likely: miss items emitted before subscription, no buffering).
 

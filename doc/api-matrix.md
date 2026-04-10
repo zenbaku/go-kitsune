@@ -157,6 +157,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Broadcast` | `Broadcast[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `BroadcastN` | `BroadcastN[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Balance` | `Balance[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `KeyedBalance` | `KeyedBalance[T](p, n, keyFn, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Partition` | `Partition[T](p, pred, opts...)` → `(*Pipeline[T], *Pipeline[T])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Merge` | `Merge[T](pipelines...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `Zip` | `Zip[A,B](a, b)` → `*Pipeline[Pair[A,B]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |

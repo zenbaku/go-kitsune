@@ -373,6 +373,106 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
+// KeyedBalance
+// ---------------------------------------------------------------------------
+
+// KeyedBalance distributes items across n output pipelines by consistent hash
+// of a key derived from each item. All items with the same key are routed to
+// the same output branch, enabling per-entity parallelism without cross-branch
+// coordination. Each item goes to exactly one output. All n pipelines must be
+// consumed. Complements MapWithKey for stateful, shard-parallel workloads.
+//
+// Note: if keyFn produces a low-cardinality key set, some branches may receive
+// more items than others. A slow consumer on any branch will block the
+// dispatcher for that shard; increase buffer via Buffer to absorb skew.
+func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...StageOption) []*Pipeline[T] {
+	track(p)
+	cfg := buildStageConfig(opts)
+
+	// Allocate IDs for all outputs at construction time.
+	ids := make([]int, n)
+	for i := range ids {
+		ids[i] = nextPipelineID()
+	}
+
+	metas := make([]stageMeta, n)
+	for i := range metas {
+		name := orDefault(cfg.name, "keyed_balance")
+		if i > 0 {
+			name = name + "_" + string(rune('0'+i))
+		}
+		metas[i] = stageMeta{
+			id:     ids[i],
+			kind:   "keyed_balance",
+			name:   name,
+			buffer: cfg.buffer,
+			inputs: []int{p.id},
+		}
+	}
+
+	// sharedBuild creates all channels and the stage on the first call.
+	sharedBuild := func(rc *runCtx) []chan T {
+		if existing := rc.getChan(ids[0]); existing != nil {
+			chans := make([]chan T, n)
+			for i, id := range ids {
+				chans[i] = rc.getChan(id).(chan T)
+			}
+			return chans
+		}
+		inCh := p.build(rc)
+		chans := make([]chan T, n)
+		for i := range chans {
+			chans[i] = make(chan T, cfg.buffer)
+		}
+		m := metas[0]
+		m.getChanLen = func() int { return len(chans[0]) }
+		m.getChanCap = func() int { return cap(chans[0]) }
+		for i, id := range ids {
+			rc.setChan(id, chans[i])
+		}
+		stage := func(ctx context.Context) error {
+			defer func() {
+				for _, c := range chans {
+					close(c)
+				}
+			}()
+			defer func() { go internal.DrainChan(inCh) }()
+
+			outboxes := make([]internal.Outbox[T], len(chans))
+			for i, c := range chans {
+				outboxes[i] = internal.NewBlockingOutbox(c)
+			}
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					shard := int(fnv32str(keyFn(item)) % uint32(len(outboxes)))
+					if err := outboxes[shard].Send(ctx, item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return chans
+	}
+
+	out := make([]*Pipeline[T], n)
+	for i := range out {
+		i := i
+		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
+			return sharedBuild(rc)[i]
+		})
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
 // Zip / ZipWith
 // ---------------------------------------------------------------------------
 
