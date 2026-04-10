@@ -10,7 +10,7 @@ go run ./examples/<name>
 
 <div class="grid cards" markdown>
 
-- :material-pipe: **[Getting started](#getting-started)** — basic, concurrent
+- :material-pipe: **[Getting started](#getting-started)** — basic, concurrent, pause
 - :material-broadcast: **[Fan-out & Fan-in](#fan-out-fan-in)** — fanout, broadcast, share
 - :material-puzzle-outline: **[Composition](#composition)** — stages
 - :material-shield-check-outline: **[Error handling](#error-handling)** — deadletter, circuitbreaker, timeout
@@ -167,6 +167,115 @@ Parallel processing with and without ordering guarantees.
         }
         fmt.Printf("  processed %d items in %v\n", len(ordered), time.Since(start).Round(time.Millisecond))
         fmt.Printf("  first=%s last=%s\n", ordered[0], ordered[len(ordered)-1])
+    }
+    ```
+
+---
+
+### `pause` { #pause }
+
+Temporarily stop a running pipeline without cancelling it. Sources block; in-flight items drain normally. Resume restarts emission with no data loss.
+
+**Demonstrates:** `RunAsync`, `RunHandle.Pause`, `RunHandle.Resume`, `RunHandle.Paused`, `NewGate`, `WithPauseGate`
+
+[:material-play: Run in Playground](https://go.dev/play/p/AS4aGhBTeZS){ .md-button .md-button--primary }
+[:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/pause/main.go){ .md-button }
+
+??? example "Full source"
+
+    ```go
+    // Example: pause — temporarily stop a running pipeline without cancelling it.
+    //
+    // Demonstrates:
+    //   - RunAsync + RunHandle.Pause / Resume / Paused
+    //   - NewGate + WithPauseGate for use with blocking Runner.Run
+    //   - Behaviour during pause: sources block, in-flight items drain normally
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "time"
+
+        kitsune "github.com/zenbaku/go-kitsune"
+    )
+
+    func main() {
+        ctx := context.Background()
+
+        // --- RunAsync: pause/resume via RunHandle ---
+
+        fmt.Println("=== RunAsync: pause and resume via RunHandle ===")
+
+        src := kitsune.NewChannel[int](4)
+        processed := kitsune.Map(src.Source(), func(_ context.Context, n int) (string, error) {
+            time.Sleep(10 * time.Millisecond)
+            return fmt.Sprintf("item-%02d", n), nil
+        }, kitsune.WithName("process"))
+
+        var received []string
+        handle := processed.ForEach(func(_ context.Context, s string) error {
+            received = append(received, s)
+            return nil
+        }).Build().RunAsync(ctx)
+
+        for i := 1; i <= 5; i++ {
+            src.Send(ctx, i) //nolint
+        }
+        time.Sleep(100 * time.Millisecond)
+
+        handle.Pause()
+        fmt.Printf("paused: %v\n", handle.Paused())
+
+        go func() {
+            for i := 6; i <= 8; i++ {
+                src.Send(ctx, i) //nolint
+            }
+        }()
+
+        time.Sleep(80 * time.Millisecond)
+        fmt.Printf("processed while paused: %d items total\n", len(received))
+
+        handle.Resume()
+        fmt.Printf("resumed: %v\n", handle.Paused())
+        time.Sleep(100 * time.Millisecond)
+
+        src.Close()
+        if err := handle.Wait(); err != nil {
+            panic(err)
+        }
+        fmt.Printf("total processed: %d items\n", len(received))
+
+        // --- Gate + WithPauseGate: pause a blocking Runner.Run ---
+
+        fmt.Println("\n=== Gate + WithPauseGate: pause a blocking Run ===")
+
+        gate := kitsune.NewGate()
+        nums := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+        pipeline := kitsune.Map(nums, func(_ context.Context, n int) (string, error) {
+            time.Sleep(5 * time.Millisecond)
+            return fmt.Sprintf("n=%d", n), nil
+        }, kitsune.WithName("map"))
+
+        var out []string
+        runner := pipeline.ForEach(func(_ context.Context, s string) error {
+            out = append(out, s)
+            return nil
+        }).Build()
+
+        go func() {
+            time.Sleep(30 * time.Millisecond)
+            gate.Pause()
+            fmt.Println("gate paused")
+            time.Sleep(50 * time.Millisecond)
+            gate.Resume()
+            fmt.Println("gate resumed")
+        }()
+
+        if err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+            panic(err)
+        }
+        fmt.Printf("total: %d items\n", len(out))
     }
     ```
 

@@ -205,7 +205,7 @@ Cancelling the context while the pipeline is paused unblocks sources immediately
 
 Pause is a coarse control: it stops all sources simultaneously. For fine-grained flow control on a single stage, use [`RateLimit`](operators.md#ratelimit) or the `Overflow(DropOldest)` buffer strategy instead. For stopping the pipeline entirely, cancel the context.
 
-See [`examples/pause`](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a runnable version.
+See the [`pause` example](examples.md#pause) for a runnable version.
 
 ---
 
