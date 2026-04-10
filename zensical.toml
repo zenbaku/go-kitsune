@@ -8,6 +8,7 @@ repo_name = "zenbaku/go-kitsune"
 nav = [
   {"Home" = "index.md"},
   {"Getting Started" = "getting-started.md"},
+  {"Features" = "features.md"},
   {"Operators" = "operators.md"},
   {"API Matrix" = "api-matrix.md"},
   {"Tails" = "tails.md"},

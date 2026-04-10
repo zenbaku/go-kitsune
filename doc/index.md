@@ -40,10 +40,6 @@ go get github.com/zenbaku/go-kitsune
 
 <div class="grid cards" markdown>
 
-- :material-lightning-bolt-outline: **13 M items/sec**
-
-    Linear map throughput on Apple M1. Stage fusion, receive-side micro-batching, and a zero-alloc fast path keep overhead minimal.
-
 - :material-valve: **Automatic backpressure**
 
     Bounded channels between every stage. A slow consumer blocks its upstream: no unbounded queuing, no dropped items.
@@ -52,51 +48,25 @@ go get github.com/zenbaku/go-kitsune
 
     `Pipeline[T]` carries its element type through the graph. Every stage transition is checked at compile time via Go generics.
 
-- :material-source-branch: **Fan-out & fan-in**
+- :material-lightning-bolt-outline: **Per-stage concurrency**
 
-    `Partition`, `Broadcast`, `Share`, `Balance`, `KeyedBalance`: split streams by predicate, multicast to N consumers, or route by key hash.
-
-- :material-layers-triple-outline: **Batching & windowing**
-
-    `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy`: group items by count, timeout, gap, or key. Composable.
-
-- :material-memory: **Stateful processing**
-
-    `MapWith` / `MapWithKey`: typed `Ref` state scoped to a pipeline run. Key-sharded concurrency gives each entity its own goroutine. The in-process actor model, lock-free by design.
+    Add `Concurrency(20)` to any stage to spin up parallel workers. Preserve arrival order with `Ordered()`.
 
 - :material-shield-sync-outline: **Error routing**
 
     Per-stage `OnError`: `Skip`, `Retry` with exponential backoff, `RetryThen`, `Return`, or `DeadLetter`. Errors are values, not panics.
 
-- :material-electric-switch: **Circuit breaker**
-
-    Configurable failure threshold, cooldown, and half-open probes. Automatically fast-fails downstream items when a dependency is unhealthy.
-
-- :material-speedometer: **Rate limiting**
-
-    Token-bucket `RateLimit` with wait or drop modes. `MapWithKey` enables per-entity rate limiting with zero mutex contention.
-
-- :material-restart: **Supervision & restart**
-
-    `Supervise` wraps any stage with restart-on-error or restart-on-panic semantics, with configurable backoff between attempts.
-
-- :material-puzzle-outline: **Stage composition**
-
-    `Stage[I,O]` is a first-class type. `Then` composes two stages; `Or` adds a typed fallback. Fragments are independently testable.
-
 - :material-chart-timeline-variant: **Observability**
 
-    `Hook` interface, `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). OTel, Prometheus, and Datadog via [tails](tails.md).
-
-- :material-clock-fast: **Time-based operators**
-
-    `Ticker`, `Interval`, `Timer`, `Throttle`, `Debounce`, `Sample`, `Timeout`: time sources and per-item deadlines, all context-aware.
+    `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). OTel, Prometheus, and Datadog via [tails](tails.md).
 
 - :material-power-plug-outline: **27 integrations**
 
     Kafka, NATS, RabbitMQ, Postgres, Redis, S3, MongoDB, ClickHouse, SQS, Kinesis, Pub/Sub, and more. Each a separate module via [tails](tails.md).
 
 </div>
+
+[See all features: batching, fan-out, stateful processing, circuit breaker, rate limiting, supervision, and more →](features.md){ .md-button }
 
 ---
 
