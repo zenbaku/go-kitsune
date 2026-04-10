@@ -33,7 +33,21 @@ Some tails (like `kredis`) provide multiple shapes, a source, a sink, and a `Sto
 
 ---
 
-## Messaging
+## At a glance
+
+<div class="grid cards" markdown>
+
+- :material-message-processing-outline: **[Messaging](#messaging)** — Kafka, NATS, RabbitMQ, Pulsar, MQTT
+- :material-cloud-outline: **[Cloud](#cloud)** — Pub/Sub, SQS, Kinesis, DynamoDB
+- :material-database-outline: **[Databases](#databases)** — Postgres, MongoDB, ClickHouse, SQLite, Elasticsearch, Redis
+- :material-file-document-outline: **[Files & HTTP](#files-http)** — kfile, khttp, S3, WebSocket, gRPC
+- :material-chart-line: **[Observability](#observability)** — OpenTelemetry, Prometheus, Datadog
+
+</div>
+
+---
+
+## :material-message-processing-outline: Messaging { #messaging }
 
 ### kkafka: Apache Kafka
 
@@ -131,6 +145,28 @@ To publish directly to a queue (default exchange), pass `exchange=""` and `routi
 
 ---
 
+### kpulsar: Apache Pulsar
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kpulsar
+```
+
+Consumer source and producer sink. You own the `pulsar.Client`.
+
+---
+
+### kmqtt: MQTT
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kmqtt
+```
+
+Subscribe source and publish sink. You own the `mqtt.Client`.
+
+---
+
+## :material-cloud-outline: Cloud { #cloud }
+
 ### kpubsub: Google Cloud Pub/Sub
 
 ```
@@ -161,47 +197,17 @@ Shard consumer source and PutRecords batch sink. You own the `*kinesis.Client`.
 
 ---
 
-### kpulsar: Apache Pulsar
+### kdynamo: AWS DynamoDB
 
 ```
-go get github.com/zenbaku/go-kitsune/tails/kpulsar
+go get github.com/zenbaku/go-kitsune/tails/kdynamo
 ```
 
-Consumer source and producer sink. You own the `pulsar.Client`.
+Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
 
 ---
 
-### kmqtt: MQTT
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kmqtt
-```
-
-Subscribe source and publish sink. You own the `mqtt.Client`.
-
----
-
-### kwebsocket: WebSocket
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kwebsocket
-```
-
-Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/websocket`](../examples/websocket) for a complete in-process server/client example.
-
----
-
-### kgrpc: gRPC
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kgrpc
-```
-
-Server-streaming source and client-streaming sink. You own the gRPC connection.
-
----
-
-## Databases
+## :material-database-outline: Databases { #databases }
 
 ### kpostgres: PostgreSQL
 
@@ -244,6 +250,46 @@ sink := kpostgres.Insert[Row](pool,
 )
 pipe.ForEach(sink).Run(ctx)
 ```
+
+---
+
+### kmongo: MongoDB
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kmongo
+```
+
+Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
+
+---
+
+### kclickhouse: ClickHouse
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kclickhouse
+```
+
+Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
+
+---
+
+### ksqlite: SQLite
+
+```
+go get github.com/zenbaku/go-kitsune/tails/ksqlite
+```
+
+Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`examples/sqlite`](../examples/sqlite).
+
+---
+
+### kes: Elasticsearch
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kes
+```
+
+Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`.
 
 ---
 
@@ -311,57 +357,27 @@ See [`examples/redis`](../examples/redis) for a complete example covering all fo
 
 ---
 
-### ksqlite: SQLite
+## :material-file-document-outline: Files & HTTP { #files-http }
+
+### kfile: Local files (CSV, JSONL, raw)
 
 ```
-go get github.com/zenbaku/go-kitsune/tails/ksqlite
+go get github.com/zenbaku/go-kitsune/tails/kfile
 ```
 
-Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`examples/sqlite`](../examples/sqlite).
+Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See [`examples/files`](../examples/files).
 
 ---
 
-### kmongo: MongoDB
+### khttp: HTTP pagination source and webhook sink
 
 ```
-go get github.com/zenbaku/go-kitsune/tails/kmongo
+go get github.com/zenbaku/go-kitsune/tails/khttp
 ```
 
-Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
+Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See [`examples/http`](../examples/http).
 
 ---
-
-### kdynamo: AWS DynamoDB
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kdynamo
-```
-
-Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
-
----
-
-### kclickhouse: ClickHouse
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kclickhouse
-```
-
-Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
-
----
-
-### kes: Elasticsearch
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kes
-```
-
-Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`.
-
----
-
-## Object storage
 
 ### ks3: S3-compatible object storage
 
@@ -392,31 +408,27 @@ pipe.ForEach(processLine).Run(ctx)
 
 ---
 
-## Files
-
-### kfile: Local files (CSV, JSONL, raw)
+### kwebsocket: WebSocket
 
 ```
-go get github.com/zenbaku/go-kitsune/tails/kfile
+go get github.com/zenbaku/go-kitsune/tails/kwebsocket
 ```
 
-Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See [`examples/files`](../examples/files).
+Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/websocket`](../examples/websocket) for a complete in-process server/client example.
 
 ---
 
-## HTTP
-
-### khttp: HTTP pagination source and webhook sink
+### kgrpc: gRPC
 
 ```
-go get github.com/zenbaku/go-kitsune/tails/khttp
+go get github.com/zenbaku/go-kitsune/tails/kgrpc
 ```
 
-Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See [`examples/http`](../examples/http).
+Server-streaming source and client-streaming sink. You own the gRPC connection.
 
 ---
 
-## Observability hooks
+## :material-chart-line: Observability { #observability }
 
 Observability tails implement `kitsune.Hook` (and optional extensions like `OverflowHook`, `SupervisionHook`, `BufferHook`). Pass them to `kitsune.WithHook`:
 

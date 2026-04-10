@@ -90,7 +90,7 @@ fmt.Println("Inspector:", insp.URL()) // open in browser
 err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
 ```
 
-![Kitsune Inspector: live pipeline view](doc/screenshoot.png)
+![Kitsune Inspector: live pipeline view](doc/screenshot.png)
 
 Try it: `task inspector` or `go run ./examples/inspector`. See [`doc/inspector.md`](doc/inspector.md) for the full reference.
 

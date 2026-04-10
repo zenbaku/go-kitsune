@@ -6,6 +6,9 @@ Kitsune pipelines run as a DAG of goroutines connected by bounded channels. The 
 
 ## Overview
 
+!!! tip "Measure first"
+    The default `Buffer(16)` + `Concurrency(1)` handles most I/O pipelines at >1 M items/sec. Profile with `MetricsHook` or the Inspector before tuning — most "obvious" improvements don't move the needle.
+
 Every stage in a pipeline has an input channel. When a stage finishes processing an item, it writes to the next stage's channel. If that channel is full, the writer blocks, which is backpressure. When the channel has room, the writer proceeds without waiting.
 
 This model means:
@@ -36,6 +39,9 @@ pipe.Buffer(0)
 ```
 A zero-size buffer makes every send block until the receiver is ready. Useful for testing backpressure behavior or enforcing strict sequential hand-off between stages. Not generally recommended for production throughput.
 
+!!! warning "`Buffer(0)` is for testing"
+    A synchronous channel forces every hand-off to block. Use it to exercise backpressure in tests, not for production throughput.
+
 **Rule of thumb:** set buffer ≈ expected burst size, capped by what you can afford in memory. If your source emits 100 items in a burst every few seconds, `Buffer(100)` lets the source drain quickly while downstream processes at its own pace.
 
 ---
@@ -53,6 +59,9 @@ I/O-bound stages spend most of their time waiting, for a network response, a dis
 **CPU-bound stages** rarely benefit beyond `runtime.NumCPU()`. Beyond that point you add goroutine scheduling overhead and GC pressure without gaining real parallelism.
 
 **Order is not preserved.** With `Concurrency(n) > 1`, items are processed in whatever order goroutines happen to finish. If your pipeline requires deterministic ordering, keep the stage at `Concurrency(1)`.
+
+!!! note "`Ordered()` concurrency trade-off"
+    `Ordered()` with `Concurrency(n)` uses a slot-based resequencer. Peak throughput is ~10–15% lower than unordered, and a single slow item head-of-lines the downstream channel until it completes.
 
 **Buffer interaction:** the `n` goroutines all draw from the same input channel. If items arrive in bursts, consider increasing `Buffer` alongside `Concurrency` so workers stay busy between bursts:
 ```go

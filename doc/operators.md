@@ -4,6 +4,118 @@ This document covers every operator in go-kitsune. Each entry shows the exact Go
 
 **Free functions** ([`Map`](#map), [`FlatMap`](#flatmap), [`Batch`](#batch), …) can change the element type as items flow through. **Methods** ([`.Filter`](#filter), [`.Take`](#take), `.Skip`, …) preserve the type. This split is a Go generic constraint: methods cannot introduce their own type parameters, so anything that changes `Pipeline[A]` to `Pipeline[B]` must be a free function.
 
+## :material-lightning-bolt-outline: Quick reference { #quick-ref }
+
+Jump directly to any operator. See [Contents](#contents) for a grouped view.
+
+| Operator | Category | Purpose |
+|---|---|---|
+| [`FromSlice`](#fromslice) | Source | Emit items from a Go slice |
+| [`From`](#from) | Source | Wrap an existing channel |
+| [`Generate`](#generate) | Source | Push-based custom generator |
+| [`FromIter`](#fromiter) | Source | Wrap `iter.Seq[T]` |
+| [`NewChannel`](#newchannel--channelt) | Source | Send-from-anywhere push source |
+| [`Ticker`](#ticker) | Source | Periodic tick emission |
+| [`Interval`](#interval) | Source | Count-up interval source |
+| [`Timer`](#timer) | Source | One-shot delay source |
+| [`Unfold`](#unfold) | Source | Seed-based generator |
+| [`Iterate`](#iterate) | Source | `x, f(x), f(f(x)), …` |
+| [`Repeatedly`](#repeatedly) | Source | Repeat a function call indefinitely |
+| [`Cycle`](#cycle) | Source | Loop over a fixed slice |
+| [`Concat`](#concat) | Source | Strictly ordered concat of pipelines |
+| [`Amb`](#amb) | Source | Race factories; keep the winner |
+| [`Catch`](#catch) | Source | Fallback pipeline on error |
+| [`Using`](#using) | Source | Resource-scoped pipeline |
+| [`Map`](#map) | Transform | 1:1 element transform |
+| [`MapRecover`](#maprecover) | Transform | Map with panic recovery |
+| [`MapResult`](#mapresult) | Transform | Map with error-branch output |
+| [`DeadLetter`](#deadletter) | Transform | Retry-embedded dead-letter routing |
+| [`DeadLetterSink`](#deadlettersink) | Transform | Route errored items to a sink |
+| [`Timestamp`](#timestamp) | Transform | Tag each item with wall-clock time |
+| [`TimeInterval`](#timeinterval) | Transform | Tag each item with elapsed duration |
+| [`StartWith`](#startwith) | Transform | Prepend fixed items |
+| [`DefaultIfEmpty`](#defaultifempty) | Transform | Emit a fallback if stream is empty |
+| [`Intersperse`](#intersperse) | Transform | Insert separator between items |
+| [`LiftPure`](#liftpure--liftfallible) | Transform | Adapt plain functions to stage signatures |
+| [`FlatMap`](#flatmap) | Expansion | 1:N expansion |
+| [`ConcatMap`](#concatmap) | Expansion | Sequential inner pipelines |
+| [`SwitchMap`](#switchmap) | Expansion | Cancel previous inner on new item |
+| [`ExhaustMap`](#exhaustmap) | Expansion | Ignore new items while inner is active |
+| [`ExpandMap`](#expandmap) | Expansion | Recursive BFS expansion |
+| [`Pairwise`](#pairwise) | Expansion | Emit consecutive pairs |
+| [`Unbatch`](#unbatch) | Expansion | Flatten slices to individual items |
+| [`Filter`](#filter) | Filter | Keep matching items |
+| [`Reject`](#reject) | Filter | Drop matching items |
+| [`Take`](#take) | Filter | First N items |
+| [`Drop`](#drop) | Filter | Skip first N items |
+| [`TakeWhile`](#takewhile) | Filter | While predicate holds |
+| [`DropWhile`](#dropwhile) | Filter | Until predicate holds |
+| [`TakeEvery`](#takeevery) | Filter | Keep every Nth item |
+| [`DropEvery`](#dropevery) | Filter | Drop every Nth item |
+| [`Distinct`](#distinct) | Filter | Global dedup by value |
+| [`DistinctBy`](#distinctby) | Filter | Global dedup by key function |
+| [`Dedupe`](#dedupe--dedupeby) | Filter | Consecutive or set-backed dedup |
+| [`ElementAt`](#elementat) | Filter | Emit only the Nth item |
+| [`Key`](#key--newkey--ref) | Stateful | Typed state reference |
+| [`MapWith`](#mapwith) | Stateful | Map with run-scoped state |
+| [`FlatMapWith`](#flatmapwith) | Stateful | FlatMap with run-scoped state |
+| [`MapWithKey`](#mapwithkey) | Stateful | Sharded state by key |
+| [`FlatMapWithKey`](#flatmapwithkey) | Stateful | FlatMap with sharded state |
+| [`Batch`](#batch) | Batch | Collect N items (or timeout) |
+| [`MapBatch`](#mapbatch) | Batch | Batch → fn → flatten |
+| [`Window`](#window) | Batch | Count-based tumbling window |
+| [`SlidingWindow`](#slidingwindow) | Batch | Overlapping sliding windows |
+| [`SessionWindow`](#sessionwindow) | Batch | Gap-based session window |
+| [`ChunkBy`](#chunkby) | Batch | Consecutive same-key grouping |
+| [`ChunkWhile`](#chunkwhile) | Batch | Consecutive predicate grouping |
+| [`GroupByStream`](#groupbystream) | Batch | Route items to per-key sub-pipelines |
+| [`Merge`](#merge) | Fan-in | N → 1 same-type streams |
+| [`Partition`](#partition) | Fan-out | 1 → 2 by predicate |
+| [`Broadcast`](#broadcast--broadcastn) | Fan-out | Copy to N branches |
+| [`Share`](#share) | Fan-out | Hot multicast factory |
+| [`Balance`](#balance) | Fan-out | Round-robin N branches |
+| [`KeyedBalance`](#keyedbalance) | Fan-out | Hash-key consistent fan-out |
+| [`Zip`](#zip--zipwith) | Fan-in | Pairwise combine two streams |
+| [`Unzip`](#unzip) | Fan-out | Split pairs into two pipelines |
+| [`WithLatestFrom`](#withlatestfrom--withlatestfromwith) | Fan-in | Primary + latest secondary value |
+| [`CombineLatest`](#combinelatest--combinelatestwith) | Fan-in | Symmetric latest-pair emission |
+| [`LookupBy`](#lookupby) | Enrichment | Batched key lookup |
+| [`Enrich`](#enrich) | Enrichment | LookupBy + join function |
+| [`Scan`](#scan) | Aggregate | Running fold, emits each step |
+| [`Reduce`](#reduce) | Aggregate | Fold to single terminal result |
+| [`Sum`](#sum--min--max--minmax) | Aggregate | Numeric sum |
+| [`Min`](#sum--min--max--minmax) | Aggregate | Numeric minimum |
+| [`Max`](#sum--min--max--minmax) | Aggregate | Numeric maximum |
+| [`MinBy`](#minby--maxby) | Aggregate | Min by key function |
+| [`MaxBy`](#minby--maxby) | Aggregate | Max by key function |
+| [`ReduceWhile`](#reducewhile) | Aggregate | Fold until predicate fails |
+| [`TakeRandom`](#takerandom) | Aggregate | Random reservoir sample |
+| [`Collect`](#collect--first--last--count--any--all--find--contains) | Terminal | Return `[]T` |
+| [`ToMap`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Collect to map |
+| [`GroupBy`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Collect to `map[K][]T` |
+| [`Frequencies`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Count occurrences |
+| [`Sort`](#sort--sortby) | Terminal | Sort and collect |
+| [`Iter`](#iter) | Terminal | `iter.Seq[T]` bridge |
+| [`ForEach`](#foreach) | Terminal | Run side-effect sink |
+| [`Drain`](#drain) | Terminal | Consume and discard |
+| [`Runner`](#runner--runasync) | Terminal | Explicit run handle |
+| [`MergeRunners`](#mergerunners) | Terminal | Combine multiple runners |
+| [`Throttle`](#throttle) | Time | Rate-limit (leading edge) |
+| [`Debounce`](#debounce) | Time | Emit after quiet period |
+| [`Sample`](#sample) | Time | Periodic latest-value emission |
+| [`RateLimit`](#ratelimit) | Resilience | Token-bucket limiter |
+| [`CircuitBreaker`](#circuitbreaker) | Resilience | Open/half-open/closed protection |
+| [`MapPooled`](#mappooled) | Resilience | Object pool acquisition |
+| [`WithIndex`](#withindex) | Utility | Tag items with position |
+| [`Tap`](#tap--taperror--finally) | Utility | Side-effect on each item |
+| [`TapError`](#tap--taperror--finally) | Utility | Side-effect on each error |
+| [`Finally`](#tap--taperror--finally) | Utility | Side-effect on completion |
+| [`Stage[I,O]`](#stagei-o--then--through--or) | Composition | Composable typed pipeline fragment |
+| [`Halt`](#halt) | Error option | Stop pipeline on first error |
+| [`Skip`](#skip) | Error option | Drop errored items, continue |
+| [`Return`](#return) | Error option | Emit error as a value |
+| [`Retry`](#retry--retrythen) | Error option | Retry with backoff |
+
 ---
 
 ## :material-table-of-contents: Contents { #contents }

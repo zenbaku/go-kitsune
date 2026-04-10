@@ -70,7 +70,7 @@ go get github.com/zenbaku/go-kitsune
 
 ## Live inspector
 
-![Kitsune Inspector: live pipeline view](screenshoot.png)
+![Kitsune Inspector: live pipeline view](screenshot.png)
 
 Add one line to any running pipeline to open a real-time web dashboard with a live DAG, per-stage metrics, and stop/restart controls. [See the inspector guide →](inspector.md)
 

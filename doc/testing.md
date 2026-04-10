@@ -18,6 +18,9 @@ func TestParseStage(t *testing.T) {
 }
 ```
 
+!!! tip "Deterministic by construction"
+    `FromSlice` + `Collect` never starts a timer, opens a socket, or shuffles goroutine order. The same input always produces the same output — no `t.Eventually` loops required.
+
 `testkit.CollectAndExpect` runs the pipeline, collects all output, and fails the test if the result doesn't match. For unordered output (concurrent stages), use `CollectAndExpectUnordered`.
 
 ---
@@ -51,12 +54,18 @@ import (
 
 ### Injecting failures
 
+!!! note "Failure injection preserves types"
+    `FailAt[T]` and `FailEvery[T]` are typed helpers — they plug directly into `Map` without wrapping, so your test fragments mirror production code exactly.
+
 | Function | What it does |
 |----------|-------------|
 | `FailAt[T](err, positions...)` | Return `err` for the items at the given 0-based positions |
 | `FailEvery[T](err, n)` | Return `err` for every nth item (0, n, 2n, …) |
 
 ### Simulating slow I/O
+
+!!! warning "Avoid `time.Sleep` in stage functions"
+    Use `testkit.TestClock` with `WithClock` instead. Real sleeps inflate test runtimes and cause flakes on loaded CI runners.
 
 | Function | What it does |
 |----------|-------------|

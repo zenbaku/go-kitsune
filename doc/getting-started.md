@@ -15,6 +15,32 @@ A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages. Y
 
 **Backpressure is automatic.** Each inter-stage channel has a bounded buffer (16 by default). A slow downstream stage blocks the upstream stage rather than allowing unbounded queuing.
 
+```mermaid
+flowchart LR
+    S([Source<br/>FromSlice / Kafka / …])
+    M[Map<br/>parseLog]
+    F[Filter<br/>isCritical]
+    B[Batch<br/>100 items]
+    T([Terminal<br/>ForEach / Collect])
+
+    S -->|"bounded chan (16)"| M
+    M -->|"bounded chan (16)"| F
+    F -->|"bounded chan (16)"| B
+    B -->|"bounded chan (16)"| T
+
+    T -.->|backpressure| B
+    B -.->|backpressure| F
+    F -.->|backpressure| M
+    M -.->|backpressure| S
+
+    classDef src fill:#ffe0b2,stroke:#e65100,color:#000;
+    classDef term fill:#c8e6c9,stroke:#1b5e20,color:#000;
+    class S src
+    class T term
+```
+
+Solid arrows show item flow; dashed arrows show backpressure propagating upstream when a downstream stage is slow.
+
 **Context propagates everywhere.** Cancelling the context stops all stages cleanly.
 
 ### Vertical style, not fluent chains
@@ -195,17 +221,19 @@ func enrichUser(ctx context.Context, id string) (User, error) {
 
 To run multiple requests in parallel, add `Concurrency(n)`:
 
-```go
-users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20))
-```
+=== "Unordered (default)"
 
-This starts 20 goroutines that all read from the same input channel. **Output order is not preserved**, goroutines finish in whatever order the I/O completes. If you need input order preserved in output:
+    ```go
+    users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20))
+    ```
 
-```go
-users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20), kitsune.Ordered())
-```
+=== "Ordered"
 
-`Ordered()` uses a slot-based resequencer: workers still run in parallel, but results are emitted in arrival order.
+    ```go
+    users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20), kitsune.Ordered())
+    ```
+
+This starts 20 goroutines that all read from the same input channel. **Output order is not preserved** by default — goroutines finish in whatever order the I/O completes. `Ordered()` uses a slot-based resequencer: workers still run in parallel, but results are emitted in arrival order.
 
 **Starting point**: 10–20 for HTTP or database calls; `runtime.NumCPU()` for CPU-bound work.
 
@@ -217,26 +245,33 @@ See [`examples/concurrent`](../examples/concurrent) for a runnable version with 
 
 Every stage function returns `(O, error)`. By default, any error halts the entire pipeline (context cancelled, `Run` returns the error). You can change this per stage with `OnError`:
 
-```go
-// Drop the failing item and continue
-parsed := kitsune.Map(lines, parseLine,
-    kitsune.OnError(kitsune.Skip()),
-)
+=== "Skip on error"
 
-// Retry up to 3 times with exponential backoff, then halt
-results := kitsune.Map(queries, callAPI,
-    kitsune.Concurrency(10),
-    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
-)
+    ```go
+    parsed := kitsune.Map(lines, parseLine,
+        kitsune.OnError(kitsune.Skip()),
+    )
+    ```
 
-// Retry 3 times, then skip (never halt)
-results := kitsune.Map(queries, callAPI,
-    kitsune.OnError(kitsune.RetryThen(3,
-        kitsune.ExponentialBackoff(time.Second, 30*time.Second),
-        kitsune.Skip(),
-    )),
-)
-```
+=== "Retry with backoff"
+
+    ```go
+    results := kitsune.Map(queries, callAPI,
+        kitsune.Concurrency(10),
+        kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
+    )
+    ```
+
+=== "Retry then skip"
+
+    ```go
+    results := kitsune.Map(queries, callAPI,
+        kitsune.OnError(kitsune.RetryThen(3,
+            kitsune.ExponentialBackoff(time.Second, 30*time.Second),
+            kitsune.Skip(),
+        )),
+    )
+    ```
 
 For more advanced routing: send failures to a dead-letter queue instead of discarding them. Use [`DeadLetter`](operators.md#deadletter):
 
