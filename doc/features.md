@@ -1,20 +1,20 @@
 # Features
 
-Kitsune is an in-process pipeline engine. It handles the plumbing — channels, goroutines, backpressure, error routing, observability — so stage functions stay focused on business logic.
+Kitsune is an in-process pipeline engine. It handles the plumbing: channels, goroutines, backpressure, error routing, and observability. Stage functions stay focused on business logic.
 
 ---
 
 ## :material-valve: Automatic backpressure
 
-Every stage is connected by a bounded channel. When a downstream stage is slow, its input channel fills up and the upstream stage blocks — backpressure propagates all the way to the source automatically. Nothing is dropped silently and nothing queues unboundedly.
+Every stage is connected by a bounded channel. When a downstream stage is slow, its input channel fills up and the upstream stage blocks; backpressure propagates all the way to the source automatically. Nothing is dropped silently and nothing queues unboundedly.
 
-Buffer size is configurable per stage with `Buffer(n)`. The overflow behaviour (`Block`, `DropNewest`, `DropOldest`) is also configurable when blocking is not appropriate.
+Buffer size is configurable per stage with [`Buffer(n)`](options.md#buffern-int). The overflow behaviour ([`Block`, `DropNewest`, `DropOldest`](options.md#overflows-overflowstrategy)) is also configurable when blocking is not appropriate.
 
 ---
 
 ## :material-shield-check-outline: Compile-time type safety
 
-`Pipeline[T]` carries the element type `T` through the graph. Free functions like `Map` and `FlatMap` can change the type; methods like `Filter` and `Take` preserve it. Every stage transition is checked at compile time — no type assertions, no `interface{}`, no runtime surprises.
+`Pipeline[T]` carries the element type `T` through the graph. Free functions like [`Map`](operators.md#map) and [`FlatMap`](operators.md#flatmap) can change the type; methods like [`Filter`](operators.md#filter) and [`Take`](operators.md#take) preserve it. Every stage transition is checked at compile time: no type assertions, no `interface{}`, no runtime surprises.
 
 ```go
 orders   := kitsune.Map(raw, parseOrder)      // Pipeline[Order]
@@ -26,7 +26,7 @@ batched  := kitsune.Batch(enriched, 500)       // Pipeline[[]EnrichedOrder]
 
 ## :material-lightning-bolt-outline: Per-stage concurrency
 
-Add `Concurrency(n)` to any stage to spin up `n` parallel workers reading from the same input channel. Arrival order is not preserved by default (workers finish in I/O completion order); add `Ordered()` to re-sequence output without sacrificing throughput.
+Add [`Concurrency(n)`](options.md#concurrencyn-int) to any stage to spin up `n` parallel workers reading from the same input channel. Arrival order is not preserved by default (workers finish in I/O completion order); add [`Ordered()`](options.md#ordered) to re-sequence output without sacrificing throughput.
 
 ```go
 enriched := kitsune.Map(orders, callEnrichAPI,
@@ -56,7 +56,7 @@ Split a stream into multiple branches or merge multiple streams into one.
 | `Zip / ZipWith` | Pairwise combine two streams into one |
 | `WithLatestFrom` | Combine a primary stream with the latest value from a secondary |
 
-All fan-out operators integrate with `MergeRunners` so every branch shares the same source and runs within a single `Run` call.
+All fan-out operators integrate with `MergeRunners` so every branch shares the same source and runs within a single `Run` call. [See the operator catalog →](operators.md#fan-out--fan-in)
 
 ---
 
@@ -85,9 +85,9 @@ err     := batched.ForEach(bulkInsert, kitsune.Concurrency(4)).Run(ctx)
 
 `MapWith` and `MapWithKey` give stage functions access to typed `Ref` state that lives for the lifetime of one `Run`. No global variables, no external stores for in-process accumulation.
 
-**`MapWith`** — one shared `Ref` for the entire stream. Suitable for running totals, sequence numbers, or any aggregate that spans all items.
+**[`MapWith`](operators.md#mapwith)**: one shared `Ref` for the entire stream. Suitable for running totals, sequence numbers, or any aggregate that spans all items.
 
-**`MapWithKey`** — one `Ref` per unique key, sharded across workers by `hash(key) % n`. Items for the same key always land on the same worker: per-entity state never crosses goroutine boundaries. This is the **in-process actor model** — lock-free by design.
+**[`MapWithKey`](operators.md#mapwithkey)**: one `Ref` per unique key, sharded across workers by `hash(key) % n`. Items for the same key always land on the same worker: per-entity state never crosses goroutine boundaries. This is the **in-process actor model**, lock-free by design.
 
 ```go
 // Per-user rate limiter: no mutex, no contention
@@ -144,7 +144,7 @@ out := kitsune.CircuitBreaker(items, callAPI,
 - `RateLimitDrop`: silently discard excess items. Useful for metrics sampling.
 - `Burst(n)`: allow short bursts above the steady-state rate.
 
-For **per-entity rate limiting** (each user gets an independent budget), use `MapWithKey`. Key-sharded routing means per-user state never crosses goroutine boundaries — no mutex, no contention.
+For **per-entity rate limiting** (each user gets an independent budget), use [`MapWithKey`](operators.md#mapwithkey). Key-sharded routing means per-user state never crosses goroutine boundaries; no mutex, no contention.
 
 ---
 
@@ -192,7 +192,7 @@ Stages are independently testable with `FromSlice` + `Collect` — no mocks, no 
 | `Sample(d)` | Emit the latest item seen in each `d` window |
 | `Timeout(d)` | Cancel a stage function's context after `d`; combine with `OnError` |
 
-All time operators accept a `WithClock` option for deterministic testing without `time.Sleep`.
+All time operators accept a [`WithClock`](options.md#withclockc-clock) option for deterministic testing without `time.Sleep`. [See the operator catalog →](operators.md#time-based-operators)
 
 ---
 
@@ -202,15 +202,15 @@ All time operators accept a `WithClock` option for deterministic testing without
 
 **Built-in hooks:**
 
-- `MetricsHook` — in-memory per-stage counters and latency histograms; JSON-serialisable snapshot.
-- `LogHook` — structured `slog` output for every item and error.
-- `MultiHook` — fan events to multiple hooks simultaneously.
+- `MetricsHook`: in-memory per-stage counters and latency histograms; JSON-serialisable snapshot.
+- `LogHook`: structured `slog` output for every item and error.
+- `MultiHook`: fan events to multiple hooks simultaneously.
 
 **Tail hooks** (separate modules, zero-dependency on the core):
 
-- `kotel` — OpenTelemetry spans and metrics
-- `kprometheus` — Prometheus counters and duration histograms
-- `kdatadog` — Datadog DogStatsD counts and distributions
+- [`kotel`](tails.md#kotel): OpenTelemetry spans and metrics
+- [`kprometheus`](tails.md#kprometheus): Prometheus counters and duration histograms
+- [`kdatadog`](tails.md#kdatadog): Datadog DogStatsD counts and distributions
 
 **Live inspector dashboard:** add one line to any pipeline to open a real-time web UI with a live DAG, per-stage throughput sparklines, buffer fill gauges, and stop/restart controls. [See the inspector guide →](inspector.md)
 
