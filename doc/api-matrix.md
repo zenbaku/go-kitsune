@@ -418,7 +418,8 @@ Tails are separate Go modules under `tails/` that adapt external systems to kits
 | Module | Package | Source | Sink | Notes |
 |--------|---------|--------|------|-------|
 | Apache Kafka | `tails/kkafka` | `Consume` | `Produce` | segmentio/kafka-go |
-| NATS / JetStream | `tails/knats` | `Subscribe`, `Consume` | `Publish`, `JetStreamPublish` | nats.go |
+| NATS / JetStream | `tails/knats` | `Subscribe`, `Consume` | `Publish`, `JetStreamPublish` | nats.go; see also `tails/kjetstream` for pull, ordered, KV, and async publish |
+| NATS JetStream (advanced) | `tails/kjetstream` | `Fetch`, `FetchBytes`, `OrderedConsume`, `WatchKV` | `PublishAsync` (returns sink + flush), `PutKV` | nats.go/jetstream; pull-batch, ordered consumers, KV watch, async batched publish |
 | RabbitMQ / AMQP 0-9-1 | `tails/kamqp` | `Consume` | `Publish` | rabbitmq/amqp091-go; manual ack by default, configurable via `WithAutoAck`, `WithRequeueOnNack` |
 | MQTT | `tails/kmqtt` | `Subscribe` | `Publish` | paho.mqtt.golang |
 | Azure Service Bus | `tails/kazsb` | `Receive` | `Send` | azservicebus |

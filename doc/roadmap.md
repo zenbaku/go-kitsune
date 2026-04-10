@@ -26,7 +26,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **RabbitMQ / AMQP tail (`kamqp`)** — source (consume queue) and sink (publish to exchange) for RabbitMQ and any AMQP 0-9-1 broker. The one widely-deployed messaging system not yet covered by the tails.
 
-- [ ] **NATS JetStream tail** — separate from the existing core-NATS tail; JetStream adds persistence, consumer groups, and exactly-once delivery semantics that warrant a dedicated integration.
+- [x] **NATS JetStream tail (`kjetstream`)** — dedicated `tails/kjetstream` module covering patterns that `knats` cannot express: pull-batch consumers (`Fetch`, `FetchBytes`), ordered consumers with auto-recovery (`OrderedConsume`), key-value watch streams (`WatchKV`), and high-throughput async publish (`PublishAsync`, returns a sink + flush pair). KV upsert sink via `PutKV`. User owns all NATS objects; kitsune never creates or closes them.
 
 ---
 
