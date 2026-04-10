@@ -45,6 +45,8 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		concurrency: cfg.concurrency,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
+		timeout:     cfg.timeout,
+		hasRetry:    !internal.IsDefaultHandler(cfg.errorHandler),
 		inputs:      []int{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}

@@ -149,6 +149,26 @@ func newPipeline[T any](id int, meta stageMeta, build func(*runCtx) chan T) *Pip
 	return &Pipeline[T]{id: id, meta: meta, build: build}
 }
 
+// Describe walks the pipeline DAG and returns a topologically-ordered snapshot
+// of every stage (including this one) as []GraphNode — the same shape
+// delivered to [GraphHook.OnGraph] during [Runner.Run].
+//
+// Describe is non-destructive and may be called on any *Pipeline[T], including
+// intermediate (non-terminal) pipelines. It does not execute user-supplied
+// functions, does not open Store or Cache connections, and does not start
+// goroutines. It does allocate the inter-stage channels a Run would use; these
+// are garbage-collected when Describe returns.
+//
+// Describe is safe to call multiple times. Stage IDs are stable across calls
+// because they are assigned at pipeline construction time.
+func (p *Pipeline[T]) Describe() []internal.GraphNode {
+	rc := newRunCtx()
+	rc.hook = internal.NoopHook{}
+	rc.codec = internal.JSONCodec{}
+	_ = p.build(rc)
+	return metasToGraphNodes(rc.metas)
+}
+
 // ---------------------------------------------------------------------------
 // refRegistry — state management stub (populated during a future phase)
 // ---------------------------------------------------------------------------

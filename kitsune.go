@@ -212,23 +212,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 
 	// Notify GraphHook (static topology — channel sizes are at initial 0).
 	if gh, ok := hook.(internal.GraphHook); ok {
-		nodes := make([]internal.GraphNode, 0, len(rc.metas))
-		for _, m := range rc.metas {
-			nodes = append(nodes, internal.GraphNode{
-				ID:             m.id,
-				Name:           m.name,
-				Kind:           m.kind,
-				Inputs:         m.inputs,
-				Concurrency:    m.concurrency,
-				Buffer:         m.buffer,
-				Overflow:       int(m.overflow),
-				BatchSize:      m.batchSize,
-				Timeout:        m.timeout,
-				HasRetry:       m.hasRetry,
-				HasSupervision: m.hasSuperv,
-			})
-		}
-		gh.OnGraph(nodes)
+		gh.OnGraph(metasToGraphNodes(rc.metas))
 	}
 
 	// Notify BufferHook with a live query closure over the materialised channels.
@@ -324,6 +308,29 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 		close(done)
 	}()
 	return &RunHandle{errCh: errCh, done: done, gate: gate}
+}
+
+// metasToGraphNodes converts the internal stageMeta slice collected during the
+// build phase into the public []internal.GraphNode type used by GraphHook and
+// Pipeline.Describe.
+func metasToGraphNodes(metas []stageMeta) []internal.GraphNode {
+	nodes := make([]internal.GraphNode, 0, len(metas))
+	for _, m := range metas {
+		nodes = append(nodes, internal.GraphNode{
+			ID:             m.id,
+			Name:           m.name,
+			Kind:           m.kind,
+			Inputs:         m.inputs,
+			Concurrency:    m.concurrency,
+			Buffer:         m.buffer,
+			Overflow:       int(m.overflow),
+			BatchSize:      m.batchSize,
+			Timeout:        m.timeout,
+			HasRetry:       m.hasRetry,
+			HasSupervision: m.hasSuperv,
+		})
+	}
+	return nodes
 }
 
 // MergeRunners combines multiple runners that share the same pipeline graph

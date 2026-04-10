@@ -32,7 +32,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ### Developer experience
 
-- [ ] **`Pipeline.Describe()`** — return a `GraphNode` tree representing the wired pipeline without executing it. Enables static validation that a pipeline is correctly assembled, and unit-testing of graph structure, without needing a full `Run`. Complements the live `inspector` dashboard.
+- [x] **`Pipeline.Describe()`** — return a `GraphNode` tree representing the wired pipeline without executing it. Enables static validation that a pipeline is correctly assembled, and unit-testing of graph structure, without needing a full `Run`. Complements the live `inspector` dashboard.
 
 - [ ] **Expanded examples** — worked examples for the patterns most often asked about: `MapWithKey` for per-user rate limiting, `MapWith` for running totals, `DeadLetter` for retry-with-fallback, and `Stage` composition via `Then` / `Or`.
 

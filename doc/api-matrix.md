@@ -409,6 +409,8 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 **`GraphNode`** exposes: `Kind`, `Name`, `Concurrency`, `Buffer`, `Overflow`, `BatchSize`, `Timeout`, `HasRetry`, `HasSupervision`.
 
+**`Pipeline[T].Describe() []GraphNode`** — returns the same `[]GraphNode` snapshot synchronously, without executing the pipeline. Callable on any `*Pipeline[T]`, including intermediate (non-terminal) stages. Useful for static validation and unit-testing graph structure without a full `Run`.
+
 ---
 
 ## 18 · Tails (External Adapters)
