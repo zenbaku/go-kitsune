@@ -9,26 +9,34 @@ import (
 // Pool / Pooled / MapPooled
 // ---------------------------------------------------------------------------
 
-// Pool is a generic wrapper around [sync.Pool].
-// Use [NewPool] to create one and [MapPooled] to use it as a pipeline stage.
+// Pool is a size-unbounded object pool backed by a mutex-protected stack.
+// Objects are returned in LIFO order so recently-used items (likely still in
+// CPU cache) are preferred. Use [NewPool] to create one and [MapPooled] to use
+// it as a pipeline stage.
 type Pool[T any] struct {
-	p sync.Pool
+	mu    sync.Mutex
+	stack []*Pooled[T]
+	newFn func() T
 }
 
 // NewPool returns a Pool backed by newFn. newFn is called whenever the pool
 // has no free objects to return.
 func NewPool[T any](newFn func() T) *Pool[T] {
-	p := &Pool[T]{}
-	p.p.New = func() any {
-		v := newFn()
-		return &Pooled[T]{Value: v, pool: p}
-	}
-	return p
+	return &Pool[T]{newFn: newFn}
 }
 
 // Get acquires an object from the pool. Call [Pooled.Release] when done.
 func (p *Pool[T]) Get() *Pooled[T] {
-	return p.p.Get().(*Pooled[T])
+	p.mu.Lock()
+	if n := len(p.stack); n > 0 {
+		item := p.stack[n-1]
+		p.stack = p.stack[:n-1]
+		p.mu.Unlock()
+		return item
+	}
+	p.mu.Unlock()
+	v := p.newFn()
+	return &Pooled[T]{Value: v, pool: p}
 }
 
 // Put returns item to the pool. Equivalent to calling [Pooled.Release] on the
@@ -38,7 +46,9 @@ func (p *Pool[T]) Put(item *Pooled[T]) {
 }
 
 func (p *Pool[T]) put(item *Pooled[T]) {
-	p.p.Put(item)
+	p.mu.Lock()
+	p.stack = append(p.stack, item)
+	p.mu.Unlock()
 }
 
 // Warmup pre-populates the pool with n objects by calling the factory function

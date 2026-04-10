@@ -3,7 +3,6 @@ package kitsune_test
 import (
 	"context"
 	"errors"
-	"runtime/debug"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -642,12 +641,6 @@ func TestPoolWarmupPreAllocates(t *testing.T) {
 		count.Add(1)
 		return 0
 	})
-
-	// Disable GC for the duration of this test. sync.Pool is allowed to evict
-	// objects on any GC cycle; disabling GC keeps the warmed objects in the pool
-	// so the second assertion (no extra factory calls) is deterministic.
-	prev := debug.SetGCPercent(-1)
-	defer debug.SetGCPercent(prev)
 
 	pool.Warmup(5)
 	if got := count.Load(); got != 5 {
