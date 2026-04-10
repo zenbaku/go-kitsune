@@ -15,6 +15,117 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Catch
+// ---------------------------------------------------------------------------
+
+func TestCatch_NoError(t *testing.T) {
+	// Primary succeeds — fallback must never be invoked.
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	fallbackCalled := false
+	out := kitsune.Catch(p, func(err error) *kitsune.Pipeline[int] {
+		fallbackCalled = true
+		return kitsune.FromSlice([]int{99})
+	})
+	got, err := kitsune.Collect(ctx, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+	if fallbackCalled {
+		t.Fatal("fallback should not be called when primary succeeds")
+	}
+}
+
+func TestCatch_ErrorTriggersFallback(t *testing.T) {
+	// Primary errors after emitting two items; fallback provides the rest.
+	ctx := context.Background()
+	boom := errors.New("boom")
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 3 {
+				return 0, boom
+			}
+			return v * 10, nil
+		},
+	)
+	var caught error
+	out := kitsune.Catch(p, func(err error) *kitsune.Pipeline[int] {
+		caught = err
+		return kitsune.FromSlice([]int{99, 100})
+	})
+	got, err := kitsune.Collect(ctx, out)
+	if err != nil {
+		t.Fatalf("unexpected error from Catch: %v", err)
+	}
+	if !sliceEqual(got, []int{10, 20, 99, 100}) {
+		t.Fatalf("got %v, want [10 20 99 100]", got)
+	}
+	if !errors.Is(caught, boom) {
+		t.Fatalf("fallback received error %v, want %v", caught, boom)
+	}
+}
+
+func TestCatch_FallbackEmpty(t *testing.T) {
+	// Primary errors; fallback emits nothing.
+	ctx := context.Background()
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (int, error) {
+			return 0, errors.New("oops")
+		},
+	)
+	out := kitsune.Catch(p, func(error) *kitsune.Pipeline[int] {
+		return kitsune.FromSlice([]int{})
+	})
+	got, err := kitsune.Collect(ctx, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+func TestCatch_ContextCancelledSkipsFallback(t *testing.T) {
+	// If the context is already cancelled, the fallback must not be invoked.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	fallbackCalled := false
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		return errors.New("source error")
+	})
+	out := kitsune.Catch(p, func(error) *kitsune.Pipeline[int] {
+		fallbackCalled = true
+		return kitsune.FromSlice([]int{1})
+	})
+	_, _ = kitsune.Collect(ctx, out)
+	if fallbackCalled {
+		t.Fatal("fallback must not be called when context is cancelled")
+	}
+}
+
+func TestCatch_FallbackAlsoErrors(t *testing.T) {
+	// Primary errors; fallback also errors — fallback's error is returned.
+	ctx := context.Background()
+	fallbackErr := errors.New("fallback failure")
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (int, error) { return 0, errors.New("primary") },
+	)
+	out := kitsune.Catch(p, func(error) *kitsune.Pipeline[int] {
+		return kitsune.Map(kitsune.FromSlice([]int{1}),
+			func(_ context.Context, v int) (int, error) { return 0, fallbackErr },
+		)
+	})
+	_, err := kitsune.Collect(ctx, out)
+	if !errors.Is(err, fallbackErr) {
+		t.Fatalf("expected fallback error %v, got %v", fallbackErr, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Reject
 // ---------------------------------------------------------------------------
 

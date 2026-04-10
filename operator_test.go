@@ -734,6 +734,203 @@ func TestOrderedNoConcurrency(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// TakeUntil / SkipUntil
+// ---------------------------------------------------------------------------
+
+func TestTakeUntil_SourceFinishesBeforeBoundary(t *testing.T) {
+	// Boundary never fires; p is finite — all items should be emitted.
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	// Boundary that blocks until ctx is cancelled (i.e. never fires on its own).
+	boundary := kitsune.Generate(func(ctx context.Context, yield func(struct{}) bool) error {
+		<-ctx.Done()
+		return nil
+	})
+	got := collectAll(t, kitsune.TakeUntil(p, boundary))
+	want := []int{1, 2, 3, 4, 5}
+	if !sliceEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestTakeUntil_BoundaryFiresImmediately(t *testing.T) {
+	// Empty boundary closes immediately — TakeUntil should stop early.
+	// p has 1000 items; we only verify that fewer than 1000 are emitted.
+	ctx := context.Background()
+	items := make([]int, 1000)
+	for i := range items {
+		items[i] = i
+	}
+	p := kitsune.FromSlice(items)
+	boundary := kitsune.FromSlice([]struct{}{{}}) // one item, fires immediately
+	got, _ := kitsune.Collect(ctx, kitsune.TakeUntil(p, boundary))
+	if len(got) >= 1000 {
+		t.Fatalf("expected fewer than 1000 items, got %d", len(got))
+	}
+}
+
+func TestTakeUntil_BoundaryChannel(t *testing.T) {
+	// Control both p and boundary via NewChannel. Send 3 items, fire boundary,
+	// close p — expect exactly 3 items (boundary fires before remaining sends).
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pCh := kitsune.NewChannel[int](10)
+	bCh := kitsune.NewChannel[struct{}](1)
+
+	resultCh := make(chan []int, 1)
+	go func() {
+		got, _ := kitsune.Collect(ctx, kitsune.TakeUntil(pCh.Source(), bCh.Source()))
+		resultCh <- got
+	}()
+
+	for _, v := range []int{1, 2, 3} {
+		if err := pCh.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Fire boundary then close p — no more items should arrive.
+	if err := bCh.Send(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	bCh.Close()
+	pCh.Close()
+
+	select {
+	case got := <-resultCh:
+		// Must have stopped at or before item 3.
+		if len(got) > 3 {
+			t.Fatalf("expected ≤3 items, got %v", got)
+		}
+		for i, v := range got {
+			if v != i+1 {
+				t.Fatalf("item[%d]=%d, want %d", i, v, i+1)
+			}
+		}
+	case <-ctx.Done():
+		t.Fatal("test timed out")
+	}
+}
+
+func TestSkipUntil_BoundaryNeverFires(t *testing.T) {
+	// Boundary never fires; p is finite — no items should be emitted.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	boundary := kitsune.Generate(func(ctx context.Context, yield func(struct{}) bool) error {
+		<-ctx.Done()
+		return nil
+	})
+	got := collectAll(t, kitsune.SkipUntil(p, boundary))
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestSkipUntil_EmptySource(t *testing.T) {
+	// p is empty; boundary fires immediately. Output must be empty and error-free.
+	// (No race: p emits nothing regardless of when boundary fires.)
+	p := kitsune.FromSlice([]int{})
+	boundary := kitsune.FromSlice([]struct{}{{}})
+	got := collectAll(t, kitsune.SkipUntil(p, boundary))
+	if len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestSkipUntil_BoundaryChannel(t *testing.T) {
+	// Fire boundary after 3 items; the subsequent items must appear in output.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pCh := kitsune.NewChannel[int](10)
+	bCh := kitsune.NewChannel[struct{}](1)
+
+	resultCh := make(chan []int, 1)
+	go func() {
+		got, _ := kitsune.Collect(ctx, kitsune.SkipUntil(pCh.Source(), bCh.Source()))
+		resultCh <- got
+	}()
+
+	// These items arrive before the gate opens — they should be skipped.
+	for _, v := range []int{1, 2, 3} {
+		if err := pCh.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Open the gate.
+	if err := bCh.Send(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	bCh.Close()
+	// Give the stage goroutine time to process the boundary signal before
+	// sending post-gate items — otherwise items may arrive before gate opens.
+	time.Sleep(pipelineStartup)
+	// These items arrive after the gate opens — they must be emitted.
+	for _, v := range []int{10, 20, 30} {
+		if err := pCh.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pCh.Close()
+
+	select {
+	case got := <-resultCh:
+		// The post-gate items must all be present.
+		if len(got) < 3 {
+			t.Fatalf("expected at least 3 items, got %d: %v", len(got), got)
+		}
+		last3 := got[len(got)-3:]
+		if !sliceEqual(last3, []int{10, 20, 30}) {
+			t.Fatalf("last 3 items: got %v, want [10 20 30] (full: %v)", last3, got)
+		}
+	case <-ctx.Done():
+		t.Fatal("test timed out")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SkipLast
+// ---------------------------------------------------------------------------
+
+func TestSkipLast_Basic(t *testing.T) {
+	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 2))
+	want := []int{1, 2, 3}
+	if !sliceEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestSkipLast_ZeroN(t *testing.T) {
+	// n=0 should forward all items unchanged.
+	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3}), 0))
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Errorf("got %v, want [1 2 3]", got)
+	}
+}
+
+func TestSkipLast_NGreaterThanLen(t *testing.T) {
+	// n ≥ len → empty output.
+	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2}), 5))
+	if len(got) != 0 {
+		t.Errorf("got %v, want []", got)
+	}
+}
+
+func TestSkipLast_ExactN(t *testing.T) {
+	// n == len → empty output.
+	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3}), 3))
+	if len(got) != 0 {
+		t.Errorf("got %v, want []", got)
+	}
+}
+
+func TestSkipLast_One(t *testing.T) {
+	// n=1 should drop only the last item.
+	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{10, 20, 30}), 1))
+	if !sliceEqual(got, []int{10, 20}) {
+		t.Errorf("got %v, want [10 20]", got)
+	}
+}
+
 func sliceEqual[T comparable](a, b []T) bool {
 	if len(a) != len(b) {
 		return false

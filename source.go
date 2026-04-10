@@ -713,3 +713,65 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 		return firstErr
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Catch
+// ---------------------------------------------------------------------------
+
+// Catch provides stream-level error recovery. The primary pipeline p runs
+// normally; if its execution returns a non-nil, non-context error, fn is
+// called with that error and its returned fallback pipeline is subscribed
+// instead — items already emitted by p are kept and the fallback's items
+// follow them.
+//
+// If p completes without error the fallback is never started.
+// If the context is cancelled during p the fallback is also skipped.
+//
+// p is run in an isolated sub-execution; callers may safely pass a pipeline
+// that has not yet been consumed by any other stage.
+//
+//	kitsune.Catch(riskyPipeline, func(err error) *kitsune.Pipeline[Event] {
+//	    log.Printf("primary failed (%v); switching to backup", err)
+//	    return backupSource()
+//	})
+func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		innerCtx, cancel := context.WithCancel(ctx)
+		stopped := false
+		err := p.ForEach(func(_ context.Context, item T) error {
+			if !yield(item) {
+				stopped = true
+				cancel()
+			}
+			return nil
+		}).Run(innerCtx)
+		cancel()
+
+		if stopped || err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Primary errored — subscribe to the fallback.
+		fallback := fn(err)
+		innerCtx2, cancel2 := context.WithCancel(ctx)
+		err2 := fallback.ForEach(func(_ context.Context, item T) error {
+			if !yield(item) {
+				stopped = true
+				cancel2()
+			}
+			return nil
+		}).Run(innerCtx2)
+		cancel2()
+
+		if stopped {
+			return nil
+		}
+		if errors.Is(err2, context.Canceled) && ctx.Err() == nil {
+			return nil
+		}
+		return err2
+	})
+}

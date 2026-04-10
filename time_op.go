@@ -75,6 +75,92 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 // Debounce
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Sample
+// ---------------------------------------------------------------------------
+
+// Sample emits the most-recently-seen item from p at each tick of a
+// d-duration interval. If no item has arrived since the last tick, that tick
+// is skipped silently. Unlike [Throttle] (which rate-limits on item arrival)
+// and [Debounce] (which waits for a quiet period), Sample samples at a fixed
+// wall-clock rate regardless of upstream speed.
+//
+// The latest item is NOT flushed when upstream closes between ticks; use
+// [Debounce] if you need a final flush on source close.
+//
+// Supports [Buffer], [WithName], and [WithClock].
+//
+//	kitsune.Sample(liveQuotes, 100*time.Millisecond)
+//	// emits at most one quote every 100 ms, always the latest one
+func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeline[T] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "sample",
+		name:   orDefault(cfg.name, "sample"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id},
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inCh := p.build(rc)
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+
+			clk := cfg.clock
+			if clk == nil {
+				clk = internal.RealClock{}
+			}
+
+			outbox := internal.NewBlockingOutbox(ch)
+			ticker := clk.NewTicker(d)
+			defer ticker.Stop()
+
+			var (
+				latest    T
+				hasLatest bool
+			)
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					latest = item
+					hasLatest = true
+				case <-ticker.C():
+					if hasLatest {
+						if err := outbox.Send(ctx, latest); err != nil {
+							return err
+						}
+						hasLatest = false
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// ---------------------------------------------------------------------------
+// Debounce
+// ---------------------------------------------------------------------------
+
 // Debounce suppresses rapid bursts: an item is only emitted after no new items
 // have arrived for the silence duration. If items arrive faster than silence,
 // only the last item in each burst is forwarded.

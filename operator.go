@@ -1315,6 +1315,246 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
+// SkipLast
+// ---------------------------------------------------------------------------
+
+// SkipLast omits the last n items of p, emitting all earlier items. If n ≤ 0
+// all items are forwarded unchanged. If n ≥ the total number of items the
+// output is empty.
+//
+// It maintains an internal ring buffer of size n: each arriving item displaces
+// the oldest buffered item, which is then emitted. The n items still in the
+// buffer when the source closes are discarded.
+//
+//	kitsune.SkipLast(kitsune.FromSlice([]int{1,2,3,4,5}), 2)
+//	// emits 1, 2, 3
+func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
+	if n <= 0 {
+		return p
+	}
+	track(p)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "skip_last",
+		name:   "skip_last",
+		buffer: internal.DefaultBuffer,
+		inputs: []int{p.id},
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inCh := p.build(rc)
+		ch := make(chan T, internal.DefaultBuffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+
+			buf := make([]T, n)
+			head := 0 // index of oldest item
+			count := 0
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if count < n {
+						buf[count] = item
+						count++
+					} else {
+						// Emit oldest, insert new item at its slot.
+						oldest := buf[head]
+						buf[head] = item
+						head = (head + 1) % n
+						select {
+						case ch <- oldest:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// ---------------------------------------------------------------------------
+// TakeUntil / SkipUntil
+// ---------------------------------------------------------------------------
+
+// TakeUntil passes items from p through until the boundary pipeline emits its
+// first item (or closes), then stops. The boundary item type U is ignored;
+// only the signal matters. This is distinct from [TakeWhile], which evaluates
+// a predicate on each item from p itself.
+//
+// Calls [signalDone] on exit so that infinite sources upstream of p are
+// cancelled cleanly.
+//
+//	stop := kitsune.Timer(5*time.Second, func(_ context.Context) (struct{}, error) { return struct{}{}, nil })
+//	kitsune.TakeUntil(stream, stop)
+//	// forwards items from stream for 5 seconds then stops
+func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOption) *Pipeline[T] {
+	track(p)
+	track(boundary)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "take_until",
+		name:   orDefault(cfg.name, "take_until"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id, boundary.id},
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inCh := p.build(rc)
+		boundaryCh := boundary.build(rc)
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		signalDone := rc.signalDone
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			defer func() { go internal.DrainChan(boundaryCh) }()
+			defer signalDone()
+
+			outbox := internal.NewBlockingOutbox(ch)
+
+			// Close stopCh when the boundary emits its first item or closes.
+			stopCh := make(chan struct{})
+			go func() {
+				select {
+				case <-boundaryCh:
+					close(stopCh)
+				case <-ctx.Done():
+				}
+			}()
+
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if err := outbox.Send(ctx, item); err != nil {
+						return err
+					}
+				case <-stopCh:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// SkipUntil suppresses all items from p until the boundary pipeline emits its
+// first item (or closes), then passes everything through. The boundary item
+// type U is ignored; only the signal matters.
+//
+//	kitsune.SkipUntil(stream, readySignal)
+//	// discards items until readySignal fires, then forwards all subsequent items
+func SkipUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOption) *Pipeline[T] {
+	track(p)
+	track(boundary)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "skip_until",
+		name:   orDefault(cfg.name, "skip_until"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id, boundary.id},
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		inCh := p.build(rc)
+		boundaryCh := boundary.build(rc)
+		ch := make(chan T, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		signalDone := rc.signalDone
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			defer func() { go internal.DrainChan(boundaryCh) }()
+			defer signalDone() // stop boundary and any infinite upstream sources when p closes
+
+			outbox := internal.NewBlockingOutbox(ch)
+
+			// Close gateCh when the boundary emits its first item or closes.
+			gateCh := make(chan struct{})
+			go func() {
+				select {
+				case <-boundaryCh:
+					close(gateCh)
+				case <-ctx.Done():
+				}
+			}()
+
+			// gateChRef becomes nil once the gate is open to prevent a
+			// perpetually-closed channel from dominating the select.
+			var gateChRef <-chan struct{} = gateCh
+			gateOpen := false
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					if !gateOpen {
+						// Non-blocking check: did the gate open while we were
+						// waiting for this item?
+						select {
+						case <-gateCh:
+							gateOpen = true
+							gateChRef = nil
+						default:
+							continue // gate still closed — skip item
+						}
+					}
+					if err := outbox.Send(ctx, item); err != nil {
+						return err
+					}
+				case <-gateChRef:
+					gateOpen = true
+					gateChRef = nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// ---------------------------------------------------------------------------
 // Reject
 // ---------------------------------------------------------------------------
 

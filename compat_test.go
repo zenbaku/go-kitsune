@@ -668,3 +668,78 @@ func TestSumBy_SnapshotIsolation(t *testing.T) {
 		t.Errorf("snapshot isolation broken: snapshot[1][a]=%d, want 30", snapshots[1]["a"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// EndWith
+// ---------------------------------------------------------------------------
+
+func TestEndWith_Basic(t *testing.T) {
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.Collect(ctx, kitsune.EndWith(p, 4, 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4, 5}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("[%d]: got %d, want %d", i, got[i], v)
+		}
+	}
+}
+
+func TestEndWith_EmptyUpstream(t *testing.T) {
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{})
+	got, err := kitsune.Collect(ctx, kitsune.EndWith(p, 10, 20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{10, 20}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("[%d]: got %d, want %d", i, got[i], v)
+		}
+	}
+}
+
+func TestEndWith_NoItems(t *testing.T) {
+	// EndWith with no suffix items is a no-op.
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	got, err := kitsune.Collect(ctx, kitsune.EndWith(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestEndWith_OrderGuarantee(t *testing.T) {
+	// Suffix must appear strictly after all upstream items, not interleaved.
+	ctx := context.Background()
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	got, err := kitsune.Collect(ctx, kitsune.EndWith(p, 99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 6 {
+		t.Fatalf("got %v, want 6 items", got)
+	}
+	if got[5] != 99 {
+		t.Errorf("last item: got %d, want 99", got[5])
+	}
+	for i := 0; i < 5; i++ {
+		if got[i] != i+1 {
+			t.Errorf("[%d]: got %d, want %d", i, got[i], i+1)
+		}
+	}
+}

@@ -361,3 +361,155 @@ func TestInterval_TestClock(t *testing.T) {
 		t.Fatal("pipeline did not finish after 4 intervals")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Sample
+// ---------------------------------------------------------------------------
+
+// TestSample_EmitsLatestPerTick verifies that Sample emits the most-recently-
+// seen item at each tick and resets the latch afterwards.
+func TestSample_EmitsLatestPerTick(t *testing.T) {
+	ctx := context.Background()
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[int](10)
+
+	items := make(chan int, 10)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+			kitsune.WithClock(clock),
+		).ForEach(func(_ context.Context, v int) error {
+			items <- v
+			return nil
+		}).Run(ctx)
+	}()
+
+	time.Sleep(pipelineStartup)
+
+	// Send three items before the first tick; only the last should be emitted.
+	for _, v := range []int{1, 2, 3} {
+		if err := ch.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(pipelineStartup)
+	clock.Advance(5 * time.Second)
+
+	select {
+	case got := <-items:
+		if got != 3 {
+			t.Errorf("first tick: got %d, want 3 (latest item)", got)
+		}
+	case <-time.After(tickTimeout):
+		t.Fatal("timeout waiting for first sample")
+	}
+
+	// Send one item, fire second tick — that item must be emitted.
+	if err := ch.Send(ctx, 42); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(pipelineStartup)
+	clock.Advance(5 * time.Second)
+
+	select {
+	case got := <-items:
+		if got != 42 {
+			t.Errorf("second tick: got %d, want 42", got)
+		}
+	case <-time.After(tickTimeout):
+		t.Fatal("timeout waiting for second sample")
+	}
+
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+}
+
+// TestSample_SkipsTickWhenNoItems verifies that ticks with no new items since
+// the last emission produce no output.
+func TestSample_SkipsTickWhenNoItems(t *testing.T) {
+	ctx := context.Background()
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[int](10)
+
+	items := make(chan int, 10)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+			kitsune.WithClock(clock),
+		).ForEach(func(_ context.Context, v int) error {
+			items <- v
+			return nil
+		}).Run(ctx)
+	}()
+
+	time.Sleep(pipelineStartup)
+
+	// Send one item, advance once — should emit.
+	if err := ch.Send(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(pipelineStartup)
+	clock.Advance(5 * time.Second)
+
+	select {
+	case got := <-items:
+		if got != 7 {
+			t.Errorf("got %d, want 7", got)
+		}
+	case <-time.After(tickTimeout):
+		t.Fatal("timeout waiting for first sample")
+	}
+
+	// Advance again without sending any new item — nothing should be emitted.
+	clock.Advance(5 * time.Second)
+	select {
+	case got := <-items:
+		t.Errorf("expected no emission on empty tick, got %d", got)
+	case <-time.After(30 * time.Millisecond):
+		// Expected: nothing emitted.
+	}
+
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+}
+
+// TestSample_NoFlushOnClose verifies that when the upstream closes between
+// ticks, the buffered latest item is NOT emitted (unlike Debounce).
+func TestSample_NoFlushOnClose(t *testing.T) {
+	ctx := context.Background()
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[int](10)
+
+	items := make(chan int, 10)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+			kitsune.WithClock(clock),
+		).ForEach(func(_ context.Context, v int) error {
+			items <- v
+			return nil
+		}).Run(ctx)
+	}()
+
+	time.Sleep(pipelineStartup)
+
+	// Send an item and close the source before the tick fires.
+	if err := ch.Send(ctx, 99); err != nil {
+		t.Fatal(err)
+	}
+	ch.Close()
+
+	// Pipeline should complete without emitting the pending item.
+	if err := <-done; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+	select {
+	case got := <-items:
+		t.Errorf("expected no emission on close, got %d", got)
+	default:
+	}
+}

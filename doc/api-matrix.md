@@ -239,8 +239,12 @@ Terminal functions run the pipeline and return a materialised result. They accep
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
 | `Throttle` | `Throttle[T](p, window, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `Debounce` | `Debounce[T](p, silence, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `Sample` | `Sample[T](p, d, opts...)` — emit latest item per tick | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `Timestamp` | `Timestamp[T](p, opts...)` → `*Pipeline[Timestamped[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `TimeInterval` | `TimeInterval[T](p, opts...)` → `*Pipeline[TimedInterval[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+
+**Notes**
+- `Sample` emits the most-recently-seen item on each tick and resets the latch; ticks with no new item produce no output. Unlike `Debounce`, it does **not** flush on source close.
 
 ---
 
@@ -252,19 +256,25 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Drop` | `Drop[T](p, n)` — also `(p).Skip`, `(p).Drop` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeWhile` | `TakeWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropWhile` | `DropWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `SkipLast` | `SkipLast[T](p, n)` — omit last n items | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeEvery` | `TakeEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropEvery` | `DropEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WithIndex` | `WithIndex[T](p, opts...)` → `*Pipeline[Indexed[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Intersperse` | `Intersperse[T](p, sep, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Pair[T,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `TakeUntil` | `TakeUntil[T,U](p, boundary *Pipeline[U], opts...)` — pass items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `SkipUntil` | `SkipUntil[T,U](p, boundary *Pipeline[U], opts...)` — skip items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `StartWith` | `StartWith[T](p, items...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `EndWith` | `EndWith[T](p, items...)` — append fixed items after source closes | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DefaultIfEmpty` | `DefaultIfEmpty[T](p, val, opts...)` | – | – | ✓ | ✓ | – | – | – | – | ✓ | – | – | – | – |
 | `Sort` | `Sort[T](p, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SortBy` | `SortBy[T,K](p, keyFn, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery` use hardcoded buffer sizes and accept no options.
+- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery`, `SkipLast` use hardcoded buffer sizes and accept no options.
+- `TakeUntil` / `SkipUntil` accept any `*Pipeline[U]` as boundary; only its first emission matters.
+- `StartWith` / `EndWith` accept no options; they delegate to `Concat` + `FromSlice`.
 - `Indexed[T]` is `struct{ Index int; Value T }`.
 - `(p).Skip` is an alias for `Drop`.
 
@@ -316,6 +326,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 | Operator | Signature | Notes |
 |----------|-----------|-------|
+| `Catch` | `Catch[T](p, fn func(error)*Pipeline[T])` | On pipeline error, switch to fallback pipeline returned by fn |
 | `MapResult` | `MapResult[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | Routes errors to a dead-letter branch |
 | `MapRecover` | `MapRecover[I,O](p, fn, recover, opts...)` | Inline recovery fn produces a fallback value |
 | `DeadLetter` *(compat)* | `DeadLetter[I,O](p, fn, opts...)` | `MapResult` with retry wrapping |

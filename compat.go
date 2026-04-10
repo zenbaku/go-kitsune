@@ -271,6 +271,31 @@ func (s Stage[I, O]) Or(fallback Stage[I, O]) Stage[I, O] {
 // WindowByTime
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// EndWith
+// ---------------------------------------------------------------------------
+
+// EndWith appends one or more items to p after it closes. Suffix items are
+// always emitted after all items from p, in the order given.
+//
+//	kitsune.EndWith(kitsune.FromSlice([]int{1, 2, 3}), 4, 5)
+//	// emits: 1, 2, 3, 4, 5
+func EndWith[T any](p *Pipeline[T], items ...T) *Pipeline[T] {
+	track(p)
+	if len(items) == 0 {
+		return p
+	}
+	itemsCopy := items
+	return Concat(
+		func() *Pipeline[T] { return p },
+		func() *Pipeline[T] { return FromSlice(itemsCopy) },
+	)
+}
+
+// ---------------------------------------------------------------------------
+// WindowByTime
+// ---------------------------------------------------------------------------
+
 // WindowByTime collects items into tumbling time windows of the given duration
 // and emits each window as a slice when the duration elapses. A partial window
 // is emitted when the source completes.
