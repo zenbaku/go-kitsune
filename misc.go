@@ -73,6 +73,14 @@ func FinallyFunc(fn func(error)) func(context.Context, error) {
 	}
 }
 
+// ExpandMapFunc wraps a context-free child-factory function into the
+// signature expected by [ExpandMap].
+func ExpandMapFunc[T any](fn func(T) *Pipeline[T]) func(context.Context, T) *Pipeline[T] {
+	return func(_ context.Context, item T) *Pipeline[T] {
+		return fn(item)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // StartWith / DefaultIfEmpty
 // ---------------------------------------------------------------------------

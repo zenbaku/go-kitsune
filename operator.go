@@ -1158,6 +1158,58 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 	})
 }
 
+// ExpandMap performs a breadth-first expansion of a pipeline. For each item
+// emitted by p, fn is called to produce a child [*Pipeline[T]]; the children
+// are emitted and then themselves expanded, level by level, until no more
+// children are produced.
+//
+// Emission order is BFS: all items at depth N are emitted before any item at
+// depth N+1. fn may return nil to signal that an item has no children.
+//
+// Typical uses: tree traversal, recursive API pagination, graph walks where
+// each node expands into its neighbours.
+//
+//	// Walk a directory tree
+//	kitsune.ExpandMap(kitsune.FromSlice(roots), func(ctx context.Context, dir Dir) *kitsune.Pipeline[Dir] {
+//	    children, _ := dir.ReadChildren(ctx)
+//	    return kitsune.FromSlice(children)
+//	})
+func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T]) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		queue := []*Pipeline[T]{p}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+
+			innerCtx, cancel := context.WithCancel(ctx)
+			stopped := false
+			err := current.ForEach(func(_ context.Context, item T) error {
+				if !yield(item) {
+					stopped = true
+					cancel()
+					return nil
+				}
+				if child := fn(ctx, item); child != nil {
+					queue = append(queue, child)
+				}
+				return nil
+			}).Run(innerCtx)
+			cancel()
+
+			if stopped {
+				return nil
+			}
+			if err != nil && ctx.Err() == nil {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Take / Skip
 // ---------------------------------------------------------------------------

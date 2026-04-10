@@ -392,6 +392,123 @@ func TestFinally_MethodForm(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ExpandMap
+// ---------------------------------------------------------------------------
+
+// expandTree is a helper that maps an int to its "children" in a simple tree:
+// 1 → [2, 3], 2 → [4, 5], 3 → [], 4 → [], 5 → [].
+func expandTree(_ context.Context, v int) *kitsune.Pipeline[int] {
+	switch v {
+	case 1:
+		return kitsune.FromSlice([]int{2, 3})
+	case 2:
+		return kitsune.FromSlice([]int{4, 5})
+	default:
+		return nil // leaf node
+	}
+}
+
+func TestExpandMap_SingleLevel(t *testing.T) {
+	// fn always returns nil — only root items are emitted.
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) *kitsune.Pipeline[int] { return nil },
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
+func TestExpandMap_BFSOrder(t *testing.T) {
+	// Tree: root emits [1]; 1 expands to [2,3]; 2 expands to [4,5]; 3,4,5 are leaves.
+	// BFS order: 1, 2, 3, 4, 5.
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1}), expandTree)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("got %v, want [1 2 3 4 5]", got)
+	}
+}
+
+func TestExpandMap_MultipleRoots(t *testing.T) {
+	// Two roots: 1 and 2; each expands via expandTree.
+	// BFS: 1, 2, then children of 1 (2,3), then children of 2 (4,5),
+	// then children of those children (4,5 from expanding 2 again, but 3,4,5 are leaves).
+	// Root: [1,2] → expand 1→[2,3], expand 2→[4,5] → expand 2→[4,5], expand 3→nil,
+	//        expand 4→nil, expand 5→nil
+	// Emit order: 1, 2, 2, 3, 4, 5, 4, 5
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1, 2}), expandTree)
+	got := collectAll(t, p)
+	want := []int{1, 2, 2, 3, 4, 5, 4, 5}
+	if !sliceEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestExpandMap_EarlyStop(t *testing.T) {
+	// Take(2) stops expansion after 2 items.
+	p := kitsune.Take(kitsune.ExpandMap(kitsune.FromSlice([]int{1}), expandTree), 2)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2}) {
+		t.Fatalf("got %v, want [1 2]", got)
+	}
+}
+
+func TestExpandMap_ErrorPropagates(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) *kitsune.Pipeline[int] {
+			return kitsune.Map(kitsune.FromSlice([]int{0}),
+				func(_ context.Context, _ int) (int, error) { return 0, boom },
+			)
+		},
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom, got %v", err)
+	}
+}
+
+func TestExpandMap_NilChildSkipped(t *testing.T) {
+	// Mix of nil and non-nil: only the non-nil child is followed.
+	calls := 0
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1, 2}),
+		func(_ context.Context, v int) *kitsune.Pipeline[int] {
+			calls++
+			if v == 1 {
+				return kitsune.FromSlice([]int{10})
+			}
+			return nil
+		},
+	)
+	got := collectAll(t, p)
+	// 1 and 2 emitted; 1 expands to 10; 2 returns nil; 10 returns nil (calls=3)
+	if !sliceEqual(got, []int{1, 2, 10}) {
+		t.Fatalf("got %v, want [1 2 10]", got)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 fn calls, got %d", calls)
+	}
+}
+
+func TestExpandMap_ExpandMapFunc(t *testing.T) {
+	// ExpandMapFunc lifts a context-free fn.
+	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1}),
+		kitsune.ExpandMapFunc(func(v int) *kitsune.Pipeline[int] {
+			if v == 1 {
+				return kitsune.FromSlice([]int{2, 3})
+			}
+			return nil
+		}),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Take / Drop
 // ---------------------------------------------------------------------------
 
