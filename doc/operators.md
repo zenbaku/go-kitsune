@@ -474,6 +474,7 @@ func MapResult[I, O any](
 Applies `fn` to each item and routes by outcome: successful outputs go to the first (`ok`) pipeline; failures go to the second (`failed`) pipeline as `ErrItem[I]` values containing the original input and the error. The pipeline never halts. Both output pipelines must be consumed.
 
 `ErrItem[I]` is defined as:
+
 ```go
 type ErrItem[I any] struct {
     Item I
