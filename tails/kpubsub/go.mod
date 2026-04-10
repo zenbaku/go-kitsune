@@ -44,4 +44,3 @@ require (
 )
 
 replace github.com/zenbaku/go-kitsune => ../..
-

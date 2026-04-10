@@ -4,7 +4,6 @@ go 1.26.1
 
 replace github.com/zenbaku/go-kitsune => ../..
 
-
 require (
 	github.com/aws/aws-sdk-go-v2 v1.32.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.71.0
