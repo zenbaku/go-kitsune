@@ -66,7 +66,7 @@ go get github.com/zenbaku/go-kitsune
 
 </div>
 
-[See all features: batching, fan-out, stateful processing, circuit breaker, rate limiting, supervision, and more →](features.md){ .md-button }
+[All features →](features.md){ .md-button }
 
 ---
 

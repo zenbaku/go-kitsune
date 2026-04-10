@@ -11,6 +11,7 @@ nav = [
   {"Features" = "features.md"},
   {"Operators" = "operators.md"},
   {"API Matrix" = "api-matrix.md"},
+  {"Options" = "options.md"},
   {"Tails" = "tails.md"},
   {"Inspector" = "inspector.md"},
   {"Examples" = "examples.md"},
@@ -38,6 +39,10 @@ primary = "deep-orange"
 accent = "deep-orange"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to light mode"
+
+[project.theme]
+logo = "go-kitsune-icon.png"
+favicon = "go-kitsune-icon.png"
 
 [project.theme.icon]
 repo = "fontawesome/brands/github"
