@@ -279,7 +279,7 @@ Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
 go get github.com/zenbaku/go-kitsune/tails/ksqlite
 ```
 
-Query source and insert/batch-insert sinks. You own the `*sql.DB`. See [`examples/sqlite`](../examples/sqlite).
+Query source and insert/batch-insert sinks. You own the `*sql.DB`. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete SQLite example.
 
 ---
 
@@ -353,7 +353,7 @@ pipe := kredis.ListSource[Event](rdb, "myapp:queue", unmarshal)
 sink := kredis.ListSink[Result](rdb, "myapp:results", marshal)
 ```
 
-See [`examples/redis`](../examples/redis) for a complete example covering all four capabilities.
+See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete Redis example covering all four capabilities.
 
 ---
 
@@ -365,7 +365,7 @@ See [`examples/redis`](../examples/redis) for a complete example covering all fo
 go get github.com/zenbaku/go-kitsune/tails/kfile
 ```
 
-Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See [`examples/files`](../examples/files).
+Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete file example.
 
 ---
 
@@ -375,7 +375,7 @@ Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CS
 go get github.com/zenbaku/go-kitsune/tails/khttp
 ```
 
-Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See [`examples/http`](../examples/http).
+Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete HTTP example.
 
 ---
 
@@ -414,7 +414,7 @@ pipe.ForEach(processLine).Run(ctx)
 go get github.com/zenbaku/go-kitsune/tails/kwebsocket
 ```
 
-Frame read source and write sink. Uses `nhooyr.io/websocket`. See [`examples/websocket`](../examples/websocket) for a complete in-process server/client example.
+Frame read source and write sink. Uses `nhooyr.io/websocket`. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete in-process server/client example.
 
 ---
 
@@ -482,7 +482,7 @@ hook := kprometheus.New(reg, "myapp") // "myapp" is the metric namespace
 runner.Run(ctx, kitsune.WithHook(hook))
 ```
 
-See [`examples/prometheus`](../examples/prometheus) for a complete example with an HTTP exposition endpoint.
+See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete example with an HTTP exposition endpoint.
 
 ---
 

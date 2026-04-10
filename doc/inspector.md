@@ -135,7 +135,7 @@ for {
 }
 ```
 
-See [`examples/inspector`](../examples/inspector) for a complete runnable example with a branching topology (Partition, Broadcast, Merge, supervision, overflow) and the full stop/restart loop.
+See the [`inspector` example](examples.md#inspector) and the [source on GitHub](https://github.com/zenbaku/go-kitsune/blob/main/examples/inspector/main.go) for a complete runnable example with a branching topology (Partition, Broadcast, Merge, supervision, overflow) and the full stop/restart loop.
 
 ## Theme
 

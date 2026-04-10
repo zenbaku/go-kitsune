@@ -12,6 +12,7 @@ nav = [
   {"API Matrix" = "api-matrix.md"},
   {"Tails" = "tails.md"},
   {"Inspector" = "inspector.md"},
+  {"Examples" = "examples.md"},
   {"Guides" = [
     {"Testing" = "testing.md"},
     {"Tuning" = "tuning.md"},

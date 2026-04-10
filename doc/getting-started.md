@@ -96,7 +96,7 @@ func main() {
 }
 ```
 
-[`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the testing pattern too: deterministic, no goroutines, no infrastructure. See [`examples/basic`](../examples/basic) for the runnable version.
+[`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect-first-last-count-any-all-find-contains) is the testing pattern too: deterministic, no goroutines, no infrastructure. See the [`basic` example](examples.md#basic) for the runnable version.
 
 ---
 
@@ -205,7 +205,7 @@ Cancelling the context while the pipeline is paused unblocks sources immediately
 
 Pause is a coarse control: it stops all sources simultaneously. For fine-grained flow control on a single stage, use [`RateLimit`](operators.md#ratelimit) or the `Overflow(DropOldest)` buffer strategy instead. For stopping the pipeline entirely, cancel the context.
 
-See [`examples/pause`](../examples/pause) for a runnable version.
+See [`examples/pause`](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a runnable version.
 
 ---
 
@@ -237,7 +237,7 @@ This starts 20 goroutines that all read from the same input channel. **Output or
 
 **Starting point**: 10–20 for HTTP or database calls; `runtime.NumCPU()` for CPU-bound work.
 
-See [`examples/concurrent`](../examples/concurrent) for a runnable version with `LogHook`.
+See the [`concurrent` example](examples.md#concurrent) for a runnable version with `LogHook`.
 
 ---
 
@@ -300,7 +300,7 @@ if err := runner.Run(ctx); err != nil {
 }
 ```
 
-See [`examples/errors`](../examples/errors), [`examples/mapresult`](../examples/mapresult), and [`examples/deadletter`](../examples/deadletter).
+See the [`deadletter` example](examples.md#deadletter) and the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for more.
 
 ---
 
@@ -333,7 +333,7 @@ original, audit := kitsune.Broadcast(events, 2)
 combined := kitsune.Merge(stream1, stream2, stream3)
 ```
 
-See [`examples/fanout`](../examples/fanout) and [`examples/broadcast`](../examples/broadcast).
+See the [`fanout`](examples.md#fanout) and [`broadcast`](examples.md#broadcast) examples.
 
 ---
 
@@ -385,7 +385,7 @@ events, _   := ParseStage.Apply(kitsune.FromSlice(testLines)).Collect(ctx)
 enriched, _ := EnrichStage.Apply(kitsune.FromSlice(events)).Collect(ctx)
 ```
 
-See [`examples/stages`](../examples/stages) for the full stage composition and testing pattern.
+See the [`stages` example](examples.md#stages) for the full stage composition and testing pattern.
 
 ---
 
@@ -406,32 +406,4 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 **Live observability:**
 - [Inspector](inspector.md): real-time web dashboard for running pipelines
 
-**Runnable examples** (all in [`examples/`](../examples/)):
-
-| Example | What it covers |
-|---|---|
-| `basic` | FromSlice, Map, Lift, ForEach |
-| `filter` | Filter, Tap, Take, Drain |
-| `batch` | Batch, Unbatch, BatchTimeout |
-| `concurrent` | Concurrency, Ordered, LogHook |
-| `errors` | Skip, Retry, RetryThen, StageError |
-| `deadletter` | DeadLetter, DeadLetterSink: retry-embedded dead-letter routing |
-| `fanout` | Partition, MergeRunners |
-| `stages` | Stage[I,O], Then, swappable sources |
-| `channel` | NewChannel, RunAsync |
-| `state` | MapWith, FlatMapWith, Ref |
-| `supervise` | Supervise, RestartOnError, RestartOnPanic |
-| `inspector` | Live web dashboard with full branching topology |
-| `streams` | Unfold, Iterate, Repeatedly, Cycle, Concat: generative sources |
-| `transform` | Reject, WithIndex, Intersperse, TakeEvery, DropEvery, MapEvery, ConsecutiveDedup |
-| `reshape` | ChunkBy, ChunkWhile, Sort, SortBy, Unzip |
-| `aggregate` | Sum, Min, Max, MinMax, MinBy, MaxBy, Find, Frequencies, ReduceWhile, TakeRandom |
-| `enrich` | MapBatch, LookupBy, Enrich: bulk-fetch with key deduplication |
-| `zipwith` | ZipWith: combine two branches without an intermediate Pair |
-| `pairwise` | Pairwise, SlidingWindow: consecutive pair and window patterns |
-| `concatmap` | ConcatMap vs FlatMap: ordered sequential expansion |
-| `mapresult` | MapResult: route errors to a separate pipeline |
-| `dedupe` | Dedupe, Distinct, DistinctBy, CacheBy |
-| `timeout` | Timeout StageOption: per-item deadline |
-| `ticker` | Ticker, Interval: scheduled sources |
-| `withlatestfrom` | WithLatestFrom: combine a primary stream with the latest secondary value |
+**Runnable examples:** see the [Examples page](examples.md) for all 20 examples with full source and Go Playground links.

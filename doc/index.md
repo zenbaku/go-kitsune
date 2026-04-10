@@ -96,4 +96,8 @@ Add one line to any running pipeline to open a real-time web dashboard with a li
 
     Buffer sizing, concurrency settings, batching strategies, and GC-pressure trade-offs.
 
+- :material-play-circle-outline: [**Examples**](examples.md)
+
+    20 runnable examples with full source code and Go Playground links.
+
 </div>
