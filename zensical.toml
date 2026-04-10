@@ -26,6 +26,13 @@ nav = [
   {"GitHub" = "https://github.com/zenbaku/go-kitsune"},
 ]
 
+[project.theme]
+logo = "go-kitsune-icon.png"
+favicon = "go-kitsune-icon.png"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
 [[project.theme.palette]]
 scheme = "default"
 primary = "deep-orange"
@@ -39,13 +46,6 @@ primary = "deep-orange"
 accent = "deep-orange"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to light mode"
-
-[project.theme]
-logo = "go-kitsune-icon.png"
-favicon = "go-kitsune-icon.png"
-
-[project.theme.icon]
-repo = "fontawesome/brands/github"
 
 [project.markdown_extensions.attr_list]
 
