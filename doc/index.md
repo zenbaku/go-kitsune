@@ -1,11 +1,12 @@
 ---
+title: Kitsune
 hide:
   - navigation
   - toc
 ---
 
 <p align="center">
-  <img src="go-kitsune-cover.png" alt="Kitsune — type-safe concurrent pipelines for Go" width="80%">
+  <img src="go-kitsune-cover.png" alt="Kitsune — type-safe concurrent pipelines for Go" style="max-width: 520px; width: 100%;">
 </p>
 
 <p align="center">
