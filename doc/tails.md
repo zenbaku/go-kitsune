@@ -88,6 +88,49 @@ Provides NATS core subscribe/publish sources and sinks, and JetStream consume/pu
 
 ---
 
+### kamqp — RabbitMQ / AMQP 0-9-1
+
+```
+go get github.com/zenbaku/go-kitsune/tails/kamqp
+```
+
+**Source** — consume messages from a queue (manual ack, at-least-once):
+
+```go
+conn, _ := amqp091.Dial("amqp://guest:guest@localhost:5672/")
+defer conn.Close()
+ch, _ := conn.Channel()
+defer ch.Close()
+_ = ch.Qos(32, 0, false) // prefetch
+
+pipe := kamqp.Consume(ch, "events", func(d *amqp091.Delivery) (Event, error) {
+    var e Event
+    return e, json.Unmarshal(d.Body, &e)
+})
+pipe.ForEach(handle).Run(ctx)
+```
+
+Each delivery is acked after a successful downstream yield. On unmarshal failure the delivery is nacked (requeue=true by default) and the pipeline terminates. Use `kamqp.WithAutoAck()` to delegate acknowledgement to the broker, or `kamqp.WithRequeueOnNack(false)` to dead-letter failed messages.
+
+**Sink** — publish to an exchange with a routing key:
+
+```go
+sink := kamqp.Publish(ch, "events.exchange", "events.created",
+    func(e Event) (amqp091.Publishing, error) {
+        b, err := json.Marshal(e)
+        return amqp091.Publishing{
+            ContentType:  "application/json",
+            DeliveryMode: amqp091.Persistent,
+            Body:         b,
+        }, err
+    })
+pipe.ForEach(sink).Run(ctx)
+```
+
+To publish directly to a queue (default exchange), pass `exchange=""` and `routingKey=queueName`.
+
+---
+
 ### kpubsub — Google Cloud Pub/Sub
 
 ```

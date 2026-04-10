@@ -18,13 +18,13 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **`KeyedBalance[T]`** — content-based fan-out by consistent hash. Routes all items with the same key to the same downstream branch, enabling per-entity parallelism without lock contention. Complements `MapWithKey` for stateful workloads. Counterpart to the round-robin `Balance`.
 
-- [ ] **`Share`** — hot multicast without a fixed subscriber count. Unlike `Broadcast(n)`, `Share` lets downstream stages subscribe at any point; late subscribers receive items from the moment they attach. Design note: late-subscriber semantics need speccing before implementation (likely: miss items emitted before subscription, no buffering).
+- [x] **`Share`** — hot multicast without a fixed subscriber count. Unlike `Broadcast(n)`, `Share` lets downstream stages subscribe at any point; late subscribers receive items from the moment they attach. Returns a factory (`func(...StageOption) *Pipeline[T]`); each call creates a new branch. All branches share one fan-out stage with synchronised blocking delivery (same semantics as `Broadcast`). Late-subscriber semantics: every registered branch receives items from the start of execution — no replay, no runtime subscription. Per-branch `Buffer` and `WithName` are supported; factory opts act as defaults. Calling the factory after `Run()` has started panics. A single subscriber is allowed (unlike `Broadcast`'s n≥2 requirement).
 
 ---
 
 ### Ecosystem: tails
 
-- [ ] **RabbitMQ / AMQP tail (`kamqp`)** — source (consume queue) and sink (publish to exchange) for RabbitMQ and any AMQP 0-9-1 broker. The one widely-deployed messaging system not yet covered by the tails.
+- [x] **RabbitMQ / AMQP tail (`kamqp`)** — source (consume queue) and sink (publish to exchange) for RabbitMQ and any AMQP 0-9-1 broker. The one widely-deployed messaging system not yet covered by the tails.
 
 - [ ] **NATS JetStream tail** — separate from the existing core-NATS tail; JetStream adds persistence, consumer groups, and exactly-once delivery semantics that warrant a dedicated integration.
 

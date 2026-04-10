@@ -158,6 +158,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `BroadcastN` | `BroadcastN[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Balance` | `Balance[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `KeyedBalance` | `KeyedBalance[T](p, n, keyFn, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Share` | `Share[T](p, opts...)` → `func(opts...) *Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Partition` | `Partition[T](p, pred, opts...)` → `(*Pipeline[T], *Pipeline[T])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Merge` | `Merge[T](pipelines...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `Zip` | `Zip[A,B](a, b)` → `*Pipeline[Pair[A,B]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
@@ -175,6 +176,7 @@ Documents every exported operator and which `StageOption` features each one actu
 - The `*With` variants run a user fn and do produce a buffered output channel; `Buffer` and `Name` apply.
 - `BroadcastN` is an explicit N-way alias for `Broadcast` (identical semantics).
 - `Broadcast` requires `n ≥ 2`.
+- `Share` returns a factory; call the factory once per desired branch before building the runner. At least one subscribe call is required. `Buffer` and `WithName` can be set on each individual subscribe call (per-subscribe opts override factory opts). Calling the factory after `Run()` has started panics. Unlike `Broadcast`, `Share` allows a single subscriber.
 
 ---
 
@@ -406,3 +408,37 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 | `JSONCodec` | root | Default codec for cache and store-backed `Ref` serialization |
 
 **`GraphNode`** exposes: `Kind`, `Name`, `Concurrency`, `Buffer`, `Overflow`, `BatchSize`, `Timeout`, `HasRetry`, `HasSupervision`.
+
+---
+
+## 18 · Tails (External Adapters)
+
+Tails are separate Go modules under `tails/` that adapt external systems to kitsune pipelines. Each follows the "user owns the client" principle — the caller creates, configures, and closes connections; kitsune never opens or closes them. See `doc/tails.md` for detailed usage examples.
+
+| Module | Package | Source | Sink | Notes |
+|--------|---------|--------|------|-------|
+| Apache Kafka | `tails/kkafka` | `Consume` | `Produce` | segmentio/kafka-go |
+| NATS / JetStream | `tails/knats` | `Subscribe`, `Consume` | `Publish`, `JetStreamPublish` | nats.go |
+| RabbitMQ / AMQP 0-9-1 | `tails/kamqp` | `Consume` | `Publish` | rabbitmq/amqp091-go; manual ack by default, configurable via `WithAutoAck`, `WithRequeueOnNack` |
+| MQTT | `tails/kmqtt` | `Subscribe` | `Publish` | paho.mqtt.golang |
+| Azure Service Bus | `tails/kazsb` | `Receive` | `Send` | azservicebus |
+| Azure Event Hubs | `tails/kazeh` | `Receive` | `ProduceBatch` | azeventhubs |
+| AWS SQS | `tails/ksqs` | `Receive` | `Send` | aws-sdk-go-v2 |
+| AWS Kinesis | `tails/kkinesis` | `Consume` | `Put` | aws-sdk-go-v2 |
+| Google Cloud Pub/Sub | `tails/kpubsub` | `Receive` | `Publish` | cloud.google.com/go/pubsub |
+| Google Cloud Storage | `tails/kgcs` | `ListObjects` | `Upload` | cloud.google.com/go/storage |
+| Apache Pulsar | `tails/kpulsar` | `Consume` | `Send` | apache/pulsar-client-go |
+| Elasticsearch / OpenSearch | `tails/kes` | `Scroll` | `BulkIndex` | elastic/go-elasticsearch |
+| MongoDB | `tails/kmongo` | `Watch`, `Find` | `Insert` | mongodb/mongo-go-driver |
+| PostgreSQL | `tails/kpostgres` | `Listen`, `Query` | `Insert` | jackc/pgx |
+| Redis | `tails/kredis` | `Subscribe` | `Publish` | redis/go-redis; also `Store` and `Cache` backends |
+| ClickHouse | `tails/kclickhouse` | `Query` | `Insert` | ClickHouse/clickhouse-go |
+| SQLite | `tails/ksqlite` | `Query` | `Insert` | mattn/go-sqlite3 |
+| AWS S3 | `tails/ks3` | `ListObjects` | `Upload` | aws-sdk-go-v2 |
+| gRPC | `tails/kgrpc` | `ServerStream` | `ClientStream` | google.golang.org/grpc |
+| HTTP | `tails/khttp` | `Poll` | `Post` | net/http |
+| WebSocket | `tails/kwebsocket` | `Receive` | `Send` | nhooyr.io/websocket |
+| File | `tails/kfile` | `Lines`, `Watch` | `Write` | os/bufio |
+| OpenTelemetry | `tails/kotel` | – | – | Hook only; traces + metrics |
+| Prometheus | `tails/kprometheus` | – | – | Hook only; Prometheus metrics |
+| Datadog | `tails/kdatadog` | – | – | Hook only; DogStatsD metrics |

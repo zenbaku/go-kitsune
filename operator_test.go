@@ -1057,6 +1057,180 @@ func TestKeyedBalanceWithName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Share
+// ---------------------------------------------------------------------------
+
+func TestShare_BasicMulticast(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	subscribe := kitsune.Share(p)
+	a := subscribe()
+	b := subscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var gotA, gotB []int
+	rA := a.ForEach(func(_ context.Context, v int) error {
+		gotA = append(gotA, v)
+		return nil
+	}).Build()
+	rB := b.ForEach(func(_ context.Context, v int) error {
+		gotB = append(gotB, v)
+		return nil
+	}).Build()
+
+	runner, err := kitsune.MergeRunners(rA, rB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if !sliceEqual(gotA, []int{1, 2, 3}) {
+		t.Fatalf("branch A: got %v, want [1 2 3]", gotA)
+	}
+	if !sliceEqual(gotB, []int{1, 2, 3}) {
+		t.Fatalf("branch B: got %v, want [1 2 3]", gotB)
+	}
+}
+
+func TestShare_SingleSubscriber(t *testing.T) {
+	// Unlike Broadcast (requires n>=2), Share allows a single subscriber.
+	p := kitsune.FromSlice([]int{10, 20, 30})
+	subscribe := kitsune.Share(p)
+	only := subscribe()
+
+	got := collectAll(t, only)
+	if !sliceEqual(got, []int{10, 20, 30}) {
+		t.Fatalf("got %v, want [10 20 30]", got)
+	}
+}
+
+func TestShare_ThreeSubscribers(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+	subscribe := kitsune.Share(p)
+	a := subscribe()
+	b := subscribe()
+	c := subscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var gotA, gotB, gotC []int
+	rA := a.ForEach(func(_ context.Context, v int) error { gotA = append(gotA, v); return nil }).Build()
+	rB := b.ForEach(func(_ context.Context, v int) error { gotB = append(gotB, v); return nil }).Build()
+	rC := c.ForEach(func(_ context.Context, v int) error { gotC = append(gotC, v); return nil }).Build()
+
+	runner, err := kitsune.MergeRunners(rA, rB, rC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []int{1, 2, 3, 4, 5}
+	if !sliceEqual(gotA, want) {
+		t.Fatalf("branch A: got %v", gotA)
+	}
+	if !sliceEqual(gotB, want) {
+		t.Fatalf("branch B: got %v", gotB)
+	}
+	if !sliceEqual(gotC, want) {
+		t.Fatalf("branch C: got %v", gotC)
+	}
+}
+
+func TestShare_PerBranchBuffer(t *testing.T) {
+	// Each branch can have an independent buffer size.
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	subscribe := kitsune.Share(p)
+	small := subscribe(kitsune.Buffer(1))
+	large := subscribe(kitsune.Buffer(64))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var gotSmall, gotLarge []int
+	rSmall := small.ForEach(func(_ context.Context, v int) error { gotSmall = append(gotSmall, v); return nil }).Build()
+	rLarge := large.ForEach(func(_ context.Context, v int) error { gotLarge = append(gotLarge, v); return nil }).Build()
+
+	runner, err := kitsune.MergeRunners(rSmall, rLarge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []int{1, 2, 3}
+	if !sliceEqual(gotSmall, want) {
+		t.Fatalf("small-buffer branch: got %v", gotSmall)
+	}
+	if !sliceEqual(gotLarge, want) {
+		t.Fatalf("large-buffer branch: got %v", gotLarge)
+	}
+}
+
+func TestShare_FactoryDefaultOpts(t *testing.T) {
+	// Opts passed to Share act as defaults for all branches.
+	p := kitsune.FromSlice([]int{1, 2})
+	subscribe := kitsune.Share(p, kitsune.Buffer(32))
+	a := subscribe()
+	b := subscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var gotA, gotB []int
+	rA := a.ForEach(func(_ context.Context, v int) error { gotA = append(gotA, v); return nil }).Build()
+	rB := b.ForEach(func(_ context.Context, v int) error { gotB = append(gotB, v); return nil }).Build()
+
+	runner, err := kitsune.MergeRunners(rA, rB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []int{1, 2}
+	if !sliceEqual(gotA, want) {
+		t.Fatalf("branch A: got %v", gotA)
+	}
+	if !sliceEqual(gotB, want) {
+		t.Fatalf("branch B: got %v", gotB)
+	}
+}
+
+func TestShare_LateSubscribePanics(t *testing.T) {
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	subscribe := kitsune.Share(p)
+	branch := subscribe()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Run the pipeline in a goroutine; the build closure will set frozen=true.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = branch.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	}()
+	// Wait for the pipeline to complete (frozen is set during build, before items flow).
+	<-done
+
+	// Now subscribe() must panic because frozen=true.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when subscribing after Run() started")
+		}
+	}()
+	subscribe()
+}
+
+// ---------------------------------------------------------------------------
 // Zip / ZipWith
 // ---------------------------------------------------------------------------
 

@@ -2,6 +2,7 @@ package kitsune
 
 import (
 	"context"
+	"strconv"
 	"sync"
 
 	"github.com/zenbaku/go-kitsune/internal"
@@ -470,6 +471,178 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 		})
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Share
+// ---------------------------------------------------------------------------
+
+// Share returns a subscription factory for hot multicast without a fixed
+// subscriber count. Call the returned function once per desired output branch;
+// each branch receives every item from p.
+//
+// # Share vs Broadcast
+//
+// [Broadcast] requires the exact number of consumers to be known at
+// construction time — all branches are created in one call and share the same
+// options. Share is the right choice when:
+//
+//   - The consumer list is built dynamically (e.g. in a loop driven by config,
+//     feature flags, or a plugin registry).
+//   - Different consumers need different buffer sizes or stage names.
+//   - You want to name each branch at the call site for readability.
+//
+// Example — building subscribers from a config-driven list:
+//
+//	subscribe := kitsune.Share(events)
+//
+//	// Each consumer opts in independently with its own settings.
+//	audit   := subscribe(kitsune.WithName("audit"),   kitsune.Buffer(1000))
+//	metrics := subscribe(kitsune.WithName("metrics"),  kitsune.Buffer(16))
+//	if cfg.FraudDetectionEnabled {
+//	    fraud = subscribe(kitsune.WithName("fraud"))
+//	}
+//
+// The equivalent with Broadcast would require knowing N upfront and indexing
+// into an array, which obscures which branch is which.
+//
+// # Delivery semantics
+//
+// All branches are wired into a single fan-out stage. Every item is delivered
+// to every branch in order (synchronised fan-out, same blocking semantics as
+// Broadcast). A slow branch backpressures the upstream and all other branches.
+//
+// # Late-subscriber semantics
+//
+// "Subscribing late" means calling the factory after earlier subscribe calls
+// but before [Runner.Run]. Since the pipeline graph is fully static at Run
+// time, every registered branch receives every item from the start — there is
+// no replay and no runtime subscription. Calling the factory after Run has
+// started panics.
+//
+// At least one subscribe call is required before building the runner.
+// All returned pipelines must be consumed (directly or via [MergeRunners]).
+//
+// StageOption values passed to Share act as defaults for all branches.
+// Options passed to individual subscribe calls override the defaults for
+// that branch (later options win, so per-branch opts shadow factory opts).
+// In particular, [Buffer] and [WithName] can be set per-branch.
+func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pipeline[T] {
+	track(p)
+
+	type branchInfo struct {
+		id     int
+		meta   stageMeta
+		buffer int
+	}
+
+	var (
+		mu       sync.Mutex
+		branches []branchInfo
+		frozen   bool
+	)
+
+	var once sync.Once
+
+	sharedBuild := func(rc *runCtx) {
+		once.Do(func() {
+			mu.Lock()
+			frozen = true
+			bs := make([]branchInfo, len(branches))
+			copy(bs, branches)
+			mu.Unlock()
+
+			if len(bs) == 0 {
+				panic("kitsune: Share requires at least one subscribe() call before Run()")
+			}
+
+			inCh := p.build(rc)
+			chans := make([]chan T, len(bs))
+			for i, b := range bs {
+				ch := make(chan T, b.buffer)
+				chans[i] = ch
+				rc.setChan(b.id, ch)
+			}
+
+			firstCh := chans[0]
+			m := bs[0].meta
+			m.getChanLen = func() int { return len(firstCh) }
+			m.getChanCap = func() int { return cap(firstCh) }
+
+			stage := func(ctx context.Context) error {
+				defer func() {
+					for _, c := range chans {
+						close(c)
+					}
+				}()
+				defer func() { go internal.DrainChan(inCh) }()
+
+				outboxes := make([]internal.Outbox[T], len(chans))
+				for i, c := range chans {
+					outboxes[i] = internal.NewBlockingOutbox(c)
+				}
+
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						for _, ob := range outboxes {
+							if err := ob.Send(ctx, item); err != nil {
+								return err
+							}
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+
+			rc.add(stage, m)
+		})
+	}
+
+	return func(subOpts ...StageOption) *Pipeline[T] {
+		cfg := buildStageConfig(append(append([]StageOption{}, opts...), subOpts...))
+
+		mu.Lock()
+		if frozen {
+			mu.Unlock()
+			panic("kitsune: Share subscribe() called after Run() started")
+		}
+		idx := len(branches)
+		name := cfg.name
+		if name == "" {
+			if idx == 0 {
+				name = "share"
+			} else {
+				name = "share_" + strconv.Itoa(idx)
+			}
+		}
+		id := nextPipelineID()
+		b := branchInfo{
+			id:     id,
+			buffer: cfg.buffer,
+			meta: stageMeta{
+				id:     id,
+				kind:   "share",
+				name:   name,
+				buffer: cfg.buffer,
+				inputs: []int{p.id},
+			},
+		}
+		branches = append(branches, b)
+		mu.Unlock()
+
+		return newPipeline(id, b.meta, func(rc *runCtx) chan T {
+			if existing := rc.getChan(id); existing != nil {
+				return existing.(chan T)
+			}
+			sharedBuild(rc)
+			return rc.getChan(id).(chan T)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
