@@ -358,6 +358,7 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 
 **Reference:**
 - [README operator catalog](../README.md#operator-catalog) — every operator with signature and description
+- [Testing guide](testing.md) — mocking clients, error paths, time-sensitive operators, and testkit reference
 - [Tuning guide](tuning.md) — buffer sizing, concurrency, batching, memory trade-offs
 - [Benchmarks](benchmarks.md) — throughput numbers on Apple M1
 
