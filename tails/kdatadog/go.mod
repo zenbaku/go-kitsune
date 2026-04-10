@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/DataDog/datadog-go/v5 v5.6.0
 	github.com/zenbaku/go-kitsune v0.0.0
-	github.com/zenbaku/go-kitsune/hooks v0.0.0
+	github.com/zenbaku/go-kitsune/hooks v0.1.0
 )
 
 require (
@@ -17,4 +17,3 @@ require (
 
 replace github.com/zenbaku/go-kitsune => ../..
 
-replace github.com/zenbaku/go-kitsune/hooks => ../../hooks

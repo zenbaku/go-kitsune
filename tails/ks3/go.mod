@@ -4,7 +4,6 @@ go 1.26.1
 
 replace github.com/zenbaku/go-kitsune => ../..
 
-replace github.com/zenbaku/go-kitsune/hooks => ../../hooks
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.32.6
@@ -22,7 +21,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.6 // indirect
 	github.com/aws/smithy-go v1.22.1 // indirect
-	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
+	github.com/zenbaku/go-kitsune/hooks v0.1.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )

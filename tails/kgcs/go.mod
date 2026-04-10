@@ -27,7 +27,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.19.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
-	github.com/zenbaku/go-kitsune/hooks v0.0.0 // indirect
+	github.com/zenbaku/go-kitsune/hooks v0.1.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
@@ -59,4 +59,3 @@ require (
 
 replace github.com/zenbaku/go-kitsune => ../..
 
-replace github.com/zenbaku/go-kitsune/hooks => ../../hooks
