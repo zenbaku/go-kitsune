@@ -4,6 +4,7 @@
 //   - Stage[I,O] — a named pipeline transformer type
 //   - Then — compose two stages into one
 //   - Through — apply a Stage[T,T] to a pipeline
+//   - Or — try a primary stage; fall back to a secondary on failure
 package main
 
 import (
@@ -90,4 +91,39 @@ func main() {
 	fmt.Println("\n=== Isolated stage test ===")
 	doubled, _ := kitsune.Collect(ctx, Double(kitsune.FromSlice([]int{1, 2, 3})))
 	fmt.Println("doubled:", doubled)
+
+	// --- 5. Or: primary with fallback ---
+	//
+	// Stage.Or(fallback) returns a new Stage that runs each item through the
+	// primary first. If the primary returns an error (or emits nothing), the
+	// same item is passed to the fallback. Or never propagates the primary's
+	// error — fallback is always called on failure.
+	//
+	// Note: Or spawns a sub-pipeline per item (via First), so it is not a
+	// high-throughput primitive. Use it for low-volume control paths or
+	// read-fallback patterns (DB → cache, primary API → secondary API).
+
+	fmt.Println("\n=== Or: primary with fallback ===")
+
+	// primary succeeds only for odd numbers.
+	var primaryStage kitsune.Stage[int, string] = func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, n int) (string, error) {
+			if n%2 == 0 {
+				return "", fmt.Errorf("primary failed for %d", n)
+			}
+			return fmt.Sprintf("primary:%d", n), nil
+		})
+	}
+
+	// fallback always succeeds.
+	var fallbackStage kitsune.Stage[int, string] = func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, n int) (string, error) {
+			return fmt.Sprintf("fallback:%d", n), nil
+		})
+	}
+
+	withFallback := primaryStage.Or(fallbackStage)
+	orResults, _ := kitsune.Collect(ctx, withFallback(kitsune.FromSlice([]int{1, 2, 3, 4, 5})))
+	// Expected: primary:1  fallback:2  primary:3  fallback:4  primary:5
+	fmt.Println(strings.Join(orResults, "  "))
 }

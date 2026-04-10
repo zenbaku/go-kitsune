@@ -136,7 +136,7 @@ func TestDescribeMatchesGraphHook(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	graphNodes := hook.Graph()       // 3 nodes: source + map + for_each
+	graphNodes := hook.Graph()         // 3 nodes: source + map + for_each
 	describeNodes := mapped.Describe() // 2 nodes: source + map
 
 	if len(describeNodes) == 0 {
