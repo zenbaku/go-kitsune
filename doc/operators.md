@@ -6,28 +6,28 @@ This document covers every operator in go-kitsune. Each entry shows the exact Go
 
 ---
 
-## :material-table-of-contents: Contents
+## :material-table-of-contents: Contents { #contents }
 
 1. [:material-database-import-outline: Sources](#sources)
-2. [:material-swap-horizontal: 1:1 Transforms](#11-transforms)
-3. [:material-call-split: 1:N Expansion](#1n-expansion)
-4. [:material-filter-outline: Filtering & Selection](#filtering--selection)
-5. [:material-memory: Stateful Transforms](#stateful-transforms)
-6. [:material-layers-outline: Batching & Windowing](#batching--windowing)
-7. [:material-source-branch: Fan-Out & Fan-In](#fan-out--fan-in)
+2. [:material-swap-horizontal: 1:1 Transforms](#transforms)
+3. [:material-call-split: 1:N Expansion](#expansion)
+4. [:material-filter-outline: Filtering & Selection](#filtering)
+5. [:material-memory: Stateful Transforms](#stateful)
+6. [:material-layers-outline: Batching & Windowing](#batching)
+7. [:material-source-branch: Fan-Out & Fan-In](#fan-out-fan-in)
 8. [:material-database-plus-outline: Enrichment](#enrichment)
-9. [:material-sigma: Aggregation & Collection](#aggregation--collection)
-10. [:material-clock-outline: Time-Based Operators](#time-based-operators)
+9. [:material-sigma: Aggregation & Collection](#aggregation)
+10. [:material-clock-outline: Time-Based Operators](#time-based)
 11. [:material-shield-check-outline: Resilience](#resilience)
-12. [:material-tools: Utility & Metadata](#utility--metadata)
-13. [:material-flag-checkered: Terminal Operators](#terminal-operators)
+12. [:material-tools: Utility & Metadata](#utility)
+13. [:material-flag-checkered: Terminal Operators](#terminals)
 14. [:material-puzzle-outline: Stage Composition](#stage-composition)
-15. [:material-alert-circle-outline: Error Handling Options](#error-handling-options)
-16. [:material-tune: Stage Options Reference](#stage-options-reference)
+15. [:material-alert-circle-outline: Error Handling Options](#error-handling)
+16. [:material-tune: Stage Options Reference](#options)
 
 ---
 
-## :material-database-import-outline: Sources
+## :material-database-import-outline: Sources { #sources }
 
 Sources are the entry point of every pipeline. They have no input pipeline; they produce items from an external data source, a collection, or a generator function.
 
@@ -401,7 +401,7 @@ p := kitsune.Using(
 
 ---
 
-## :material-swap-horizontal: 1:1 Transforms
+## :material-swap-horizontal: 1:1 Transforms { #transforms }
 
 Each item in produces exactly one item out, potentially of a different type.
 
@@ -669,7 +669,7 @@ doubled := kitsune.Map(p, kitsune.LiftPure(func(n int) int { return n * 2 }))
 
 ---
 
-## :material-call-split: 1:N Expansion
+## :material-call-split: 1:N Expansion { #expansion }
 
 These operators allow each input item to produce zero or more output items.
 
@@ -892,7 +892,7 @@ items := kitsune.Unbatch(kitsune.Map(pages, fetchPage))
 
 ---
 
-## :material-filter-outline: Filtering & Selection
+## :material-filter-outline: Filtering & Selection { #filtering }
 
 ### Filter
 
@@ -1112,7 +1112,7 @@ third, ok, err := kitsune.ElementAt(ctx, p, 2)
 
 ---
 
-## :material-memory: Stateful Transforms
+## :material-memory: Stateful Transforms { #stateful }
 
 These operators inject a `*Ref[S]`, a concurrent-safe state handle, into the stage function, enabling accumulators, counters, and running state across items.
 
@@ -1263,7 +1263,7 @@ Like `MapWithKey` but allows emitting zero or more outputs per item while mainta
 
 ---
 
-## :material-layers-outline: Batching & Windowing
+## :material-layers-outline: Batching & Windowing { #batching }
 
 ### Batch
 
@@ -1430,7 +1430,7 @@ grouped := kitsune.GroupByStream(events, func(e Event) string { return e.Type })
 
 ---
 
-## :material-source-branch: Fan-Out & Fan-In
+## :material-source-branch: Fan-Out & Fan-In { #fan-out-fan-in }
 
 ### Merge
 
@@ -1668,7 +1668,7 @@ risk := kitsune.CombineLatestWith(creditScore, marketIndex,
 
 ---
 
-## :material-database-plus-outline: Enrichment
+## :material-database-plus-outline: Enrichment { #enrichment }
 
 Enrichment operators bulk-fetch external data for a batch of items and attach it to each item. Keys are deduplicated before each fetch call; if multiple items share a key, only one lookup is made.
 
@@ -1737,7 +1737,7 @@ enriched := kitsune.Enrich(events, cfg)
 
 ---
 
-## :material-sigma: Aggregation & Collection
+## :material-sigma: Aggregation & Collection { #aggregation }
 
 ### Scan
 
@@ -1954,7 +1954,7 @@ sorted := kitsune.Sort(items, func(a, b Item) bool { return a.Timestamp.Before(b
 
 ---
 
-## :material-clock-outline: Time-Based Operators
+## :material-clock-outline: Time-Based Operators { #time-based }
 
 ### Throttle
 
@@ -2042,7 +2042,7 @@ lossy := kitsune.RateLimit(events, 50, []kitsune.RateLimitOpt{kitsune.RateMode(k
 
 ---
 
-## :material-shield-check-outline: Resilience
+## :material-shield-check-outline: Resilience { #resilience }
 
 ### CircuitBreaker
 
@@ -2122,7 +2122,7 @@ encoded.ForEach(func(_ context.Context, buf *kitsune.Pooled[[]byte]) error {
 
 ---
 
-## :material-tools: Utility & Metadata
+## :material-tools: Utility & Metadata { #utility }
 
 ### WithIndex
 
@@ -2172,7 +2172,7 @@ p.Tap(func(e Event) { metrics.Inc("events_processed") }).
 
 ---
 
-## :material-flag-checkered: Terminal Operators
+## :material-flag-checkered: Terminal Operators { #terminals }
 
 ### ForEach
 
@@ -2265,7 +2265,7 @@ runner.Run(ctx)
 
 ---
 
-## :material-puzzle-outline: Stage Composition
+## :material-puzzle-outline: Stage Composition { #stage-composition }
 
 ### Stage[I, O] / Then / Through / Or
 
@@ -2315,7 +2315,7 @@ fetch := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
 
 ---
 
-## :material-alert-circle-outline: Error Handling Options
+## :material-alert-circle-outline: Error Handling Options { #error-handling }
 
 Error handling is configured per-stage with `OnError(handler)` or pipeline-wide with `WithErrorStrategy(handler)` in run options.
 
@@ -2372,7 +2372,7 @@ kitsune.OnError(kitsune.RetryThen(3,
 
 ---
 
-## :material-tune: Stage Options Reference
+## :material-tune: Stage Options Reference { #options }
 
 | Option | Type | Applies to | Description |
 |---|---|---|---|
