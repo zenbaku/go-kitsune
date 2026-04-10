@@ -37,11 +37,11 @@ Some tails (like `kredis`) provide multiple shapes, a source, a sink, and a `Sto
 
 <div class="grid cards" markdown>
 
-- :material-message-processing-outline: **[Messaging](#messaging)** — Kafka, NATS, RabbitMQ, Pulsar, MQTT
-- :material-cloud-outline: **[Cloud](#cloud)** — Pub/Sub, SQS, Kinesis, DynamoDB
-- :material-database-outline: **[Databases](#databases)** — Postgres, MongoDB, ClickHouse, SQLite, Elasticsearch, Redis
-- :material-file-document-outline: **[Files & HTTP](#files-http)** — kfile, khttp, S3, WebSocket, gRPC
-- :material-chart-line: **[Observability](#observability)** — OpenTelemetry, Prometheus, Datadog
+- :material-message-processing-outline: **[Messaging](#messaging)**: Kafka, NATS, RabbitMQ, Pulsar, MQTT
+- :material-cloud-outline: **[Cloud](#cloud)**: Pub/Sub, SQS, Kinesis, DynamoDB
+- :material-database-outline: **[Databases](#databases)**: Postgres, MongoDB, ClickHouse, SQLite, Elasticsearch, Redis
+- :material-file-document-outline: **[Files & HTTP](#files-http)**: kfile, khttp, S3, WebSocket, gRPC
+- :material-chart-line: **[Observability](#observability)**: OpenTelemetry, Prometheus, Datadog
 
 </div>
 

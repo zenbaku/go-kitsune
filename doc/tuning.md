@@ -7,7 +7,7 @@ Kitsune pipelines run as a DAG of goroutines connected by bounded channels. The 
 ## Overview
 
 !!! tip "Measure first"
-    The default `Buffer(16)` + `Concurrency(1)` handles most I/O pipelines at >1 M items/sec. Profile with `MetricsHook` or the Inspector before tuning — most "obvious" improvements don't move the needle.
+    The default `Buffer(16)` + `Concurrency(1)` handles most I/O pipelines at >1 M items/sec. Profile with `MetricsHook` or the Inspector before tuning; most "obvious" improvements don't move the needle.
 
 Every stage in a pipeline has an input channel. When a stage finishes processing an item, it writes to the next stage's channel. If that channel is full, the writer blocks, which is backpressure. When the channel has room, the writer proceeds without waiting.
 

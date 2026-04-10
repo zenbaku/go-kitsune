@@ -11,7 +11,7 @@ public API.
 
 A Kitsune pipeline is a **directed acyclic graph (DAG)** of processing stages.
 That graph is assembled lazily during pipeline construction: no goroutines
-start, no channels are allocated: and then materialised at a single point when
+start, no channels are allocated, and then materialised at a single point when
 `Run` (or `Collect`) is called.
 
 ```mermaid
@@ -567,8 +567,8 @@ build time (Run):    factory invoked → cache-wrapped fn
   run time. Each factory is called once, producing the concrete `*Ref[T]` that
   stages share.
 
-Stage functions that use `MapWith`/`FlatMapWith` close over `rc.refs.get(name)`
-— they receive the materialised ref from `vals`, not the factory. This means the
+Stage functions that use `MapWith`/`FlatMapWith` close over `rc.refs.get(name)`:
+they receive the materialised ref from `vals`, not the factory. This means the
 same pipeline definition can be run against different store backends simply by
 passing a different `WithStore(s)` run option.
 
@@ -624,8 +624,8 @@ extension points are added.
 | `GraphHook` | Once before execution, with full DAG snapshot | Topology export |
 | `BufferHook` | Once before execution, with a channel-fill query fn | Backpressure dashboards |
 
-**`GraphHook.OnGraph`** receives a `[]GraphNode` snapshot of the compiled graph —
-node IDs, kinds, inputs, concurrency, buffer sizes. This fires before any stage
+**`GraphHook.OnGraph`** receives a `[]GraphNode` snapshot of the compiled graph,
+including node IDs, kinds, inputs, concurrency, and buffer sizes. This fires before any stage
 starts, making it useful for registering metric labels or rendering a static
 topology view.
 

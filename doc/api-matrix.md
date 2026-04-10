@@ -8,19 +8,19 @@ Documents every exported operator and which `StageOption` features each one actu
 
 | Column | Meaning |
 |--------|---------|
-| **Conc** | `Concurrency(n)` — parallel workers |
-| **Ord** | `Ordered()` — preserve order in concurrent mode |
-| **Buf** | `Buffer(n)` — output channel capacity |
-| **Name** | `WithName(s)` — stage label for hooks/metrics |
-| **Err** | `OnError(h)` — error handlers: `Halt`, `Skip`, `Return`, `Retry`, `RetryThen` |
-| **Sup** | `Supervise(p)` — restart on error/panic: `RestartOnError`, `RestartOnPanic`, `RestartAlways` |
-| **TO** | `Timeout(d)` — per-item deadline; cancels item context after d |
-| **Cache** | `CacheBy(fn)` — memoize results; skip fn on cache hit |
-| **OvF** | `Overflow(s)` — `Block` / `DropNewest` / `DropOldest` on full buffer |
-| **Clock** | `WithClock(c)` — inject time source (for deterministic tests) |
-| **DS** | `WithDedupSet(s)` — external deduplication backend |
-| **BT** | `BatchTimeout(d)` — flush partial batch after d |
-| **FP** | Fast-path / fusion — internal optimization for serial, hook-free chains |
+| **Conc** | `Concurrency(n)`: parallel workers |
+| **Ord** | `Ordered()`: preserve order in concurrent mode |
+| **Buf** | `Buffer(n)`: output channel capacity |
+| **Name** | `WithName(s)`: stage label for hooks/metrics |
+| **Err** | `OnError(h)`: error handlers: `Halt`, `Skip`, `Return`, `Retry`, `RetryThen` |
+| **Sup** | `Supervise(p)`: restart on error/panic: `RestartOnError`, `RestartOnPanic`, `RestartAlways` |
+| **TO** | `Timeout(d)`: per-item deadline; cancels item context after d |
+| **Cache** | `CacheBy(fn)`: memoize results; skip fn on cache hit |
+| **OvF** | `Overflow(s)`: `Block` / `DropNewest` / `DropOldest` on full buffer |
+| **Clock** | `WithClock(c)`: inject time source (for deterministic tests) |
+| **DS** | `WithDedupSet(s)`: external deduplication backend |
+| **BT** | `BatchTimeout(d)`: flush partial batch after d |
+| **FP** | Fast-path / fusion: internal optimization for serial, hook-free chains |
 
 ### Cell values
 
@@ -93,10 +93,10 @@ Documents every exported operator and which `StageOption` features each one actu
 | `FlatMapWithKey` | `FlatMapWithKey[I,O,S](p, key, itemKeyFn, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ! | – | ✓ | – | – | – | – |
 
 **Notes**
-- `!` — `Timeout` and `CacheBy` panic at construction; they are not meaningful for stateful loops.
+- `!`: `Timeout` and `CacheBy` panic at construction; they are not meaningful for stateful loops.
 - **Concurrency semantics differ by operator**:
   - `MapWith` / `FlatMapWith`: each of n workers gets its own independent `Ref[S]` (worker-local state).
-  - `MapWithKey` / `FlatMapWithKey`: the key space is sharded across n workers via `hash(key) % n`. Same-key items always reach the same worker — lock-free in the hot path.
+  - `MapWithKey` / `FlatMapWithKey`: the key space is sharded across n workers via `hash(key) % n`. Same-key items always reach the same worker; lock-free in the hot path.
 - `Supervise` wraps the stage loop; the `Ref` (or keyed ref map) is initialised outside the inner fn and is preserved across restarts.
 - State TTL: `NewKey("name", initial, StateTTL(d))`. `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed.
 
@@ -108,8 +108,8 @@ Documents every exported operator and which `StageOption` features each one actu
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
 | `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
 | `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `Window` | `Window[T](p, size int, opts...)` — count-based | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)` — time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `Window` | `Window[T](p, size int, opts...)`: count-based | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)`: time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `SlidingWindow` | `SlidingWindow[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SessionWindow` | `SessionWindow[T](p, gap, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `ChunkBy` | `ChunkBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -134,7 +134,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `DedupeBy` | `DedupeBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
 | `ConsecutiveDedup` *(compat)* | `ConsecutiveDedup[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `ConsecutiveDedupBy` *(compat)* | `ConsecutiveDedupBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` — terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)`: terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `GroupByStream` | `GroupByStream[T,K](p, keyFn, opts...)` → `*Pipeline[Group[K,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `CountBy` *(compat)* | `CountBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SumBy` *(compat)* | `SumBy[T,K,V](p, keyFn, valFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -199,7 +199,7 @@ Source operators produce items from external input. They accept no `StageOption`
 | `Using` | `Using[T,R](acquire func(ctx)(R,error), build func(R)*Pipeline[T], release func(R))` |
 | `NewChannel` | `NewChannel[T]()` → `*Channel[T]` (with `Send`, `TrySend`, `Close`) |
 
-**Time-based sources** — accept `Buffer`, `Name`, and `WithClock` as `StageOption`:
+**Time-based sources**: accept `Buffer`, `Name`, and `WithClock` as `StageOption`:
 
 | Operator | Signature |
 |----------|-----------|
@@ -215,16 +215,16 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 | Operator | Signature |
 |----------|-----------|
-| `Collect` | `Collect[T](ctx, p, opts...)` → `([]T, error)` — also `(p).Collect` |
-| `First` | `First[T](ctx, p, opts...)` → `(T, bool, error)` — also `(p).First` |
-| `Last` | `Last[T](ctx, p, opts...)` → `(T, bool, error)` — also `(p).Last` |
-| `Count` | `Count[T](ctx, p, opts...)` → `(int, error)` — also `(p).Count` |
-| `Any` | `Any[T](ctx, p, fn, opts...)` → `(bool, error)` — also `(p).Any` |
-| `All` | `All[T](ctx, p, fn, opts...)` → `(bool, error)` — also `(p).All` |
-| `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)` — also `(p).Find` |
-| `ElementAt` | `ElementAt[T](ctx, p, i, opts...)` → `(T, bool, error)` — also `(p).ElementAt` |
-| `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)` — also `(p).Iter` |
-| `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)` — also `(p).ReduceWhile` (S=T) |
+| `Collect` | `Collect[T](ctx, p, opts...)` → `([]T, error)`; also `(p).Collect` |
+| `First` | `First[T](ctx, p, opts...)` → `(T, bool, error)`; also `(p).First` |
+| `Last` | `Last[T](ctx, p, opts...)` → `(T, bool, error)`; also `(p).Last` |
+| `Count` | `Count[T](ctx, p, opts...)` → `(int, error)`; also `(p).Count` |
+| `Any` | `Any[T](ctx, p, fn, opts...)` → `(bool, error)`; also `(p).Any` |
+| `All` | `All[T](ctx, p, fn, opts...)` → `(bool, error)`; also `(p).All` |
+| `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)`; also `(p).Find` |
+| `ElementAt` | `ElementAt[T](ctx, p, i, opts...)` → `(T, bool, error)`; also `(p).ElementAt` |
+| `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)`; also `(p).Iter` |
+| `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)`; also `(p).ReduceWhile` (S=T) |
 | `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` |
 | `Sum` | `Sum[T](ctx, p, opts...)` → `(T, error)` |
 | `Min` / `Max` | `Min[T](ctx, p, opts...)` → `(T, bool, error)` |
@@ -249,7 +249,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
 | `Throttle` | `Throttle[T](p, window, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `Debounce` | `Debounce[T](p, silence, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
-| `Sample` | `Sample[T](p, d, opts...)` — emit latest item per tick | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `Sample` | `Sample[T](p, d, opts...)`: emit latest item per tick | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `Timestamp` | `Timestamp[T](p, opts...)` → `*Pipeline[Timestamped[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `TimeInterval` | `TimeInterval[T](p, opts...)` → `*Pipeline[TimedInterval[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 
@@ -262,21 +262,21 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 | Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Take` | `Take[T](p, n)` — also `(p).Take` | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `Drop` | `Drop[T](p, n)` — also `(p).Skip`, `(p).Drop` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `Take` | `Take[T](p, n)`; also `(p).Take` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `Drop` | `Drop[T](p, n)`; also `(p).Skip`, `(p).Drop` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeWhile` | `TakeWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropWhile` | `DropWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `SkipLast` | `SkipLast[T](p, n)` — omit last n items | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `SkipLast` | `SkipLast[T](p, n)`: omit last n items | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeEvery` | `TakeEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropEvery` | `DropEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WithIndex` | `WithIndex[T](p, opts...)` → `*Pipeline[Indexed[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Intersperse` | `Intersperse[T](p, sep, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Pair[T,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `TakeUntil` | `TakeUntil[T,U](p, boundary *Pipeline[U], opts...)` — pass items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `SkipUntil` | `SkipUntil[T,U](p, boundary *Pipeline[U], opts...)` — skip items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `TakeUntil` | `TakeUntil[T,U](p, boundary *Pipeline[U], opts...)`: pass items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `SkipUntil` | `SkipUntil[T,U](p, boundary *Pipeline[U], opts...)`: skip items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `StartWith` | `StartWith[T](p, items...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `EndWith` | `EndWith[T](p, items...)` — append fixed items after source closes | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `EndWith` | `EndWith[T](p, items...)`: append fixed items after source closes | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DefaultIfEmpty` | `DefaultIfEmpty[T](p, val, opts...)` | – | – | ✓ | ✓ | – | – | – | – | ✓ | – | – | – | – |
 | `Sort` | `Sort[T](p, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SortBy` | `SortBy[T,K](p, keyFn, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -409,9 +409,9 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 **`GraphNode`** exposes: `Kind`, `Name`, `Concurrency`, `Buffer`, `Overflow`, `BatchSize`, `Timeout`, `HasRetry`, `HasSupervision`.
 
-**`Pipeline[T].Describe() []GraphNode`** — returns the same `[]GraphNode` snapshot synchronously, without executing the pipeline. Callable on any `*Pipeline[T]`, including intermediate (non-terminal) stages. Useful for static validation and unit-testing graph structure without a full `Run`.
+**`Pipeline[T].Describe() []GraphNode`**: returns the same `[]GraphNode` snapshot synchronously, without executing the pipeline. Callable on any `*Pipeline[T]`, including intermediate (non-terminal) stages. Useful for static validation and unit-testing graph structure without a full `Run`.
 
-**`ContextCarrier`** — interface implemented by item types that carry a `context.Context` with an attached trace span. When an item implements `ContextCarrier`, the engine merges its context into the stage function call: cancellation still comes from the pipeline stage context, but context values (e.g. the active trace span) come from the item. Stage functions can call `tracer.Start(ctx, "my-work")` to create per-item child spans with no signature changes. Zero cost for items that don't implement the interface. See `tails/kotel` for OTel integration.
+**`ContextCarrier`**: interface implemented by item types that carry a `context.Context` with an attached trace span. When an item implements `ContextCarrier`, the engine merges its context into the stage function call: cancellation still comes from the pipeline stage context, but context values (e.g. the active trace span) come from the item. Stage functions can call `tracer.Start(ctx, "my-work")` to create per-item child spans with no signature changes. Zero cost for items that don't implement the interface. See `tails/kotel` for OTel integration.
 
 ---
 
@@ -433,7 +433,7 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 ## 19 · Tails (External Adapters)
 
-Tails are separate Go modules under `tails/` that adapt external systems to kitsune pipelines. Each follows the "user owns the client" principle — the caller creates, configures, and closes connections; kitsune never opens or closes them. See `doc/tails.md` for detailed usage examples.
+Tails are separate Go modules under `tails/` that adapt external systems to kitsune pipelines. Each follows the "user owns the client" principle: the caller creates, configures, and closes connections; kitsune never opens or closes them. See `doc/tails.md` for detailed usage examples.
 
 | Module | Package | Source | Sink | Notes |
 |--------|---------|--------|------|-------|

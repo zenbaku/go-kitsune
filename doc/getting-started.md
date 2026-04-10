@@ -233,7 +233,7 @@ To run multiple requests in parallel, add `Concurrency(n)`:
     users := kitsune.Map(ids, enrichUser, kitsune.Concurrency(20), kitsune.Ordered())
     ```
 
-This starts 20 goroutines that all read from the same input channel. **Output order is not preserved** by default — goroutines finish in whatever order the I/O completes. `Ordered()` uses a slot-based resequencer: workers still run in parallel, but results are emitted in arrival order.
+This starts 20 goroutines that all read from the same input channel. **Output order is not preserved** by default; goroutines finish in whatever order the I/O completes. `Ordered()` uses a slot-based resequencer: workers still run in parallel, but results are emitted in arrival order.
 
 **Starting point**: 10–20 for HTTP or database calls; `runtime.NumCPU()` for CPU-bound work.
 
