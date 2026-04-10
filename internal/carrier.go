@@ -19,8 +19,8 @@ type ContextCarrier interface {
 // values (e.g. trace span) from item. Value looks up item context first, then
 // falls back to stage context, so item-level values shadow stage-level ones.
 type carrierCtx struct {
-	context.Context        // cancellation and deadline from the stage
-	values context.Context // per-item values (trace span, etc.)
+	context.Context                 // cancellation and deadline from the stage
+	values          context.Context // per-item values (trace span, etc.)
 }
 
 func (c carrierCtx) Value(key any) any {
