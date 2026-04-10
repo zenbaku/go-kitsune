@@ -402,17 +402,26 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 //	}
 func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (iter.Seq[T], func() error) {
 	ch := make(chan T, internal.DefaultBuffer)
-	iterCtx, iterCancel := context.WithCancel(ctx)
+	// pipelineCtx is intentionally NOT derived from ctx. If it were, cancelling
+	// ctx would immediately cancel the errgroup context, which would cancel the
+	// generator's stageCtx, causing the generator to exit and close its output
+	// channel before the ForEach callback ever observes ctx.Done(). That race
+	// makes the pipeline return nil instead of ctx.Err(). By keeping pipelineCtx
+	// independent, the only way cancellation propagates into the pipeline is
+	// through the ForEach callback's explicit ctx.Done() check below.
+	pipelineCtx, pipelineCancel := context.WithCancel(context.Background())
 	var callerBroke atomic.Bool
 
 	handle := p.ForEach(func(_ context.Context, item T) error {
 		select {
 		case ch <- item:
 			return nil
-		case <-iterCtx.Done():
-			return iterCtx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-pipelineCtx.Done():
+			return nil // stopped internally (caller broke or natural seq exit)
 		}
-	}).Build().RunAsync(iterCtx, opts...)
+	}).Build().RunAsync(pipelineCtx, opts...)
 
 	go func() {
 		<-handle.Done()
@@ -421,7 +430,7 @@ func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (iter.S
 
 	seq := iter.Seq[T](func(yield func(T) bool) {
 		defer func() {
-			iterCancel()
+			pipelineCancel()
 			for range ch { //nolint:revive
 			}
 		}()
