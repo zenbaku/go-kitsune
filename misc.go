@@ -57,6 +57,14 @@ func TapFunc[T any](fn func(T)) func(context.Context, T) error {
 	}
 }
 
+// TapErrorFunc wraps a simple error-observer function into the signature
+// expected by [TapError].
+func TapErrorFunc(fn func(error)) func(context.Context, error) {
+	return func(_ context.Context, err error) {
+		fn(err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // StartWith / DefaultIfEmpty
 // ---------------------------------------------------------------------------

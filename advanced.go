@@ -50,6 +50,8 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
@@ -186,6 +188,8 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()

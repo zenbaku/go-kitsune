@@ -633,6 +633,8 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
 			// Serial path: single shared Ref registered through the refRegistry.
@@ -999,6 +1001,8 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
 			rc.refs.register(keyName, func(store internal.Store, codec internal.Codec) any {
@@ -1446,6 +1450,8 @@ func MapWithKey[I, O, S any](
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
 			// Serial path: single shared keyedRefMap.
@@ -1863,6 +1869,8 @@ func FlatMapWithKey[I, O, S any](
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
 			rc.refs.register(regName, func(store internal.Store, codec internal.Codec) any {

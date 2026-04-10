@@ -16,9 +16,14 @@ func IsNoopHook(h Hook) bool {
 }
 
 // IsDefaultHandler reports whether h is the default halt-on-error handler.
+// A nil handler is treated as DefaultHandler — it means "not explicitly set",
+// which the engine resolves to DefaultHandler at run time.
 // Fast paths assume DefaultHandler semantics: return the error immediately,
 // no retry, no skip, no return-value substitution.
 func IsDefaultHandler(h ErrorHandler) bool {
+	if h == nil {
+		return true
+	}
 	_, ok := h.(DefaultHandler)
 	return ok
 }

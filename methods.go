@@ -112,6 +112,14 @@ func (p *Pipeline[T]) Tap(fn func(T), opts ...StageOption) *Pipeline[T] {
 	return Tap(p, TapFunc(fn), opts...)
 }
 
+// TapError calls fn as a side-effect when the pipeline terminates with an
+// error, then re-propagates the error unchanged.
+// fn is a plain error-observer function (no context); use the free-function
+// [TapError] directly for the context-aware form.
+func (p *Pipeline[T]) TapError(fn func(error)) *Pipeline[T] {
+	return TapError(p, func(_ context.Context, err error) { fn(err) })
+}
+
 // Dedupe drops items whose key (returned by keyFn) has already been seen.
 // Uses a global in-process [MemoryDedupSet] unless [WithDedupSet] is provided.
 func (p *Pipeline[T]) Dedupe(keyFn func(T) string, opts ...StageOption) *Pipeline[T] {

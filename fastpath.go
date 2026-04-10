@@ -35,6 +35,19 @@ func isFastPathEligibleCfg(cfg stageConfig) bool {
 		cfg.timeout == 0
 }
 
+// resolveHandler returns the effective ErrorHandler for a stage, applying the
+// pipeline-level default when the stage has no explicit handler (nil).
+// Priority: stage-level OnError > pipeline-level WithErrorStrategy > DefaultHandler.
+func resolveHandler(cfg stageConfig, rc *runCtx) internal.ErrorHandler {
+	if cfg.errorHandler != nil {
+		return cfg.errorHandler
+	}
+	if rc.defaultErrorHandler != nil {
+		return rc.defaultErrorHandler
+	}
+	return internal.DefaultHandler{}
+}
+
 // track increments p's consumerCount for fan-out detection in typed fusion.
 // It is a no-op when p has no fusionEntry (e.g. sources, FlatMap outputs).
 // Call once at construction time in every operator or terminal that consumes p.

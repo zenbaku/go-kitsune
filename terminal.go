@@ -315,13 +315,18 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		// Typed build-time fusion: if the upstream set a fusionEntry AND is our sole
 		// consumer AND cfg + hook satisfy fast-path conditions, compose everything into
 		// one goroutine with zero inter-stage channel hops and zero boxing.
 		// Fusion is only eligible in serial mode (no concurrency, no OnError, etc.).
+		// Also disabled when a non-default pipeline-level error strategy is set,
+		// since fusionEntry bypasses ProcessItem and cannot honour Skip/Retry.
 		if p.fusionEntry != nil && p.consumerCount.Load() == 1 &&
-			isFastPathEligibleCfg(cfg) && internal.IsNoopHook(hook) {
+			isFastPathEligibleCfg(cfg) && internal.IsNoopHook(hook) &&
+			internal.IsDefaultHandler(rc.defaultErrorHandler) {
 			stage := p.fusionEntry(rc, fn)
 			rc.add(stage, meta)
 			return

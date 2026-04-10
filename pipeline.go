@@ -69,15 +69,16 @@ func nextPipelineID() int {
 // each stage registers its stageFunc here and its output channel is memoised
 // by stage ID so that shared upstream stages are only built once per run.
 type runCtx struct {
-	stages   []stageFunc
-	metas    []stageMeta
-	chans    map[int]any // stage ID → chan T (type-erased for storage)
-	cache    internal.Cache
-	cacheTTL time.Duration
-	codec    internal.Codec
-	hook     internal.Hook
-	refs     *refRegistry // keyed state, populated during build phase
-	gate     *internal.Gate
+	stages              []stageFunc
+	metas               []stageMeta
+	chans               map[int]any // stage ID → chan T (type-erased for storage)
+	cache               internal.Cache
+	cacheTTL            time.Duration
+	codec               internal.Codec
+	hook                internal.Hook
+	refs                *refRegistry // keyed state, populated during build phase
+	gate                *internal.Gate
+	defaultErrorHandler internal.ErrorHandler // nil = use internal.DefaultHandler{}
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
 	// sources (Ticker, Interval, Repeatedly, …) without cancelling the run

@@ -111,6 +111,9 @@ func ProcessItem[I, O any](
 	item I,
 	h ErrorHandler,
 ) (O, error, int) {
+	if h == nil {
+		h = DefaultHandler{}
+	}
 	for attempt := 0; ; attempt++ {
 		result, err := fn(ctx, item)
 		if err == nil {
@@ -158,6 +161,9 @@ func ProcessFlatMapItem[I, O any](
 	h ErrorHandler,
 	send func(O) error,
 ) (error, int) {
+	if h == nil {
+		h = DefaultHandler{}
+	}
 	for attempt := 0; ; attempt++ {
 		// Collect results into a buffer; only flush on success.
 		var buf []O

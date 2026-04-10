@@ -101,6 +101,8 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		var stage stageFunc
 		switch {
@@ -515,6 +517,8 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 		if fmHook == nil {
 			fmHook = internal.NoopHook{}
 		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		var stage stageFunc
 		switch {
@@ -1092,6 +1096,37 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 		return ch
 	}
 	return newPipeline(id, meta, build)
+}
+
+// TapError calls fn as a side-effect when the pipeline terminates with a
+// non-context error, then re-propagates that error unchanged. It is the
+// complement to [Tap]: Tap observes items; TapError observes terminal errors.
+// Useful for logging, metrics, or alerting on error paths without altering
+// pipeline flow.
+//
+// fn receives the terminal error and the context that was active when the
+// pipeline exited. Context cancellation (ctx.Err() != nil) does not trigger
+// fn — only pipeline-level errors do.
+func TapError[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		innerCtx, cancel := context.WithCancel(ctx)
+		stopped := false
+		err := p.ForEach(func(_ context.Context, item T) error {
+			if !yield(item) {
+				stopped = true
+				cancel()
+			}
+			return nil
+		}).Run(innerCtx)
+		cancel()
+		if stopped {
+			return nil
+		}
+		if err != nil && ctx.Err() == nil {
+			fn(ctx, err)
+		}
+		return err
+	})
 }
 
 // ---------------------------------------------------------------------------

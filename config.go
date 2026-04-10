@@ -42,21 +42,24 @@ type stageCacheConfig struct {
 }
 
 type runConfig struct {
-	store           Store
-	hook            Hook
-	drainTimeout    time.Duration
-	defaultCache    Cache
-	defaultCacheTTL time.Duration
-	sampleRate      int // 0 = default (10); negative = disabled
-	codec           Codec
-	gate            *Gate
+	store               Store
+	hook                Hook
+	drainTimeout        time.Duration
+	defaultCache        Cache
+	defaultCacheTTL     time.Duration
+	sampleRate          int // 0 = default (10); negative = disabled
+	codec               Codec
+	gate                *Gate
+	defaultErrorHandler internal.ErrorHandler
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
 	cfg := stageConfig{
-		concurrency:  1,
-		buffer:       internal.DefaultBuffer,
-		errorHandler: internal.DefaultHandler{},
+		concurrency: 1,
+		buffer:      internal.DefaultBuffer,
+		// errorHandler intentionally nil — resolved at run time via resolveHandler,
+		// which falls back to the pipeline-level WithErrorStrategy default, then
+		// to internal.DefaultHandler (halt on first error).
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -351,6 +354,25 @@ func WithCodec(c Codec) RunOption {
 // returned [RunHandle] via [RunHandle.Pause] and [RunHandle.Resume].
 func WithPauseGate(g *Gate) RunOption {
 	return func(cfg *runConfig) { cfg.gate = g }
+}
+
+// WithErrorStrategy sets the default error handling policy for all stages in
+// the pipeline run. Stages that do not specify their own [OnError] option
+// inherit this policy. Individual stages can override it with [OnError]:
+//
+//	// Skip bad items pipeline-wide; critical stages can still override.
+//	runner.Run(ctx, kitsune.WithErrorStrategy(kitsune.Skip()))
+//
+//	// Same default but one stage halts explicitly.
+//	kitsune.Map(p, criticalFn, kitsune.OnError(kitsune.Halt()))
+//
+// Without this option, the default is [Halt] — the first error stops the
+// pipeline. This option applies to [Map], [FlatMap], [ForEach], [MapWith],
+// [FlatMapWith], [MapWithKey], [FlatMapWithKey], [SwitchMap], and
+// [ExhaustMap]. It does not apply to [DeadLetter] or [MapResult], which
+// have their own explicit routing semantics.
+func WithErrorStrategy(h ErrorHandler) RunOption {
+	return func(cfg *runConfig) { cfg.defaultErrorHandler = h.h }
 }
 
 // ---------------------------------------------------------------------------

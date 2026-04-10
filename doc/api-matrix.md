@@ -41,12 +41,14 @@ Documents every exported operator and which `StageOption` features each one actu
 | `ConcatMap` | `ConcatMap[I,O](p, fn, opts...)` | – | – | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – | – | – | – |
 | `Filter` | `Filter[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
 | `Tap` | `Tap[T](p, fn func(ctx,T)error, opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | – |
+| `TapError` | `TapError[T](p, fn func(ctx,error))` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `Reject` | `Reject[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
 | `ForEach` | `(p).ForEach(fn, opts...)` → `*ForEachRunner[T]` | ✓ | ✓ | – | ✓ | ✓ | ✓ | ✓ | – | – | – | – | – | ✓ |
 | `Drain` | `(p).Drain()` → `*DrainRunner[T]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 
 **Notes**
 - `Filter`, `Tap`, `Reject` support `Supervise` but not `OnError`; errors from their fn/pred propagate directly.
+- `TapError` fires its callback only for non-context errors; context cancellation does not trigger the callback. It does not accept `StageOption` (implemented via `Generate`, like `Catch`).
 - `ForEach` returns a typed `ForEachRunner[T]`; call `.Run(ctx)` or `.RunAsync(ctx)`. Supports `Concurrency`, `Ordered`, `OnError`, and `Supervise`.
 - `Drain` returns a `DrainRunner[T]` with a `Build()` method for use with `MergeRunners`.
 - Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column).
@@ -344,6 +346,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `FilterFunc` | `FilterFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Filter` |
 | `RejectFunc` | `RejectFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Reject` |
 | `TapFunc` | `TapFunc[T](fn func(T))` | Lift void fn for use with free-fn `Tap` |
+| `TapErrorFunc` | `TapErrorFunc(fn func(error))` | Lift void error observer for use with free-fn `TapError` |
 
 ---
 
@@ -360,7 +363,24 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 ---
 
-## 16 · Observability
+## 16 · Run Options
+
+`RunOption` values are passed to `Runner.Run(ctx, opts...)`, `Runner.RunAsync(ctx, opts...)`, or any terminal function.
+
+| Option | Signature | Description |
+|--------|-----------|-------------|
+| `WithErrorStrategy` | `WithErrorStrategy(h ErrorHandler)` | Default error handler for all stages that do not set their own `OnError`. Priority: stage `OnError` > `WithErrorStrategy` > `Halt`. Does not apply to `DeadLetter` or `MapResult`. |
+| `WithStore` | `WithStore(s Store)` | State backend for `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey`. |
+| `WithHook` | `WithHook(h Hook)` | Observability hook for the run. |
+| `WithDrain` | `WithDrain(timeout time.Duration)` | Graceful shutdown: let in-flight items drain before stopping. |
+| `WithCache` | `WithCache(cache Cache, ttl time.Duration)` | Default cache backend and TTL for `Map` stages using `CacheBy`. |
+| `WithSampleRate` | `WithSampleRate(n int)` | `SampleHook.OnItemSample` frequency (default 10). Negative disables. |
+| `WithCodec` | `WithCodec(c Codec)` | Serialisation codec for store-backed state and cache. Default: JSON. |
+| `WithPauseGate` | `WithPauseGate(g *Gate)` | Attach an external gate for pause/resume control. |
+
+---
+
+## 17 · Observability
 
 All hooks are wired into every stage runner automatically when provided via `WithHook`.
 

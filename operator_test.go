@@ -191,6 +191,105 @@ func TestTap(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TapError
+// ---------------------------------------------------------------------------
+
+func TestTapError_NoFireOnSuccess(t *testing.T) {
+	var called bool
+	p := kitsune.TapError(kitsune.FromSlice([]int{1, 2, 3}), func(_ context.Context, _ error) {
+		called = true
+	})
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("items changed: got %v", got)
+	}
+	if called {
+		t.Fatal("callback fired on success")
+	}
+}
+
+func TestTapError_PassesThroughItems(t *testing.T) {
+	p := kitsune.TapError(kitsune.FromSlice([]int{10, 20, 30}), func(_ context.Context, _ error) {})
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{10, 20, 30}) {
+		t.Fatalf("items changed: got %v", got)
+	}
+}
+
+func TestTapError_FiresOnError(t *testing.T) {
+	boom := errors.New("boom")
+	var callbackErr error
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, boom
+			}
+			return v, nil
+		},
+	)
+	p2 := kitsune.TapError(p, func(_ context.Context, err error) {
+		callbackErr = err
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(callbackErr, boom) {
+		t.Fatalf("callback received %v, want boom", callbackErr)
+	}
+}
+
+func TestTapError_DoesNotSuppressError(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) { return 0, boom },
+	)
+	p2 := kitsune.TapError(p, func(_ context.Context, _ error) {})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("error not propagated: got %v", err)
+	}
+}
+
+func TestTapError_ContextCancelDoesNotFire(t *testing.T) {
+	var called bool
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch := kitsune.NewChannel[int](0)
+	p := kitsune.TapError(ch.Source(), func(_ context.Context, _ error) {
+		called = true
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	}()
+	cancel()
+	<-done
+	if called {
+		t.Fatal("callback fired on context cancellation")
+	}
+}
+
+func TestTapError_MethodForm(t *testing.T) {
+	boom := errors.New("boom")
+	var callbackErr error
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) { return 0, boom },
+	)
+	p2 := p.TapError(func(err error) { callbackErr = err })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(callbackErr, boom) {
+		t.Fatalf("method form: callback received %v, want boom", callbackErr)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Take / Drop
 // ---------------------------------------------------------------------------
 

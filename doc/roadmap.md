@@ -8,7 +8,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ### Operators
 
-- [ ] **`TapError`** — side-effect on the error path without consuming or rerouting the error. Natural complement to `Tap`: observe errors for logging, metrics, or alerting while letting them propagate unchanged. Implemented as a `Map` node with error interception; fires a callback `func(ctx, error)` and re-returns the original error.
+- [x] **`TapError`** — side-effect on the error path without consuming or rerouting the error. Natural complement to `Tap`: observe errors for logging, metrics, or alerting while letting them propagate unchanged. Fires a callback `func(ctx, error)` and re-returns the original error. Context cancellation does not trigger the callback. Implemented via `Generate`/`ForEach` (same pattern as `Catch`) to observe the terminal error from the upstream run.
 
 - [ ] **`Finally`** — guaranteed cleanup hook that fires when a stage exits (completion, cancellation, or error). Useful for resource tracking, test assertions, and teardown logic that must run regardless of how the pipeline terminates.
 
