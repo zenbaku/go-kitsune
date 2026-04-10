@@ -8,4 +8,6 @@ require (
 	golang.org/x/time v0.15.0
 )
 
+require pgregory.net/rapid v1.2.0 // indirect
+
 replace github.com/zenbaku/go-kitsune/hooks => ./hooks

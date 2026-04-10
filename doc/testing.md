@@ -378,6 +378,49 @@ func TestEnrichThroughput(t *testing.T) {
 
 ---
 
+## Property-based testing
+
+Kitsune ships property tests that verify algebraic invariants of its core operators. These use [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) and are gated behind the `property` build tag so they don't slow down the regular test run.
+
+```bash
+# Run all property tests (100 random cases each, ~1 s total)
+task test:property
+
+# Run with more iterations for deeper coverage
+go test -tags=property -rapid.checks=1000 -timeout 300s .
+
+# Reproduce a specific failure from a rapid failure file
+go test -tags=property -rapid.failfile=testdata/rapid/TestPropBalanceItemCount/... .
+```
+
+### Covered invariants
+
+| Test | Invariant |
+|------|-----------|
+| `TestPropMergeMultiset` | `Merge` preserves the exact multiset union of all inputs |
+| `TestPropMergeLength` | Total item count from `Merge` equals sum of input lengths |
+| `TestPropMergeCommutativity` | `Merge` result is the same multiset regardless of argument order |
+| `TestPropSortIsSorted` | `Sort` output is always in sorted order |
+| `TestPropSortPreservesMultiset` | `Sort` never adds or drops items |
+| `TestPropSortIdempotent` | `Sort(Sort(p)) == Sort(p)` |
+| `TestPropTakeAfterSort` | `Take(n, Sort(p))` yields exactly the `n` smallest elements |
+| `TestPropTakeBounded` | `Take(n)` always emits exactly `min(n, len(p))` items |
+| `TestPropTakePreservesOrder` | `Take(n)` emits a prefix of the input in original order |
+| `TestPropBroadcastCompleteness` | Every branch of `Broadcast(p, n)` receives all items in order |
+| `TestPropBalanceItemCount` | `Balance` multiset union equals input; no items are lost or duplicated |
+| `TestPropBalanceRoundRobin` | Per-branch counts differ by at most 1 (round-robin fairness) |
+
+### Adding new property tests
+
+When you add a new fan-in/fan-out operator or an order-preserving combinator, add a corresponding property to `properties_test.go`. Good candidates for property tests are:
+
+- **Multiset invariants** — does the operator preserve, add, or remove items?
+- **Order invariants** — when is order guaranteed to be preserved or changed?
+- **Composition laws** — does `f ∘ g == g ∘ f`? Does `f ∘ f == f`?
+- **Count invariants** — does a fan-out operator deliver the right total across all branches?
+
+---
+
 ## Quick reference
 
 | Goal | Tool |
@@ -394,3 +437,4 @@ func TestEnrichThroughput(t *testing.T) {
 | Mock an external client | Interface + stage constructor |
 | Test branching pipelines | Collect each branch in separate goroutines |
 | Name a stage for hook assertions | `WithName("my_stage")` |
+| Run property/algebra invariant tests | `task test:property` |

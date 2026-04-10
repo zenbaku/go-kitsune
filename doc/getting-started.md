@@ -35,7 +35,7 @@ This is a Go language constraint — methods cannot introduce new type parameter
 - **Free functions** (type may change, or extra type parameters required): `Map`, `FlatMap`, `Batch`, `Unbatch`, `MapWith`, `FlatMapWith`, `Reject`, `ChunkBy`, `Sort`, `SortBy`, `ZipWith`, `Unzip`, `Enrich`, …
 - **Methods** (type-preserving, no extra type parameters): `.Filter`, `.Tap`, `.Take`, `.Skip`, `.Through`, `.ForEach`, `.Drain`
 
-Not every operator fits neatly — `Reject` keeps the type but is a free function because the method form would be ambiguous with complex generics. When in doubt, look for it in both places; the [operator catalog](../README.md#operator-catalog) lists every operator with its exact call form.
+Not every operator fits neatly — `Reject` keeps the type but is a free function because the method form would be ambiguous with complex generics. When in doubt, look for it in both places; the [operator catalog](operators.md) lists every operator with its exact call form.
 
 ---
 
@@ -357,7 +357,7 @@ See [`examples/stages`](../examples/stages) for the full stage composition and t
 ## Where to go next
 
 **Reference:**
-- [README operator catalog](../README.md#operator-catalog) — every operator with signature and description
+- [Operator catalog](operators.md) — every operator with signature and description
 - [Testing guide](testing.md) — mocking clients, error paths, time-sensitive operators, and testkit reference
 - [Tuning guide](tuning.md) — buffer sizing, concurrency, batching, memory trade-offs
 - [Benchmarks](benchmarks.md) — throughput numbers on Apple M1

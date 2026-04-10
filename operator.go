@@ -272,7 +272,7 @@ func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 				it := buf[i]
 				var zero I
 				buf[i] = zero // release reference for GC
-				result, err := fn(ctx, it)
+				result, err := fn(internal.ItemCtx(ctx, it), it)
 				if err != nil {
 					return internal.WrapStageErr(name, err, 0)
 				}
@@ -579,7 +579,7 @@ func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(contex
 				it := buf[i]
 				var zero I
 				buf[i] = zero
-				if err := fn(ctx, it, yield); err != nil {
+				if err := fn(internal.ItemCtx(ctx, it), it, yield); err != nil {
 					return internal.WrapStageErr(name, err, 0)
 				}
 			}

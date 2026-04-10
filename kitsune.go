@@ -55,6 +55,34 @@ type BufferHook = internal.BufferHook
 // BufferStatus reports the current fill level of one stage's output channel.
 type BufferStatus = internal.BufferStatus
 
+// ContextCarrier is implemented by item types that carry a context.Context
+// with an attached trace span (or any other per-item context values).
+// When an item implements ContextCarrier, the engine uses its context for
+// stage function calls — allowing stage functions to create per-item child
+// spans with a normal tracer.Start(ctx, ...) call, with no changes to stage
+// signatures or pipeline wiring.
+//
+// Cancellation always comes from the pipeline stage context so that shutdown
+// and per-item timeouts work correctly. The item's context contributes only
+// its values (e.g. the active trace span).
+//
+// Example:
+//
+//	type Order struct {
+//	    ID  string
+//	    ctx context.Context // set at ingestion from HTTP request or queue message
+//	}
+//
+//	func (o Order) Context() context.Context { return o.ctx }
+//
+//	// In a stage function — ctx now carries o's trace span automatically:
+//	kitsune.Map(orders, func(ctx context.Context, o Order) (Invoice, error) {
+//	    ctx, span := tracer.Start(ctx, "build-invoice")
+//	    defer span.End()
+//	    // ...
+//	})
+type ContextCarrier = internal.ContextCarrier
+
 // Codec serialises and deserialises values for [Store]-backed state and [CacheBy]
 // stages. Implement this interface to substitute a binary format such as
 // encoding/gob, protobuf, or msgpack. Register with [WithCodec].

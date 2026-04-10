@@ -54,6 +54,11 @@ tasks:
       - for: [kredis, ksqlite, kfile, khttp, kotel, kprometheus, knats, kjetstream, kpubsub, kgrpc, ksqs, kdatadog, kmongo, kclickhouse, kwebsocket, kmqtt, kkinesis, kpulsar, kes, kdynamo, kgcs, kazsb, kazeh]
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
 
+  test:property:
+    desc: Run property-based tests (rapid); excluded from default test run
+    cmds:
+      - go test -tags=property -count=1 -timeout 120s {{.PACKAGE}}
+
   test:fuzz:
     desc: Run fuzz seed corpus only (fast; use fuzz:* tasks to actively search for bugs)
     cmds:

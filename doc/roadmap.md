@@ -38,21 +38,17 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ---
 
-### Testing & correctness
-
-- [ ] **Property-based testing** — `gopter` (or equivalent) fuzz targets for operator algebra invariants: commutativity of `Merge`, `Take(n) ∘ Sort = Sort ∘ Take(n)`, `Broadcast` fan-out completeness, `Balance` item-count invariants. Catches classes of bugs that example-based tests miss.
-
----
+## Completed milestones
 
 ### Observability
 
-- [ ] **Per-item span propagation** — the `kotel` tail creates one span per stage; true per-item tracing requires span contexts to travel with items across stage boundaries. Three approaches remain open: (a) internal item envelope carrying `trace.SpanContext` — transparent but adds an allocation per hop; (b) user-wrapped `Traced[T]` items — zero engine cost but pollutes stage signatures; (c) optional `ContextCarrier` interface on items — opt-in with no cost for non-carrier items. Revisit once a concrete use case (e.g. propagating an incoming `traceparent` from Kafka) justifies the design cost.
+- [x] **Per-item span propagation (`ContextCarrier`)** — items implement `ContextCarrier` (`Context() context.Context`) to carry a trace span from their origin (HTTP request, queue message, etc.). The engine threads the item's context into stage function calls — cancellation still comes from the pipeline stage context, item context contributes values only — so stage functions call `tracer.Start(ctx, "my-work")` normally with no signature changes. Zero overhead for items that don't implement the interface. `kotel` documents the pattern; per-item child spans appear automatically in any OTel-compatible backend. **Not yet covered: fan-in link propagation for `Batch`** — when N items with individual span contexts are collected into a batch, OTel recommends creating the batch span with `trace.WithLinks(...)` referencing each item's span. This requires either a new `BatchHook` interface that `kotel` implements, called by the `Batch` stage with the collected items before forwarding the slice, or a convention where the `[]T` batch type itself implements `ContextCarrier` with a pre-merged context. Deferred until a concrete use case drives the design.
 
 ---
 
-## Completed milestones
-
 ### Test coverage & correctness
+
+- [x] **Property-based testing** — `pgregory.net/rapid` property tests for operator algebra invariants: commutativity and multiset preservation of `Merge`, `Take(n) ∘ Sort` yields the n smallest elements, `Broadcast` fan-out completeness (every branch receives all items in order), `Balance` item-count preservation and round-robin fairness (per-branch counts differ by at most 1). Tests live in `properties_test.go` behind the `property` build tag; run with `task test:property`. Catches classes of bugs that example-based tests miss.
 
 - [x] **`Pool.Put` and `Pool.Warmup`** — `Pool.Put(*Pooled[T])` exports the previously internal `put` method, allowing callers to return a pooled object without going through `Pooled.Release`. `Pool.Warmup(n int)` pre-populates the pool by calling the factory `n` times and immediately returning the objects; reduces first-request latency for latency-sensitive start-up paths. No-op for `n ≤ 0`. Best-effort per `sync.Pool` semantics (GC may evict objects at any time).
 

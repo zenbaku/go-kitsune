@@ -411,9 +411,27 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 **`Pipeline[T].Describe() []GraphNode`** — returns the same `[]GraphNode` snapshot synchronously, without executing the pipeline. Callable on any `*Pipeline[T]`, including intermediate (non-terminal) stages. Useful for static validation and unit-testing graph structure without a full `Run`.
 
+**`ContextCarrier`** — interface implemented by item types that carry a `context.Context` with an attached trace span. When an item implements `ContextCarrier`, the engine merges its context into the stage function call: cancellation still comes from the pipeline stage context, but context values (e.g. the active trace span) come from the item. Stage functions can call `tracer.Start(ctx, "my-work")` to create per-item child spans with no signature changes. Zero cost for items that don't implement the interface. See `tails/kotel` for OTel integration.
+
 ---
 
-## 18 · Tails (External Adapters)
+## 18 · Testing Infrastructure
+
+| Component | Notes |
+|-----------|-------|
+| `testkit.MustCollect` | Run a pipeline and collect output; `t.Fatal` on error |
+| `testkit.CollectAndExpect` | Collect and assert exact ordered equality |
+| `testkit.CollectAndExpectUnordered` | Collect and assert same multiset, any order |
+| `testkit.MustRun` / `MustRunWithHook` | Run a sink runner; optionally capture a `RecordingHook` |
+| `testkit.RecordingHook` | Captures `Items`, `Errors`, `Drops`, `Restarts`, `Graph`, `Dones` events |
+| `testkit.NewTestClock` | Virtual clock for deterministic tests of time-sensitive operators |
+| `testkit.FailAt` / `FailEvery` | Inject errors at specific item positions or intervals |
+| `testkit.SlowMap` / `SlowSink` | Simulate slow I/O in map/sink functions |
+| Property tests (`properties_test.go`) | Algebra invariants verified with `pgregory.net/rapid` (build tag: `property`); run via `task test:property`. Covers: `Merge` multiset/commutativity, `Sort` ordering/idempotence, `Take∘Sort` prefix semantics, `Broadcast` completeness, `Balance` item-count and round-robin fairness. |
+
+---
+
+## 19 · Tails (External Adapters)
 
 Tails are separate Go modules under `tails/` that adapt external systems to kitsune pipelines. Each follows the "user owns the client" principle — the caller creates, configures, and closes connections; kitsune never opens or closes them. See `doc/tails.md` for detailed usage examples.
 

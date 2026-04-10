@@ -43,7 +43,7 @@ func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error) stag
 				it := buf[i]
 				var zero T
 				buf[i] = zero
-				if err := fn(ctx, it); err != nil {
+				if err := fn(internal.ItemCtx(ctx, it), it); err != nil {
 					return err
 				}
 			}
