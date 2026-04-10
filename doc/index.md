@@ -46,7 +46,7 @@ go get github.com/zenbaku/go-kitsune
 
 - :material-valve: **Automatic backpressure**
 
-    Bounded channels between every stage. A slow consumer blocks its upstream — no unbounded queuing, no dropped items.
+    Bounded channels between every stage. A slow consumer blocks its upstream: no unbounded queuing, no dropped items.
 
 - :material-shield-check-outline: **Compile-time type safety**
 
@@ -58,11 +58,11 @@ go get github.com/zenbaku/go-kitsune
 
 - :material-layers-triple-outline: **Batching & windowing**
 
-    `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy`: group items by count, timeout, gap, or key — composably.
+    `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy`: group items by count, timeout, gap, or key. Composable.
 
 - :material-memory: **Stateful processing**
 
-    `MapWith` / `MapWithKey`: typed `Ref` state scoped to a pipeline run. Key-sharded concurrency gives each entity its own goroutine — the in-process actor model, lock-free by design.
+    `MapWith` / `MapWithKey`: typed `Ref` state scoped to a pipeline run. Key-sharded concurrency gives each entity its own goroutine. The in-process actor model, lock-free by design.
 
 - :material-shield-sync-outline: **Error routing**
 
@@ -94,7 +94,7 @@ go get github.com/zenbaku/go-kitsune
 
 - :material-power-plug-outline: **27 integrations**
 
-    Kafka, NATS, RabbitMQ, Postgres, Redis, S3, MongoDB, ClickHouse, SQS, Kinesis, Pub/Sub, and more — each a separate module via [tails](tails.md).
+    Kafka, NATS, RabbitMQ, Postgres, Redis, S3, MongoDB, ClickHouse, SQS, Kinesis, Pub/Sub, and more. Each a separate module via [tails](tails.md).
 
 </div>
 
