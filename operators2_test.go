@@ -126,6 +126,115 @@ func TestCatch_FallbackAlsoErrors(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Using
+// ---------------------------------------------------------------------------
+
+func TestUsing_ItemsFlow(t *testing.T) {
+	// Resource wraps a slice; pipeline emits its items.
+	p := kitsune.Using(
+		func(_ context.Context) ([]int, error) { return []int{1, 2, 3}, nil },
+		func(s []int) *kitsune.Pipeline[int] { return kitsune.FromSlice(s) },
+		func(_ []int) {},
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
+func TestUsing_ReleaseCalledOnSuccess(t *testing.T) {
+	var released bool
+	p := kitsune.Using(
+		func(_ context.Context) (int, error) { return 42, nil },
+		func(r int) *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{r}) },
+		func(_ int) { released = true },
+	)
+	collectAll(t, p)
+	if !released {
+		t.Fatal("release not called on success")
+	}
+}
+
+func TestUsing_ReleaseCalledOnError(t *testing.T) {
+	boom := errors.New("boom")
+	var released bool
+	p := kitsune.Using(
+		func(_ context.Context) (int, error) { return 0, nil },
+		func(_ int) *kitsune.Pipeline[int] {
+			return kitsune.Map(kitsune.FromSlice([]int{1}),
+				func(_ context.Context, _ int) (int, error) { return 0, boom },
+			)
+		},
+		func(_ int) { released = true },
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom, got %v", err)
+	}
+	if !released {
+		t.Fatal("release not called on error")
+	}
+}
+
+func TestUsing_ReleaseCalledOnCancel(t *testing.T) {
+	var released bool
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := kitsune.NewChannel[int](0)
+	p := kitsune.Using(
+		func(_ context.Context) (int, error) { return 0, nil },
+		func(_ int) *kitsune.Pipeline[int] { return ch.Source() },
+		func(_ int) { released = true },
+	)
+	done := make(chan error, 1)
+	go func() {
+		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	}()
+	cancel()
+	<-done
+	if !released {
+		t.Fatal("release not called on cancellation")
+	}
+}
+
+func TestUsing_AcquireError(t *testing.T) {
+	// If acquire fails, the pipeline errors and release is NOT called.
+	boom := errors.New("acquire failed")
+	var released bool
+	p := kitsune.Using(
+		func(_ context.Context) (int, error) { return 0, boom },
+		func(_ int) *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1}) },
+		func(_ int) { released = true },
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected acquire error, got %v", err)
+	}
+	if released {
+		t.Fatal("release must not be called when acquire fails")
+	}
+}
+
+func TestUsing_ReleaseCalledOnEarlyStop(t *testing.T) {
+	var released bool
+	p := kitsune.Using(
+		func(_ context.Context) ([]int, error) { return []int{1, 2, 3, 4, 5}, nil },
+		func(s []int) *kitsune.Pipeline[int] { return kitsune.FromSlice(s) },
+		func(_ []int) { released = true },
+	)
+	got := collectAll(t, kitsune.Take(p, 2))
+	if !sliceEqual(got, []int{1, 2}) {
+		t.Fatalf("got %v, want [1 2]", got)
+	}
+	if !released {
+		t.Fatal("release not called on early stop")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Reject
 // ---------------------------------------------------------------------------
 

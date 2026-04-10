@@ -775,3 +775,47 @@ func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
 		return err2
 	})
 }
+
+// Using acquires a resource, builds a pipeline from it, and guarantees the
+// resource is released when the pipeline exits — regardless of whether it
+// completes, errors, or is cancelled. It is the pipeline equivalent of a
+// try-with-resources or defer pattern for resource-bound sources.
+//
+//	conn, runner := db.Acquire(ctx)
+//	// becomes:
+//	p := kitsune.Using(
+//	    func(ctx context.Context) (*sql.Rows, error) { return db.QueryContext(ctx, q) },
+//	    func(rows *sql.Rows) *kitsune.Pipeline[Row] { return kitsune.Unfold(rows, scanRow) },
+//	    func(rows *sql.Rows) { rows.Close() },
+//	)
+//
+// If acquire returns an error no items are emitted and release is not called.
+// Otherwise release is always called exactly once.
+func Using[T, R any](
+	acquire func(context.Context) (R, error),
+	build func(R) *Pipeline[T],
+	release func(R),
+) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		res, err := acquire(ctx)
+		if err != nil {
+			return err
+		}
+		defer release(res)
+
+		innerCtx, cancel := context.WithCancel(ctx)
+		stopped := false
+		err = build(res).ForEach(func(_ context.Context, item T) error {
+			if !yield(item) {
+				stopped = true
+				cancel()
+			}
+			return nil
+		}).Run(innerCtx)
+		cancel()
+		if stopped {
+			return nil
+		}
+		return err
+	})
+}

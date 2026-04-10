@@ -12,7 +12,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **`Finally`** — guaranteed cleanup hook that fires when a stage exits (completion, cancellation, or error). Useful for resource tracking, test assertions, and teardown logic that must run regardless of how the pipeline terminates. Implemented via `Generate`/`ForEach` (same pattern as `TapError` and `Catch`). On early consumer stop (e.g. downstream `Take`), fn receives nil.
 
-- [ ] **`Using[T, R]`** — acquire a resource, build a pipeline from it, release the resource on exit. Signature: `Using(acquire func(ctx) (R, error), build func(R) *Pipeline[T], release func(R))`. Eliminates boilerplate `defer` patterns around `Run` calls for resource-bound stages (DB connections, file handles, etc.).
+- [x] **`Using[T, R]`** — acquire a resource, build a pipeline from it, release the resource on exit. Signature: `Using(acquire func(ctx) (R, error), build func(R) *Pipeline[T], release func(R))`. Eliminates boilerplate `defer` patterns around `Run` calls for resource-bound stages (DB connections, file handles, etc.). If acquire fails, release is not called. Otherwise release is guaranteed exactly once via `defer`.
 
 - [ ] **`ExpandMap[T]`** — recursive BFS expansion. `fn(item)` returns a new `*Pipeline[T]`; all emitted items are fed back through `fn` again until the inner pipeline is empty. The defining primitive for tree traversal, recursive API pagination, and graph walks.
 

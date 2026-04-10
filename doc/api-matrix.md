@@ -191,6 +191,7 @@ Source operators produce items from external input. They accept no `StageOption`
 | `Cycle` | `Cycle[T](items []T)` |
 | `Concat` | `Concat[T](factories ...func()*Pipeline[T])` |
 | `Amb` | `Amb[T](factories ...func()*Pipeline[T])` |
+| `Using` | `Using[T,R](acquire func(ctx)(R,error), build func(R)*Pipeline[T], release func(R))` |
 | `NewChannel` | `NewChannel[T]()` → `*Channel[T]` (with `Send`, `TrySend`, `Close`) |
 
 **Time-based sources** — accept `Buffer`, `Name`, and `WithClock` as `StageOption`:
