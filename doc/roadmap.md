@@ -6,7 +6,47 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 ## Active / Near-term
 
-No active work items.
+### Operators
+
+- [ ] **`TapError`** — side-effect on the error path without consuming or rerouting the error. Natural complement to `Tap`: observe errors for logging, metrics, or alerting while letting them propagate unchanged. Implemented as a `Map` node with error interception; fires a callback `func(ctx, error)` and re-returns the original error.
+
+- [ ] **`Finally`** — guaranteed cleanup hook that fires when a stage exits (completion, cancellation, or error). Useful for resource tracking, test assertions, and teardown logic that must run regardless of how the pipeline terminates.
+
+- [ ] **`Using[T, R]`** — acquire a resource, build a pipeline from it, release the resource on exit. Signature: `Using(acquire func(ctx) (R, error), build func(R) *Pipeline[T], release func(R))`. Eliminates boilerplate `defer` patterns around `Run` calls for resource-bound stages (DB connections, file handles, etc.).
+
+- [ ] **`ExpandMap[T]`** — recursive BFS expansion. `fn(item)` returns a new `*Pipeline[T]`; all emitted items are fed back through `fn` again until the inner pipeline is empty. The defining primitive for tree traversal, recursive API pagination, and graph walks.
+
+- [ ] **`KeyedBalance[T]`** — content-based fan-out by consistent hash. Routes all items with the same key to the same downstream branch, enabling per-entity parallelism without lock contention. Complements `MapWithKey` for stateful workloads. Counterpart to the round-robin `Balance`.
+
+- [ ] **`Share`** — hot multicast without a fixed subscriber count. Unlike `Broadcast(n)`, `Share` lets downstream stages subscribe at any point; late subscribers receive items from the moment they attach. Design note: late-subscriber semantics need speccing before implementation (likely: miss items emitted before subscription, no buffering).
+
+---
+
+### Ecosystem: tails
+
+- [ ] **RabbitMQ / AMQP tail (`kamqp`)** — source (consume queue) and sink (publish to exchange) for RabbitMQ and any AMQP 0-9-1 broker. The one widely-deployed messaging system not yet covered by the tails.
+
+- [ ] **NATS JetStream tail** — separate from the existing core-NATS tail; JetStream adds persistence, consumer groups, and exactly-once delivery semantics that warrant a dedicated integration.
+
+---
+
+### Developer experience
+
+- [ ] **`Pipeline.Describe()`** — return a `GraphNode` tree representing the wired pipeline without executing it. Enables static validation that a pipeline is correctly assembled, and unit-testing of graph structure, without needing a full `Run`. Complements the live `inspector` dashboard.
+
+- [ ] **Expanded examples** — worked examples for the patterns most often asked about: `MapWithKey` for per-user rate limiting, `MapWith` for running totals, `DeadLetter` for retry-with-fallback, and `Stage` composition via `Then` / `Or`.
+
+---
+
+### Testing & correctness
+
+- [ ] **Property-based testing** — `gopter` (or equivalent) fuzz targets for operator algebra invariants: commutativity of `Merge`, `Take(n) ∘ Sort = Sort ∘ Take(n)`, `Broadcast` fan-out completeness, `Balance` item-count invariants. Catches classes of bugs that example-based tests miss.
+
+---
+
+### Observability
+
+- [ ] **Per-item span propagation** — the `kotel` tail creates one span per stage; true per-item tracing requires span contexts to travel with items across stage boundaries. Three approaches remain open: (a) internal item envelope carrying `trace.SpanContext` — transparent but adds an allocation per hop; (b) user-wrapped `Traced[T]` items — zero engine cost but pollutes stage signatures; (c) optional `ContextCarrier` interface on items — opt-in with no cost for non-carrier items. Revisit once a concrete use case (e.g. propagating an incoming `traceparent` from Kafka) justifies the design cost.
 
 ---
 
@@ -272,6 +312,3 @@ No active work items.
 
 ---
 
-## Backlog / needs exploring
-
-- [ ] **Per-item span propagation** — the `kotel` tail creates one span per stage. True per-item tracing would require span contexts to travel with items across stage boundaries. Three approaches considered: (a) internal item envelope carrying `trace.SpanContext` — transparent but adds an allocation per hop and breaks semantically at `Batch`/`FlatMap`/`Merge`; (b) user-wrapped `Traced[T]` items — zero engine cost but pollutes every stage signature; (c) optional `ContextCarrier` interface on items — opt-in with no cost for non-carrier items, but requires propagation across type-changing stages. The most common motivation (propagating an incoming `traceparent` from Kafka or HTTP) is already achievable by passing a trace-enriched context to `runner.Run`. Revisit if a concrete use case emerges that current stage-level spans cannot address.
