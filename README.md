@@ -90,23 +90,7 @@ fmt.Println("Inspector:", insp.URL()) // open in browser
 err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
 ```
 
-```
-+--------------------------------------------------------------+
-|  Kitsune Inspector      [Stop] [Restart]  [●Light] [● SSE]  |
-|--------------------------------------------------------------|
-|  Uptime: 12s   Items: 24,601   Throughput: 3,241/s   4/4 ▶  |
-|--------------------------------------------------------------|
-|  [source] ──▶ [parse] ──▶ [validate] ──▶ [store]            |
-|                  │                                           |
-|                  └──▶ [deadletter]                           |
-|--------------------------------------------------------------|
-|  Stage     │ Items  │ Tput    │ Latency │ Errors │ Buffer   |
-|  source    │ 24601  │ 3241/s  │ 0.2ms   │   0    │ [====  ] |
-|  parse     │ 24558  │ 3200/s  │ 1.1ms   │   43   │ [=====  ]|
-|  validate  │ 18321  │ 2280/s  │ 0.8ms   │    0   │ [===    ]|
-|  store     │ 18321  │ 2100/s  │ 4.2ms   │    0   │ [=======]|
-+--------------------------------------------------------------+
-```
+![Kitsune Inspector — live pipeline view](doc/screenshoot.png)
 
 Try it: `task inspector` or `go run ./examples/inspector`. See [`doc/inspector.md`](doc/inspector.md) for the full reference.
 
