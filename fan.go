@@ -83,7 +83,11 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 			}
 
 			wg.Wait()
-			return nil
+			// If the context was cancelled externally (e.g. user called cancel()),
+			// return the context error so callers see a non-nil result. When
+			// upstream sources finished naturally or rc.done was closed by a
+			// downstream Take, ctx.Err() is nil and we return nil as before.
+			return ctx.Err()
 		}
 		rc.add(stage, m)
 		return ch
