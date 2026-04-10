@@ -47,14 +47,14 @@ Split a stream into multiple branches or merge multiple streams into one.
 
 | Operator | What it does |
 |---|---|
-| `Partition(p)` | Route each item to one of two typed branches based on a predicate |
-| `BroadcastN(n)` | Copy every item to N independent consumer branches |
-| `Share(src)` | Register consumers one at a time, each with independent options |
-| `Balance(n)` | Round-robin distribute across N branches |
-| `KeyedBalance(n, keyFn)` | Route by `hash(key) % n` for stable per-key assignment |
-| `Merge(...)` | Fan N same-type pipelines back into one |
-| `Zip / ZipWith` | Pairwise combine two streams into one |
-| `WithLatestFrom` | Combine a primary stream with the latest value from a secondary |
+| [`Partition(p)`](operators.md#partition) | Route each item to one of two typed branches based on a predicate |
+| [`BroadcastN(n)`](operators.md#broadcast--broadcastn) | Copy every item to N independent consumer branches |
+| [`Share(src)`](operators.md#share) | Register consumers one at a time, each with independent options |
+| [`Balance(n)`](operators.md#balance) | Round-robin distribute across N branches |
+| [`KeyedBalance(n, keyFn)`](operators.md#keyedbalance) | Route by `hash(key) % n` for stable per-key assignment |
+| [`Merge(...)`](operators.md#merge) | Fan N same-type pipelines back into one |
+| [`Zip / ZipWith`](operators.md#zip--zipwith) | Pairwise combine two streams into one |
+| [`WithLatestFrom`](operators.md#withlatestfrom--withlatestfromwith) | Combine a primary stream with the latest value from a secondary |
 
 All fan-out operators integrate with `MergeRunners` so every branch shares the same source and runs within a single `Run` call. [See the operator catalog →](operators.md#fan-out--fan-in)
 
@@ -66,13 +66,13 @@ Group items before passing them downstream.
 
 | Operator | Trigger |
 |---|---|
-| `Batch(n)` | Every N items (or `BatchTimeout` deadline) |
-| `MapBatch(n, fn)` | Batch → call fn → flatten; ideal for bulk API calls |
-| `Window(n)` | Count-based tumbling window |
-| `SlidingWindow(n, step)` | Overlapping windows |
-| `SessionWindow(gap)` | Gap-based session grouping |
-| `ChunkBy(keyFn)` | Consecutive same-key grouping |
-| `ChunkWhile(predFn)` | Consecutive predicate grouping |
+| [`Batch(n)`](operators.md#batch) | Every N items (or `BatchTimeout` deadline) |
+| [`MapBatch(n, fn)`](operators.md#mapbatch) | Batch → call fn → flatten; ideal for bulk API calls |
+| [`Window(n)`](operators.md#window) | Count-based tumbling window |
+| [`SlidingWindow(n, step)`](operators.md#slidingwindow) | Overlapping windows |
+| [`SessionWindow(gap)`](operators.md#sessionwindow) | Gap-based session grouping |
+| [`ChunkBy(keyFn)`](operators.md#chunkby) | Consecutive same-key grouping |
+| [`ChunkWhile(predFn)`](operators.md#chunkwhile) | Consecutive predicate grouping |
 
 ```go
 batched := kitsune.Batch(enriched, 500, kitsune.BatchTimeout(2*time.Second))
@@ -108,20 +108,20 @@ Each stage has an independent `OnError` policy. Errors never silently swallow da
 
 | Handler | Behaviour |
 |---|---|
-| `Halt` (default) | Stop the pipeline and return the error from `Run` |
-| `Skip` | Drop the failed item and continue |
-| `Return(v)` | Emit a default value in place of the failed item |
-| `Retry(n, backoff)` | Retry up to N times with configurable backoff |
-| `RetryThen(n, backoff, h)` | Retry, then apply handler `h` if all attempts fail |
-| `DeadLetter(fn, ...)` | Route successes to one pipeline, exhausted failures to another |
+| [`Halt`](operators.md#halt) (default) | Stop the pipeline and return the error from `Run` |
+| [`Skip`](operators.md#skip) | Drop the failed item and continue |
+| [`Return(v)`](operators.md#return) | Emit a default value in place of the failed item |
+| [`Retry(n, backoff)`](operators.md#retry--retrythen) | Retry up to N times with configurable backoff |
+| [`RetryThen(n, backoff, h)`](operators.md#retry--retrythen) | Retry, then apply handler `h` if all attempts fail |
+| [`DeadLetter(fn, ...)`](operators.md#deadletter) | Route successes to one pipeline, exhausted failures to another |
 
-Backoff helpers: `FixedBackoff`, `ExponentialBackoff`, `JitteredBackoff`.
+Backoff helpers: [`FixedBackoff`, `ExponentialBackoff`, `JitteredBackoff`](operators.md#backoff-helpers).
 
 ---
 
 ## :material-electric-switch: Circuit breaker
 
-`CircuitBreaker` wraps a stage function and tracks consecutive failures. After `FailureThreshold` failures the circuit opens: subsequent items receive `ErrCircuitOpen` immediately without calling the function. After `CooldownDuration` it enters half-open state and allows `HalfOpenProbes` test calls through before deciding to close or re-open.
+[`CircuitBreaker`](operators.md#circuitbreaker) wraps a stage function and tracks consecutive failures. After `FailureThreshold` failures the circuit opens: subsequent items receive `ErrCircuitOpen` immediately without calling the function. After `CooldownDuration` it enters half-open state and allows `HalfOpenProbes` test calls through before deciding to close or re-open.
 
 ```go
 out := kitsune.CircuitBreaker(items, callAPI,
@@ -138,7 +138,7 @@ out := kitsune.CircuitBreaker(items, callAPI,
 
 ## :material-speedometer: Rate limiting
 
-`RateLimit` applies a token-bucket limiter to a pipeline stage.
+[`RateLimit`](operators.md#ratelimit) applies a token-bucket limiter to a pipeline stage.
 
 - `RateLimitWait` (default): block until a token is available. Backpressure propagates upstream.
 - `RateLimitDrop`: silently discard excess items. Useful for metrics sampling.
@@ -154,9 +154,9 @@ For **per-entity rate limiting** (each user gets an independent budget), use [`M
 
 | Policy | Behaviour |
 |---|---|
-| `RestartOnError` | Restart the stage goroutine when it returns a non-nil error |
-| `RestartOnPanic` | Recover panics and restart |
-| `RestartAlways` | Restart on both errors and panics |
+| [`RestartOnError`](options.md#supervise) | Restart the stage goroutine when it returns a non-nil error |
+| [`RestartOnPanic`](options.md#supervise) | Recover panics and restart |
+| [`RestartAlways`](options.md#supervise) | Restart on both errors and panics |
 
 Configurable backoff between restart attempts prevents tight retry loops on persistent failures.
 
@@ -164,7 +164,7 @@ Configurable backoff between restart attempts prevents tight retry loops on pers
 
 ## :material-puzzle-outline: Stage composition
 
-`Stage[I, O]` is a typed function `func(*Pipeline[I]) *Pipeline[O]`. It is a first-class value: store it in a variable, pass it to a function, compose it with `Then`.
+[`Stage[I, O]`](operators.md#stagei-o--then--through--or) is a typed function `func(*Pipeline[I]) *Pipeline[O]`. It is a first-class value: store it in a variable, pass it to a function, compose it with [`Then`](operators.md#stagei-o--then--through--or).
 
 ```go
 var ParseInt  kitsune.Stage[string, int]   = ...
@@ -176,7 +176,7 @@ pipeline := kitsune.Then(kitsune.Then(ParseInt, Double), Stringify)
 
 `Stage.Or(fallback)` wraps a primary stage with a typed fallback: if the primary fails, the same item is passed to the fallback. Useful for DB-then-cache or primary-API-then-secondary-API patterns.
 
-Stages are independently testable with `FromSlice` + `Collect` — no mocks, no infrastructure.
+Stages are independently testable with [`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect--first--last--count--any--all--find--contains); no mocks, no infrastructure.
 
 ---
 
@@ -184,13 +184,13 @@ Stages are independently testable with `FromSlice` + `Collect` — no mocks, no 
 
 | Operator | What it does |
 |---|---|
-| `Ticker(d)` | Emit `time.Time` at interval `d` |
-| `Interval(d)` | Emit a monotonically increasing counter at interval `d` |
-| `Timer(d, fn)` | Emit one value after delay `d` |
-| `Throttle(d)` | Emit at most one item per `d`, leading edge |
-| `Debounce(d)` | Emit only after `d` of silence |
-| `Sample(d)` | Emit the latest item seen in each `d` window |
-| `Timeout(d)` | Cancel a stage function's context after `d`; combine with `OnError` |
+| [`Ticker(d)`](operators.md#ticker) | Emit `time.Time` at interval `d` |
+| [`Interval(d)`](operators.md#interval) | Emit a monotonically increasing counter at interval `d` |
+| [`Timer(d, fn)`](operators.md#timer) | Emit one value after delay `d` |
+| [`Throttle(d)`](operators.md#throttle) | Emit at most one item per `d`, leading edge |
+| [`Debounce(d)`](operators.md#debounce) | Emit only after `d` of silence |
+| [`Sample(d)`](operators.md#sample) | Emit the latest item seen in each `d` window |
+| [`Timeout(d)`](options.md#timeoutd-timeduration) | Cancel a stage function's context after `d`; combine with `OnError` |
 
 All time operators accept a [`WithClock`](options.md#withclockc-clock) option for deterministic testing without `time.Sleep`. [See the operator catalog →](operators.md#time-based-operators)
 
