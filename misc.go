@@ -65,6 +65,14 @@ func TapErrorFunc(fn func(error)) func(context.Context, error) {
 	}
 }
 
+// FinallyFunc wraps a simple cleanup function into the signature expected
+// by [Finally].
+func FinallyFunc(fn func(error)) func(context.Context, error) {
+	return func(_ context.Context, err error) {
+		fn(err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // StartWith / DefaultIfEmpty
 // ---------------------------------------------------------------------------

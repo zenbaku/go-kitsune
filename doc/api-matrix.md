@@ -42,6 +42,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Filter` | `Filter[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
 | `Tap` | `Tap[T](p, fn func(ctx,T)error, opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | – |
 | `TapError` | `TapError[T](p, fn func(ctx,error))` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `Finally` | `Finally[T](p, fn func(ctx,error))` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `Reject` | `Reject[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
 | `ForEach` | `(p).ForEach(fn, opts...)` → `*ForEachRunner[T]` | ✓ | ✓ | – | ✓ | ✓ | ✓ | ✓ | – | – | – | – | – | ✓ |
 | `Drain` | `(p).Drain()` → `*DrainRunner[T]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
@@ -49,6 +50,7 @@ Documents every exported operator and which `StageOption` features each one actu
 **Notes**
 - `Filter`, `Tap`, `Reject` support `Supervise` but not `OnError`; errors from their fn/pred propagate directly.
 - `TapError` fires its callback only for non-context errors; context cancellation does not trigger the callback. It does not accept `StageOption` (implemented via `Generate`, like `Catch`).
+- `Finally` fires for all exits (success, error, cancellation, early consumer stop). On early stop (e.g. downstream `Take`), fn receives nil. Does not accept `StageOption`.
 - `ForEach` returns a typed `ForEachRunner[T]`; call `.Run(ctx)` or `.RunAsync(ctx)`. Supports `Concurrency`, `Ordered`, `OnError`, and `Supervise`.
 - `Drain` returns a `DrainRunner[T]` with a `Build()` method for use with `MergeRunners`.
 - Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column).
@@ -347,6 +349,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `RejectFunc` | `RejectFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Reject` |
 | `TapFunc` | `TapFunc[T](fn func(T))` | Lift void fn for use with free-fn `Tap` |
 | `TapErrorFunc` | `TapErrorFunc(fn func(error))` | Lift void error observer for use with free-fn `TapError` |
+| `FinallyFunc` | `FinallyFunc(fn func(error))` | Lift void cleanup function for use with free-fn `Finally` |
 
 ---
 

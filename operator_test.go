@@ -290,6 +290,108 @@ func TestTapError_MethodForm(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Finally
+// ---------------------------------------------------------------------------
+
+func TestFinally_PassesThroughItems(t *testing.T) {
+	p := kitsune.Finally(kitsune.FromSlice([]int{1, 2, 3}), func(_ context.Context, _ error) {})
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("items changed: got %v", got)
+	}
+}
+
+func TestFinally_FiresOnSuccess(t *testing.T) {
+	var callbackErr error
+	var called bool
+	p := kitsune.Finally(kitsune.FromSlice([]int{1, 2, 3}), func(_ context.Context, err error) {
+		called = true
+		callbackErr = err
+	})
+	collectAll(t, p)
+	if !called {
+		t.Fatal("callback not fired on success")
+	}
+	if callbackErr != nil {
+		t.Fatalf("expected nil error on success, got %v", callbackErr)
+	}
+}
+
+func TestFinally_FiresOnError(t *testing.T) {
+	boom := errors.New("boom")
+	var callbackErr error
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, boom
+			}
+			return v, nil
+		},
+	)
+	p2 := kitsune.Finally(p, func(_ context.Context, err error) { callbackErr = err })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	if !errors.Is(err, boom) {
+		t.Fatalf("error not propagated: got %v", err)
+	}
+	if !errors.Is(callbackErr, boom) {
+		t.Fatalf("callback received %v, want boom", callbackErr)
+	}
+}
+
+func TestFinally_FiresOnContextCancel(t *testing.T) {
+	var called bool
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch := kitsune.NewChannel[int](0)
+	p := kitsune.Finally(ch.Source(), func(_ context.Context, _ error) {
+		called = true
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	}()
+	cancel()
+	<-done
+	if !called {
+		t.Fatal("callback not fired on context cancellation")
+	}
+}
+
+func TestFinally_FiresOnEarlyStop(t *testing.T) {
+	// Take causes an early consumer stop; Finally should fire with nil.
+	var callbackErr error
+	var called bool
+	p := kitsune.Finally(
+		kitsune.Take(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 2),
+		func(_ context.Context, err error) {
+			called = true
+			callbackErr = err
+		},
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2}) {
+		t.Fatalf("got %v, want [1 2]", got)
+	}
+	if !called {
+		t.Fatal("callback not fired on early stop")
+	}
+	if callbackErr != nil {
+		t.Fatalf("expected nil on early stop, got %v", callbackErr)
+	}
+}
+
+func TestFinally_MethodForm(t *testing.T) {
+	var called bool
+	p := kitsune.FromSlice([]int{1, 2, 3}).Finally(func(_ error) { called = true })
+	collectAll(t, p)
+	if !called {
+		t.Fatal("method form: callback not fired")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Take / Drop
 // ---------------------------------------------------------------------------
 

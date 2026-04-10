@@ -1129,6 +1129,35 @@ func TapError[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[
 	})
 }
 
+// Finally calls fn as a side-effect when the pipeline exits for any reason —
+// successful completion, context cancellation, or error — then re-propagates
+// the outcome unchanged. Use it for guaranteed cleanup, resource tracking, or
+// test assertions that must run regardless of how the pipeline terminates.
+//
+// fn receives the terminal error (nil on success or early consumer stop) and
+// the context that was active at exit time. Unlike [TapError], fn fires even
+// on context cancellation.
+func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T] {
+	return Generate(func(ctx context.Context, yield func(T) bool) error {
+		innerCtx, cancel := context.WithCancel(ctx)
+		stopped := false
+		err := p.ForEach(func(_ context.Context, item T) error {
+			if !yield(item) {
+				stopped = true
+				cancel()
+			}
+			return nil
+		}).Run(innerCtx)
+		cancel()
+		if stopped {
+			fn(ctx, nil)
+			return nil
+		}
+		fn(ctx, err)
+		return err
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Take / Skip
 // ---------------------------------------------------------------------------

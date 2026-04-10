@@ -120,6 +120,14 @@ func (p *Pipeline[T]) TapError(fn func(error)) *Pipeline[T] {
 	return TapError(p, func(_ context.Context, err error) { fn(err) })
 }
 
+// Finally calls fn as a side-effect when the pipeline exits for any reason,
+// then re-propagates the outcome unchanged.
+// fn is a plain callback (no context); use the free-function [Finally]
+// directly for the context-aware form.
+func (p *Pipeline[T]) Finally(fn func(error)) *Pipeline[T] {
+	return Finally(p, func(_ context.Context, err error) { fn(err) })
+}
+
 // Dedupe drops items whose key (returned by keyFn) has already been seen.
 // Uses a global in-process [MemoryDedupSet] unless [WithDedupSet] is provided.
 func (p *Pipeline[T]) Dedupe(keyFn func(T) string, opts ...StageOption) *Pipeline[T] {

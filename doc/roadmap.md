@@ -10,7 +10,7 @@ Active and near-term work is listed first. Completed milestones follow, grouped 
 
 - [x] **`TapError`** — side-effect on the error path without consuming or rerouting the error. Natural complement to `Tap`: observe errors for logging, metrics, or alerting while letting them propagate unchanged. Fires a callback `func(ctx, error)` and re-returns the original error. Context cancellation does not trigger the callback. Implemented via `Generate`/`ForEach` (same pattern as `Catch`) to observe the terminal error from the upstream run.
 
-- [ ] **`Finally`** — guaranteed cleanup hook that fires when a stage exits (completion, cancellation, or error). Useful for resource tracking, test assertions, and teardown logic that must run regardless of how the pipeline terminates.
+- [x] **`Finally`** — guaranteed cleanup hook that fires when a stage exits (completion, cancellation, or error). Useful for resource tracking, test assertions, and teardown logic that must run regardless of how the pipeline terminates. Implemented via `Generate`/`ForEach` (same pattern as `TapError` and `Catch`). On early consumer stop (e.g. downstream `Take`), fn receives nil.
 
 - [ ] **`Using[T, R]`** — acquire a resource, build a pipeline from it, release the resource on exit. Signature: `Using(acquire func(ctx) (R, error), build func(R) *Pipeline[T], release func(R))`. Eliminates boilerplate `defer` patterns around `Run` calls for resource-bound stages (DB connections, file handles, etc.).
 
