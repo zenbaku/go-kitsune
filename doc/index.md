@@ -40,27 +40,27 @@ go get github.com/zenbaku/go-kitsune
 
 <div class="grid cards" markdown>
 
-- **Backpressure**
+- :material-valve: **Backpressure**
 
     Bounded channels between every stage. A slow consumer never causes unbounded queuing: it blocks the upstream instead.
 
-- **Type safety**
+- :material-shield-check-outline: **Type safety**
 
     `Pipeline[T]` carries its element type through the graph. Every stage transition is checked at compile time.
 
-- **Concurrency**
+- :material-lightning-bolt-outline: **Concurrency**
 
     Add `Concurrency(20)` to any stage to spin up parallel workers. Preserve arrival order with `Ordered()`.
 
-- **Error routing**
+- :material-source-branch: **Error routing**
 
     Skip, retry with backoff, dead-letter, or circuit-break: configured per stage, composably.
 
-- **Observability**
+- :material-chart-timeline-variant: **Observability**
 
     Built-in metrics hook, structured logging via `slog`, and a live inspector dashboard with per-stage sparklines.
 
-- **20+ integrations**
+- :material-power-plug-outline: **20+ integrations**
 
     Kafka, Redis, S3, Postgres, NATS, Pub/Sub, SQS, MongoDB, and more: each a separate module via [tails](tails.md).
 
