@@ -86,7 +86,7 @@ No active work items.
 
 - [x] **`MapRecover[I, O]`** — `fn` is called for each item; `recover func(ctx, I, error) O` is called on error, producing a fallback value instead of propagating the error.
 
-- [x] **`OnErrorReturn`** — `StageOption` that replaces a failed item with a caller-supplied default value instead of dropping it (`Skip`) or halting the pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup should produce a sentinel rather than a gap.
+- [x] **`Return[T]` error handler** — `OnError(Return[T](val))` replaces a failed item with a caller-supplied default value instead of dropping it (`Skip`) or halting the pipeline (`Halt`). Essential for enrichment pipelines where a failed lookup should produce a sentinel rather than a gap. (Planned as a standalone `OnErrorReturn` StageOption; landed as the `Return[T]` ErrorHandler used via `OnError`.)
 
 - [x] **`MapBatch[I, O]`** — collects up to `size` items, passes the slice to `fn`, flattens results; supports `BatchTimeout`, `Concurrency`, `OnError`. Built on `Batch` + `FlatMap`.
 
@@ -140,7 +140,7 @@ No active work items.
 
 - [x] **`Frequencies` / `FrequenciesBy` concurrency guard** — enforce `Concurrency(1)` explicitly. Terminal forms: `Frequencies(ctx, p) (map[T]int, error)` and `FrequenciesBy(ctx, p, keyFn) (map[K]int, error)`. Streaming variants kept as `FrequenciesStream` / `FrequenciesByStream`.
 
-- [x] **`GroupBy` terminal** — `GroupBy(ctx, p, keyFn) (map[K][]T, error)`. Ordered-slice variant kept as `GroupByOrdered`.
+- [x] **`GroupBy` terminal** — `GroupBy(ctx, p, keyFn) (map[K][]T, error)`. Streaming ordered-by-first-seen variant available as `GroupByStream` (emits one `Group[K,T]` per distinct key when the source closes; was named `GroupByOrdered` during development).
 
 - [x] **Terminals as methods** — `Collect`, `First`, `Last`, `Count`, `Any`, `All`, `Find`, `ReduceWhile` added as methods on `*Pipeline[T]` alongside the existing `ForEach`.
 

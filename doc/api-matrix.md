@@ -1,8 +1,6 @@
-# go-kitsune API Matrix: v1 → v2
+# go-kitsune API Reference
 
-Compares every exported operator between v1 (`archive/v1/`) and the current library.
-Records name, signature changes, and which `StageOption` features each operator
-actually uses in its implementation.
+Documents every exported operator and which `StageOption` features each one actually uses in its implementation.
 
 ---
 
@@ -28,394 +26,344 @@ actually uses in its implementation.
 
 | Symbol | Meaning |
 |--------|---------|
-| `●` | Supported in **both** v1 and v2 |
-| `2` | **v2 only** (added or improved) |
-| `1` | **v1 only** (not carried to v2) |
-| `–` | Not applicable or not supported in either |
-| `†` | v1 accepted option via `newNode` but the engine node kind may ignore it |
+| `✓` | Supported |
+| `–` | Not applicable or not supported |
 | `!` | Panics at construction time if used on this operator |
-
----
-
-## Architecture Note
-
-v1 routed most operators through a shared `newNode()` helper that blindly copied
-every `stageConfig` field into an `engine.Node`. The engine then decided which
-fields to honour per node kind. Operators that used `newNode` (Map, FlatMap,
-SwitchMap, ExhaustMap, ForEach, and all state operators) technically *accepted*
-every StageOption — but Timeout and CacheBy panicked at construction if used on
-the wrong kind.
-
-v2 is engineless: each operator owns its own goroutine loop and reads only the
-`stageConfig` fields it actually needs. This makes feature support per-operator
-and explicit, but means several operators lost options they had in v1 (notably
-state operators lost Concurrency/OnError/Supervise; ForEach lost Concurrency).
 
 ---
 
 ## 1 · Core Transforms
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Map` | `Map` | identical | ● | ● | ● | ● | ● | ● | ● | ● | ● | – | – | – | 2 |
-| `FlatMap` | `FlatMap` | identical | ● | ● | ● | ● | ● | ● | ● | – | ● | – | – | – | 2 |
-| `ConcatMap` | `ConcatMap` | identical | – | – | ● | ● | ● | ● | ● | – | ● | – | – | – | – |
-| `Filter` (method, `func(T)bool`) | `Filter` (free fn, `func(ctx,T)(bool,error)`) | pred signature changed; now free fn with opts | – | – | 2 | 2 | – | 2 | – | – | 2 | – | – | – | 2 |
-| `(p).Tap(fn func(T))` | `Tap` (free fn, `func(ctx,T)error`) | fn signature changed; now free fn with opts | – | – | 2 | 2 | – | 2 | – | – | 2 | – | – | – | – |
-| `Reject(pred func(T)bool)` | `Reject(pred func(ctx,T)(bool,error))` | pred signature changed | – | – | 2 | 2 | – | 2 | – | – | 2 | – | – | – | 2 |
-| `(p).ForEach(fn, opts)` → `*Runner` | `(p).ForEach(fn, opts)` → `*ForEachRunner[T]` | return type changed | ● | ● | – | 2 | ● | ● | ● | – | – | – | – | – | 2 |
-| `(p).Drain()` → `*Runner` | `(p).Drain()` → `*DrainRunner[T]` | return type changed; gains `Build()` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Map` | `Map[I,O](p, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | – | – | ✓ |
+| `FlatMap` | `FlatMap[I,O](p, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – | – | – | ✓ |
+| `ConcatMap` | `ConcatMap[I,O](p, fn, opts...)` | – | – | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – | – | – | – |
+| `Filter` | `Filter[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
+| `Tap` | `Tap[T](p, fn func(ctx,T)error, opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | – |
+| `Reject` | `Reject[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
+| `ForEach` | `(p).ForEach(fn, opts...)` → `*ForEachRunner[T]` | ✓ | ✓ | – | ✓ | ✓ | ✓ | ✓ | – | – | – | – | – | ✓ |
+| `Drain` | `(p).Drain()` → `*DrainRunner[T]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Filter`, `Tap`, `Reject` had no StageOption support in v1; all feature marks in those rows are v2-only additions.
-- `ForEach` in v1 supported Concurrency and OnError (both passed to engine). v2 restores Concurrency, Ordered, and OnError/Supervise as `StageOption`s — parity with v1 plus Ordered.
-- `Drain` in v1 had no options. v2 adds `DrainRunner.Build()` for use with `MergeRunners`.
-- All three of Map/FlatMap/Filter gain typed-fusion in v2: when the chain is serial, hook-free, and uses default overflow, stages fuse into a single goroutine with zero inter-stage channel hops (**FP** column).
+- `Filter`, `Tap`, `Reject` support `Supervise` but not `OnError`; errors from their fn/pred propagate directly.
+- `ForEach` returns a typed `ForEachRunner[T]`; call `.Run(ctx)` or `.RunAsync(ctx)`. Supports `Concurrency`, `Ordered`, `OnError`, and `Supervise`.
+- `Drain` returns a `DrainRunner[T]` with a `Build()` method for use with `MergeRunners`.
+- Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column).
 
 ---
 
 ## 2 · Higher-Order Maps
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `SwitchMap` | `SwitchMap` | identical | ● | – | ● | ● | ● | ● | ● | – | ● | – | – | – | – |
-| `ExhaustMap` | `ExhaustMap` | identical | ● | – | ● | ● | ● | ● | ● | – | ● | – | – | – | – |
-| `MapResult` | `MapResult` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `MapRecover` | `MapRecover` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `MapPooled` | `MapPooled` | `Pooled[T]` value type changed from value to pointer in v2 | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `MapBatch[I,O]` | `MapBatch[I,O]` (in compat.go) | identical | – | – | ● | ● | ● | – | – | – | – | – | – | ● | – |
-| `MapEvery` | `MapEvery` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `MapIntersperse` | `MapIntersperse` (in compat.go) | gains opts | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| – | `DeadLetter` (in compat.go) | v2 only | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| – | `DeadLetterSink` (in compat.go) | v2 only | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `SwitchMap` | `SwitchMap[I,O](p, fn, opts...)` | ✓ | – | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – | – | – | – |
+| `ExhaustMap` | `ExhaustMap[I,O](p, fn, opts...)` | ✓ | – | ✓ | ✓ | ✓ | ✓ | ✓ | – | ✓ | – | – | – | – |
+| `MapResult` | `MapResult[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `MapRecover` | `MapRecover[I,O](p, fn, recover, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `MapPooled` | `MapPooled[I,O](p, pool, fn func(ctx,I,*Pooled[O])error, opts...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `MapBatch` *(compat)* | `MapBatch[I,O](p, size, fn, opts...)` | – | – | ✓ | ✓ | ✓ | – | – | – | – | – | – | ✓ | – |
+| `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `MapIntersperse` *(compat)* | `MapIntersperse[T,O](p, sep, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `DeadLetter` *(compat)* | `DeadLetter[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `DeadLetterSink` *(compat)* | `DeadLetterSink[I](p, fn, opts...)` → `(*Pipeline[ErrItem[I]], *Runner)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `SwitchMap`/`ExhaustMap` now support `Timeout` (per-item deadline on the inner fn context), `Supervise` (stage-level restart on error or panic), and `Overflow` (drop policy on the output channel).
-- `MapPooled` in v2 takes `*Pool[O]` (unchanged) but the fn receives `*Pooled[O]` (pointer). `ReleaseAll` in v2 takes `[]*Pooled[T]` vs v1's `[]Pooled[T]`.
-- `MapBatch` in compat.go delegates to `Batch` + `Map`; it therefore supports everything `Batch` supports for the batching step and `Map` for the processing step, but the compat wrapper itself only threads through `Buffer`, `Name`, `Err`, `BT`.
+- `SwitchMap` cancels the active inner pipeline when a new upstream item arrives. `ExhaustMap` ignores new items while an inner pipeline is active.
+- `Timeout` on `SwitchMap`/`ExhaustMap` threads a per-item deadline into the inner fn context.
+- `MapBatch` (compat) delegates to `Batch` + `FlatMap`; it only threads `Buffer`, `Name`, `Err`, and `BatchTimeout` to the internal `Batch` stage.
+- `MapPooled`: fn receives `*Pooled[O]` (pointer). `ReleaseAll` takes `[]*Pooled[T]`. `Pooled[T].Release()` has a pointer receiver.
+- `MapResult` and `DeadLetter` both branches must be consumed before calling `Run`.
 
 ---
 
 ## 3 · State Transforms
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `MapWith` | `MapWith` | identical | ● | ● | ● | ● | ● | ● | ! | ! | ● | – | – | – | – |
-| `FlatMapWith` | `FlatMapWith` | identical | ● | ● | ● | ● | ● | ● | ! | – | ● | – | – | – | – |
-| `MapWithKey` | `MapWithKey` | identical | ● | ● | ● | ● | ● | ● | ! | ! | ● | – | – | – | – |
-| `FlatMapWithKey` | `FlatMapWithKey` | identical | ● | ● | ● | ● | ● | ● | ! | – | ● | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `MapWith` | `MapWith[I,O,S](p, key, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ! | ! | ✓ | – | – | – | – |
+| `FlatMapWith` | `FlatMapWith[I,O,S](p, key, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ! | – | ✓ | – | – | – | – |
+| `MapWithKey` | `MapWithKey[I,O,S](p, key, itemKeyFn, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ! | ! | ✓ | – | – | – | – |
+| `FlatMapWithKey` | `FlatMapWithKey[I,O,S](p, key, itemKeyFn, fn, opts...)` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ! | – | ✓ | – | – | – | – |
 
 **Notes**
-- `!` in both v1 and v2 = Timeout/CacheBy panic at construction (not meaningful for stateful loops).
-- **Concurrency semantics differ by operator type**:
-  - `MapWith`/`FlatMapWith`: each of the n workers gets its own independent `Ref[S]` (worker-local state, no shared state). Use when parallelising expensive fns that benefit from per-worker accumulators.
-  - `MapWithKey`/`FlatMapWithKey`: the key space is sharded across n workers via `hash(key) % n`. Each worker owns a disjoint partition — same-key items always reach the same worker, preserving per-entity state without any cross-worker locking (lock-free in the hot path).
-- **Supervise** wraps the stage loop; the `Ref` (or `keyedRefMap`) is initialised outside the inner function and is preserved across restarts. Items consumed from the channel before the error are not re-delivered (Supervise is stage-level restart, not item-level retry; use `OnError(Retry(…))` for item-level retry).
-- In v1 all four operators used `newNode(engine.Map/FlatMap, …)`, giving them Concurrency/OnError/Supervise nominally; the engine handled concurrency generically with a shared locked map for keyed state. v2's engineless per-operator concurrency enables the lock-free key-sharding design above.
+- `!` — `Timeout` and `CacheBy` panic at construction; they are not meaningful for stateful loops.
+- **Concurrency semantics differ by operator**:
+  - `MapWith` / `FlatMapWith`: each of n workers gets its own independent `Ref[S]` (worker-local state).
+  - `MapWithKey` / `FlatMapWithKey`: the key space is sharded across n workers via `hash(key) % n`. Same-key items always reach the same worker — lock-free in the hot path.
+- `Supervise` wraps the stage loop; the `Ref` (or keyed ref map) is initialised outside the inner fn and is preserved across restarts.
+- State TTL: `NewKey("name", initial, StateTTL(d))`. `Ref.Get` returns the zero value and resets the slot when the TTL has elapsed.
 
 ---
 
 ## 4 · Batching & Windowing
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Batch` | `Batch` | identical | – | – | ● | ● | – | – | – | – | – | ● | – | ● | – |
-| `Unbatch` (no opts) | `Unbatch` (gains opts) | v2 adds `...StageOption` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Window(d duration)` time-based | `Window(size int)` count-based | **parameter type changed** | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `Window(d duration)` | `WindowByTime(d duration)` (compat.go) | renamed for time-based | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| `SlidingWindow` (no opts) | `SlidingWindow` (gains opts) | v2 adds `...StageOption` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `SessionWindow` | `SessionWindow` | identical | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| – | `ChunkBy` | v2 only | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| – | `ChunkWhile` | v2 only | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
+| `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Window` | `Window[T](p, size int, opts...)` — count-based | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)` — time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `SlidingWindow` | `SlidingWindow[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `SessionWindow` | `SessionWindow[T](p, gap, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `ChunkBy` | `ChunkBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `ChunkWhile` | `ChunkWhile[T](p, pred func(prev,curr T)bool, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- **Breaking change**: `Window` now groups by *count*, not *time*. Use `WindowByTime` (compat.go alias) to preserve v1 time-bucketing behaviour.
+- `Window` groups by *count*. Use `WindowByTime` (compat alias) for time-bucketing.
 - `Batch` supports `WithClock` only when `BatchTimeout` is also set (the clock powers the flush ticker).
-- `Window` (count-based) needs no clock; `WindowByTime`/`SessionWindow` require one for deterministic tests.
-- `ChunkBy` groups consecutive items with the same key into one slice (emitted when the key changes). `ChunkWhile` groups while a predicate holds between adjacent items.
+- `ChunkBy` emits a group when the key changes. `ChunkWhile` emits a group when the predicate between adjacent items is false.
 
 ---
 
 ## 5 · Aggregation
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Scan` | `Scan` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `Reduce` (no opts) | `Reduce` (gains opts) | v2 adds `...StageOption` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Distinct` (no opts) | `Distinct` (gains opts) | v2 adds `...StageOption` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `DistinctBy(key func(T)string)` | `DistinctBy[T,K](keyFn func(T)K)` | key type generalised to `K comparable` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `(p).Dedupe(key func(T)string)` method | `Dedupe[T comparable]` free fn | key-less; comparable identity | – | – | ● | ● | – | – | – | – | – | – | ● | – | – |
-| – | `DedupeBy[T,K]` free fn | v2 only (key-based equivalent) | – | – | 2 | 2 | – | – | – | – | – | – | 2 | – | – |
-| `ConsecutiveDedup` | `ConsecutiveDedup` (compat.go) | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `ConsecutiveDedupBy` | `ConsecutiveDedupBy` (compat.go) | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `GroupBy` streaming `*Pipeline[map[K][]T]` | `GroupBy` terminal `(map[K][]T, error)` | **semantic change**: streaming → terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| – | `GroupByStream` `*Pipeline[Group[K,T]]` | v2 only; streaming replacement | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `CountBy` | `CountBy` (compat.go) | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `SumBy` | `SumBy` (compat.go) | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| – | `FrequenciesStream` | v2 only | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| – | `FrequenciesByStream` | v2 only | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Scan` | `Scan[T,S](p, seed, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Reduce` | `Reduce[T,S](p, seed, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Distinct` | `Distinct[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `DistinctBy` | `DistinctBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Dedupe` | `Dedupe[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
+| `DedupeBy` | `DedupeBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
+| `ConsecutiveDedup` *(compat)* | `ConsecutiveDedup[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `ConsecutiveDedupBy` *(compat)* | `ConsecutiveDedupBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` — terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `GroupByStream` | `GroupByStream[T,K](p, keyFn, opts...)` → `*Pipeline[Group[K,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `CountBy` *(compat)* | `CountBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `SumBy` *(compat)* | `SumBy[T,K,V](p, keyFn, valFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `FrequenciesStream` | `FrequenciesStream[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `FrequenciesByStream` | `FrequenciesByStream[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- **Semantic change**: `GroupBy` in v1 was a streaming mid-pipeline operator that emitted a single `map[K][]T` when the source closed (implemented as `Batch(MaxInt) + Map`). In v2 it is a terminal function. Use `GroupByStream` for mid-pipeline grouping.
-- `GroupByStream` emits one `Group[K,T]{Key, Items}` per distinct key (in first-seen order) when the source closes.
-- `Dedupe` in v2 is an identity-based dedup (`T comparable`); the v1 method that took a `key func(T)string` is preserved as `(p).Dedupe(keyFn)` in `methods.go` and delegates to `DedupeBy`.
-- `FrequenciesStream`/`FrequenciesByStream` are new streaming accumulators that emit an updated count-map on each item.
+- `GroupBy` is a terminal function returning `(map[K][]T, error)`. Use `GroupByStream` for mid-pipeline grouping.
+- `GroupByStream` emits one `Group[K,T]{Key, Items}` per distinct key in first-seen order when the source closes.
+- `Dedupe` is identity-based (`T comparable`). `DedupeBy` is key-based. When `WithDedupSet` is provided to either, deduplication becomes global (set-backed) rather than consecutive.
+- `FrequenciesStream` / `FrequenciesByStream` emit an updated count-map after each item.
+- `CountBy` / `SumBy` run at `Concurrency(1)` and emit a full snapshot after each item.
 
 ---
 
 ## 6 · Fan-Out / Fan-In
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Broadcast(p, n)` (no opts) | `Broadcast(p, n, opts...)` | gains opts | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| – | `BroadcastN(p, n, opts...)` | v2 only (explicit N-way alias) | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Balance(p, n)` (no opts) | `Balance(p, n, opts...)` | gains opts | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Partition(p, fn func(T)bool)` | `Partition(p, fn func(T)bool, opts...)` | gains opts | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Merge` | `Merge` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `Zip` | `Zip` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `ZipWith` | `ZipWith` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `Unzip` (no opts) | `Unzip` (gains opts) | v2 adds `...StageOption` | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `CombineLatest` | `CombineLatest` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `CombineLatestWith` | `CombineLatestWith` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `WithLatestFrom` | `WithLatestFrom` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| – | `WithLatestFromWith` | v2 only | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Enrich` | `Enrich` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
-| `LookupBy` | `LookupBy` | identical | – | – | ● | ● | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Broadcast` | `Broadcast[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `BroadcastN` | `BroadcastN[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Balance` | `Balance[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Partition` | `Partition[T](p, pred, opts...)` → `(*Pipeline[T], *Pipeline[T])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Merge` | `Merge[T](pipelines...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `Zip` | `Zip[A,B](a, b)` → `*Pipeline[Pair[A,B]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `ZipWith` | `ZipWith[A,B,O](a, b, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Unzip` | `Unzip[A,B](p, opts...)` → `(*Pipeline[A], *Pipeline[B])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `CombineLatest` | `CombineLatest[A,B](a, b)` → `*Pipeline[Pair[A,B]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `CombineLatestWith` | `CombineLatestWith[A,B,O](a, b, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `WithLatestFrom` | `WithLatestFrom[T,U](p, other)` → `*Pipeline[Pair[T,U]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `WithLatestFromWith` | `WithLatestFromWith[T,U,O](p, other, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Enrich` | `Enrich[T,K,V,O](p, keyFn, fetch, join, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Pair[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Merge` and `Zip`/`CombineLatest`/`WithLatestFrom` (the plain pair versions) have no Buffer option because they create no buffered output channel beyond their inputs.
-- The `*With` variants (ZipWith, CombineLatestWith, WithLatestFromWith) run a user fn so they do have a buffered output channel; Buffer and Name apply.
-- `BroadcastN` is a v2-only alias for `Broadcast` with an explicit N (identical semantics; retained for clarity).
+- `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
+- The `*With` variants run a user fn and do produce a buffered output channel; `Buffer` and `Name` apply.
+- `BroadcastN` is an explicit N-way alias for `Broadcast` (identical semantics).
+- `Broadcast` requires `n ≥ 2`.
 
 ---
 
 ## 7 · Sources
 
-Source operators produce items from external input and do not transform a pipeline.
-None accept `StageOption` (they have no internal buffered channel to configure).
+Source operators produce items from external input. They accept no `StageOption`.
 
-| v1 | v2 | Signature Δ |
-|----|----|-|
-| `From(ch <-chan T)` | `From(src <-chan T)` | param renamed |
-| `FromSlice` | `FromSlice` | identical |
-| `FromIter` | `FromIter` | identical |
-| `Generate` | `Generate` | identical |
-| `Unfold` | `Unfold` | identical |
-| `Iterate` | `Iterate` | identical |
-| `Repeatedly` | `Repeatedly` | identical |
-| `Cycle` | `Cycle` | identical |
-| `Concat` | `Concat` | identical |
-| `Amb` | `Amb` | identical |
-| `NewChannel[T]` | `NewChannel[T]` | identical |
+| Operator | Signature |
+|----------|-----------|
+| `From` | `From[T](src <-chan T)` |
+| `FromSlice` | `FromSlice[T](items []T)` |
+| `FromIter` | `FromIter[T](iter func(yield func(T)bool))` |
+| `Generate` | `Generate[T](fn func(ctx)(T,error))` |
+| `Unfold` | `Unfold[S,T](seed S, fn func(ctx,S)(T,S,bool,error))` |
+| `Iterate` | `Iterate[T](seed T, fn func(T)T)` |
+| `Repeatedly` | `Repeatedly[T](fn func()T)` |
+| `Cycle` | `Cycle[T](items []T)` |
+| `Concat` | `Concat[T](factories ...func()*Pipeline[T])` |
+| `Amb` | `Amb[T](factories ...func()*Pipeline[T])` |
+| `NewChannel` | `NewChannel[T]()` → `*Channel[T]` (with `Send`, `TrySend`, `Close`) |
 
-**Time-based sources** — these accept `...StageOption` and use `Buffer`, `Name`, and `WithClock`:
+**Time-based sources** — accept `Buffer`, `Name`, and `WithClock` as `StageOption`:
 
-| v1 | v2 | Signature Δ |
-|----|----|-------------|
-| `Ticker(d, opts...)` | `Ticker(d, opts...)` | identical |
-| `Interval(d, opts...)` | `Interval(d, opts...)` | identical |
-| `Timer(delay, fn, opts...)` | `Timer(delay, fn, opts...)` | identical |
+| Operator | Signature |
+|----------|-----------|
+| `Ticker` | `Ticker(d, opts...)` → `*Pipeline[time.Time]` |
+| `Interval` | `Interval(d, opts...)` → `*Pipeline[int]` |
+| `Timer` | `Timer(delay, fn, opts...)` → `*Pipeline[T]` |
 
 ---
 
 ## 8 · Terminal Functions
 
-Terminal functions run the pipeline and return a materialised result.
-They accept `...RunOption` (not `StageOption`). All behave identically in v1 and v2
-except as noted.
+Terminal functions run the pipeline and return a materialised result. They accept `...RunOption` (not `StageOption`).
 
-| v1 | v2 | Signature Δ |
-|----|----|-|
-| `(p).Collect(ctx, opts...)` method | `Collect(ctx, p, opts...)` free fn + `(p).Collect` method | both forms available in v2 |
-| `(p).First(ctx, opts...)` method | `First(ctx, p, opts...)` free fn + `(p).First` method | both forms |
-| `(p).Last(ctx, opts...)` method | `Last(ctx, p, opts...)` free fn + `(p).Last` method | both forms |
-| `(p).Count(ctx, opts...)` method | `Count(ctx, p, opts...)` free fn + `(p).Count` method | both forms |
-| `(p).Any(ctx, fn, opts...)` method | `Any(ctx, p, fn, opts...)` free fn + `(p).Any` method | both forms |
-| `(p).All(ctx, fn, opts...)` method | `All(ctx, p, fn, opts...)` free fn + `(p).All` method | both forms |
-| `(p).ElementAt(ctx, i, opts...)` method | `ElementAt(ctx, p, i, opts...)` free fn + `(p).ElementAt` method | v1: method only; v2: both |
-| `(p).Iter(ctx, opts...)` method | `Iter(ctx, p, opts...)` free fn + `(p).Iter` method | v1: method only; v2: both |
-| `Find(ctx, p, pred, opts...)` | `Find(ctx, p, pred, opts...)` + `(p).Find` method | v2 adds method form |
-| `Sum` | `Sum` | identical |
-| `Min`, `Max`, `MinMax` | `Min`, `Max`, `MinMax` | identical |
-| `MinBy`, `MaxBy` | `MinBy`, `MaxBy` | identical |
-| `ReduceWhile` | `ReduceWhile` free fn + `(p).ReduceWhile` method | v2 method restricts S=T; free fn keeps `[T,S]` |
-| `Contains` | `Contains` | identical |
-| `ToMap` | `ToMap` | identical |
-| `SequenceEqual` | `SequenceEqual` | identical |
-| `TakeRandom` | `TakeRandom` | identical |
-| `Frequencies` | `Frequencies` | identical |
-| `FrequenciesBy` | `FrequenciesBy` | identical |
-| `GroupBy` (streaming) | `GroupBy(ctx, p, keyFn, opts...)` terminal | semantic change — see §5 |
-| – | `ErrEmpty` | v2 only: sentinel returned when no items produced |
+| Operator | Signature |
+|----------|-----------|
+| `Collect` | `Collect[T](ctx, p, opts...)` → `([]T, error)` — also `(p).Collect` |
+| `First` | `First[T](ctx, p, opts...)` → `(T, bool, error)` — also `(p).First` |
+| `Last` | `Last[T](ctx, p, opts...)` → `(T, bool, error)` — also `(p).Last` |
+| `Count` | `Count[T](ctx, p, opts...)` → `(int, error)` — also `(p).Count` |
+| `Any` | `Any[T](ctx, p, fn, opts...)` → `(bool, error)` — also `(p).Any` |
+| `All` | `All[T](ctx, p, fn, opts...)` → `(bool, error)` — also `(p).All` |
+| `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)` — also `(p).Find` |
+| `ElementAt` | `ElementAt[T](ctx, p, i, opts...)` → `(T, bool, error)` — also `(p).ElementAt` |
+| `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)` — also `(p).Iter` |
+| `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)` — also `(p).ReduceWhile` (S=T) |
+| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` |
+| `Sum` | `Sum[T](ctx, p, opts...)` → `(T, error)` |
+| `Min` / `Max` | `Min[T](ctx, p, opts...)` → `(T, bool, error)` |
+| `MinMax` | `MinMax[T](ctx, p, opts...)` → `(Pair[T,T], bool, error)` |
+| `MinBy` / `MaxBy` | `MinBy[T,K](ctx, p, keyFn, less, opts...)` → `(T, bool, error)` |
+| `Contains` | `Contains[T comparable](ctx, p, val, opts...)` → `(bool, error)` |
+| `ToMap` | `ToMap[T,K,V](ctx, p, keyFn, valFn, opts...)` → `(map[K]V, error)` |
+| `SequenceEqual` | `SequenceEqual[T comparable](ctx, a, b, opts...)` → `(bool, error)` |
+| `TakeRandom` | `TakeRandom[T](ctx, p, n, opts...)` → `([]T, error)` |
+| `Frequencies` | `Frequencies[T comparable](ctx, p, opts...)` → `(map[T]int, error)` |
+| `FrequenciesBy` | `FrequenciesBy[T,K comparable](ctx, p, keyFn, opts...)` → `(map[K]int, error)` |
+
+**Notes**
+- `ErrEmpty` is a sentinel returned by `First`, `Last`, `ElementAt`, and similar when the stream produces no items.
+- `Iter` exposes a pipeline as `iter.Seq[T]` for range-over-func (Go 1.23+). Breaking out of the loop early cancels the pipeline.
 
 ---
 
 ## 9 · Timing & Observation
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Throttle(p, d, opts...)` | `Throttle(p, window, opts...)` | param renamed | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| `Debounce(p, d, opts...)` | `Debounce(p, silence, opts...)` | param renamed | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| `Timestamp` | `Timestamp` | identical | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| `TimeInterval` | `TimeInterval` | identical | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Throttle` | `Throttle[T](p, window, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `Debounce` | `Debounce[T](p, silence, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `Timestamp` | `Timestamp[T](p, opts...)` → `*Pipeline[Timestamped[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `TimeInterval` | `TimeInterval[T](p, opts...)` → `*Pipeline[TimedInterval[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 
 ---
 
 ## 10 · Sequence Operators
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `(p).Take(n)` method | `Take(p, n)` free fn + `(p).Take` method | both forms in v2 | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `(p).Skip(n)` method | `Drop(p, n)` free fn + `(p).Skip` + `(p).Drop` methods | renamed; old method kept as alias | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `TakeWhile(pred func(T)bool)` | `TakeWhile(pred func(T)bool)` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `DropWhile(pred func(T)bool)` | `DropWhile(pred func(T)bool)` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `TakeEvery(nth)` | `TakeEvery(n)` | param renamed | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `DropEvery(nth)` | `DropEvery(n)` | param renamed | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `MapEvery(nth, fn)` no opts | `MapEvery(n, fn, opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `WithIndex` → `*Pipeline[Pair[int,T]]` no opts | `WithIndex(opts...)` → `*Pipeline[Indexed[T]]` | return type changed; gains opts | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Intersperse(sep)` no opts | `Intersperse(sep, opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `MapIntersperse(sep, fn)` no opts | `MapIntersperse(sep, fn, opts...)` gains opts | in compat.go | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `Pairwise` no opts | `Pairwise(opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `StartWith` | `StartWith` | identical | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `DefaultIfEmpty` no opts | `DefaultIfEmpty(opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | 2 | – | – | – |
-| `Sort` no opts | `Sort(opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
-| `SortBy` no opts | `SortBy(opts...)` gains opts | v2 adds StageOption | – | – | 2 | 2 | – | – | – | – | – | – | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `Take` | `Take[T](p, n)` — also `(p).Take` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `Drop` | `Drop[T](p, n)` — also `(p).Skip`, `(p).Drop` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `TakeWhile` | `TakeWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `DropWhile` | `DropWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `TakeEvery` | `TakeEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `DropEvery` | `DropEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `WithIndex` | `WithIndex[T](p, opts...)` → `*Pipeline[Indexed[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Intersperse` | `Intersperse[T](p, sep, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Pair[T,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `StartWith` | `StartWith[T](p, items...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `DefaultIfEmpty` | `DefaultIfEmpty[T](p, val, opts...)` | – | – | ✓ | ✓ | – | – | – | – | ✓ | – | – | – | – |
+| `Sort` | `Sort[T](p, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `SortBy` | `SortBy[T,K](p, keyFn, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Indexed[T]` (v2) is `struct{ Index int; Value T }`, replacing `Pair[int, T]` (v1).
-- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery` have no option support in either version; they use hardcoded buffer sizes.
+- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery` use hardcoded buffer sizes and accept no options.
+- `Indexed[T]` is `struct{ Index int; Value T }`.
+- `(p).Skip` is an alias for `Drop`.
 
 ---
 
 ## 11 · Middleware
 
-| v1 | v2 | Signature Δ | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
-|----|----|-------------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `RateLimit(p, rps, opts...)` | `RateLimit(p, rps, []RateLimitOpt, stageOpts...)` | RL-specific opts split into separate param | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
-| `CircuitBreaker(p, fn, opts...)` | `CircuitBreaker(p, fn, []CircuitBreakerOpt, stageOpts...)` | CB-specific opts split into separate param | – | – | ● | ● | – | – | – | – | – | ● | – | – | – |
+| Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
+|----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
+| `RateLimit` | `RateLimit[T](p, rps float64, rlOpts []RateLimitOpt, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
+| `CircuitBreaker` | `CircuitBreaker[T](p, fn, cbOpts []CircuitBreakerOpt, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 
-**v1 StageOptions for RateLimit** (now `RateLimitOpt` in v2):
+**`RateLimitOpt`** (not `StageOption`):
 
-| v1 | v2 | Notes |
-|----|----|-------|
-| `Burst(n) StageOption` | `Burst(n) RateLimitOpt` | type changed |
-| `RateMode(m) StageOption` | `RateMode(m) RateLimitOpt` | type changed |
+| Option | Effect |
+|--------|--------|
+| `Burst(n int)` | Token bucket burst size |
+| `RateMode(m)` | `RateLimitWait` (backpressure) or `RateLimitDrop` (skip excess) |
 
-**v1 StageOptions for CircuitBreaker** (now `CircuitBreakerOpt` in v2):
+**`CircuitBreakerOpt`** (not `StageOption`):
 
-| v1 | v2 | Notes |
-|----|----|-------|
-| `FailureThreshold(n) StageOption` | `FailureThreshold(n) CircuitBreakerOpt` | type changed |
-| `CooldownDuration(d) StageOption` | `CooldownDuration(d) CircuitBreakerOpt` | type changed |
-| `HalfOpenProbes(n) StageOption` | `HalfOpenProbes(n) CircuitBreakerOpt` | type changed |
-| `HalfOpenTimeout(d) StageOption` | `HalfOpenTimeout(d) CircuitBreakerOpt` | type changed |
+| Option | Effect |
+|--------|--------|
+| `FailureThreshold(n int)` | Failures before opening |
+| `CooldownDuration(d)` | Time in open state before half-open |
+| `HalfOpenProbes(n int)` | Successes required to close from half-open |
+| `HalfOpenTimeout(d)` | If probes not received within d, reopen |
 
 **Notes**
-- **Breaking change**: passing any of the four CB opts or either RL opt as `StageOption` to v2 silently does nothing (the underlying `stageConfig` field no longer exists). They must be passed in the dedicated `[]CircuitBreakerOpt` / `[]RateLimitOpt` parameter.
-- Both operators still accept `WithName`, `Buffer`, and `WithClock` as `StageOption`.
+- `WithName`, `Buffer`, and `WithClock` are the only `StageOption`s that apply to both operators.
+- `CircuitBreaker` emits `ErrCircuitOpen` when the circuit is open.
 
 ---
 
 ## 12 · Stage Composition
 
-| v1 | v2 | Signature Δ |
-|----|----|-|
-| `Stage[I,O]` type | `Stage[I,O]` type | identical |
-| `(s Stage).Apply(p)` | `(s Stage).Apply(p)` | identical |
-| `Then(s1, s2)` | `Then(s, next)` | param names only |
-| `(p).Through(fn func(*Pipeline[T])*Pipeline[T])` | `(p).Through(s Stage[T,T])` | v2 takes a `Stage[T,T]`; since `Stage[T,T] = func(*Pipeline[T])*Pipeline[T]`, all existing code is compatible |
-| `Or(primary, fallback func) Stage[I,O]` | `Or(primary, fallback func) Stage[I,O]` (stage.go) | restored in v2 |
-| – | `(s Stage).Or(fallback Stage) Stage` method | v2 only; takes a full Stage, not raw fns |
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `Stage[I,O]` | `type Stage[I,O any] func(*Pipeline[I]) *Pipeline[O]` | Named function type; zero-cost transformer |
+| `(s).Apply` | `(s Stage[I,O]).Apply(p *Pipeline[I]) *Pipeline[O]` | Apply a stage to a pipeline |
+| `Then` | `Then[I,M,O](s1 Stage[I,M], s2 Stage[M,O]) Stage[I,O]` | Compose two stages |
+| `(p).Through` | `(p *Pipeline[T]).Through(s Stage[T,T]) *Pipeline[T]` | Method form of Apply |
+| `Or` | `Or[I,O](primary, fallback func) Stage[I,O]` | Try primary; fall back to fallback on no output |
+| `(s).Or` | `(s Stage[I,O]).Or(fallback Stage[I,O]) Stage[I,O]` *(compat)* | Method form taking a full Stage |
 
 ---
 
 ## 13 · Error Routing
 
-| v1 | v2 | Notes |
-|----|----|-|
-| `MapResult` | `MapResult` | identical; routes errors to a `*Pipeline[ErrItem[I]]` |
-| `MapRecover` | `MapRecover` | identical; inline recovery fn |
-| `DeadLetter` | `DeadLetter` (compat.go) | identical; alias for `MapResult` pattern |
-| `DeadLetterSink` | `DeadLetterSink` (compat.go) | identical; sink variant |
+| Operator | Signature | Notes |
+|----------|-----------|-------|
+| `MapResult` | `MapResult[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | Routes errors to a dead-letter branch |
+| `MapRecover` | `MapRecover[I,O](p, fn, recover, opts...)` | Inline recovery fn produces a fallback value |
+| `DeadLetter` *(compat)* | `DeadLetter[I,O](p, fn, opts...)` | `MapResult` with retry wrapping |
+| `DeadLetterSink` *(compat)* | `DeadLetterSink[I](p, fn, opts...)` | Sink variant; returns dead-letter pipeline + runner |
 
 ---
 
 ## 14 · Helper / Lift Functions
 
-| v1 | v2 | Notes |
-|----|----|-|
-| `Lift(fn func(I)(O,error))` | `Lift(fn)` | identical; adapts error-returning fn to `func(ctx,I)(O,error)` |
-| `LiftPure(fn func(I)O)` | `LiftPure(fn)` | identical; wraps infallible fn |
-| – | `LiftFallible(fn func(I)(O,error))` | v2 alias for `Lift` |
-| – | `FilterFunc(fn func(T)bool)` | v2 helper; lifts plain pred for use with free-fn `Filter` |
-| – | `RejectFunc(fn func(T)bool)` | v2 helper; lifts plain pred for use with free-fn `Reject` |
-| – | `TapFunc(fn func(T))` | v2 helper; lifts void fn for use with free-fn `Tap` |
+| Function | Signature | Notes |
+|----------|-----------|-------|
+| `Lift` | `Lift[I,O](fn func(I)(O,error))` | Adapt error-returning fn to `func(ctx,I)(O,error)` |
+| `LiftFallible` | `LiftFallible[I,O](fn func(I)(O,error))` | Alias for `Lift` |
+| `LiftPure` | `LiftPure[I,O](fn func(I)O)` | Wrap infallible fn |
+| `FilterFunc` | `FilterFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Filter` |
+| `RejectFunc` | `RejectFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Reject` |
+| `TapFunc` | `TapFunc[T](fn func(T))` | Lift void fn for use with free-fn `Tap` |
 
 ---
 
 ## 15 · Pool
 
-| v1 | v2 | Signature Δ |
-|----|----|-|
-| `NewPool[T](factory func() T)` | `NewPool[T](newFn func() T)` | param renamed |
-| `(p *Pool[T]).Warmup(n int)` | `(p *Pool[T]).Warmup(n int)` | identical |
-| `MapPooled(p, pool, fn, opts...)` | `MapPooled(p, pool, fn, opts...)` | fn signature changed: v1 `fn(ctx, I, Pooled[T])`, v2 `fn(ctx, I, *Pooled[T])` |
-| `ReleaseAll([]Pooled[T])` | `ReleaseAll([]*Pooled[T])` | slice element changed value→pointer |
-| `(item Pooled[T]).Release()` | `(item *Pooled[T]).Release()` | receiver changed value→pointer |
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `NewPool[T]` | `NewPool[T](newFn func() T) *Pool[T]` | Construct a typed pool |
+| `(p).Warmup` | `(p *Pool[T]).Warmup(n int)` | Pre-populate pool; reduces first-request latency |
+| `(p).Put` | `(p *Pool[T]).Put(item *Pooled[T])` | Return item without calling `Release` |
+| `MapPooled` | `MapPooled[I,O](p, pool, fn func(ctx,I,*Pooled[O])error, opts...)` | Acquire slot → call fn → emit `*Pooled[O]` |
+| `ReleaseAll` | `ReleaseAll[T](items []*Pooled[T])` | Bulk release |
+| `(item).Release` | `(item *Pooled[T]).Release()` | Return single item to pool |
 
 ---
 
 ## 16 · Observability
 
-All identical between versions.
+All hooks are wired into every stage runner automatically when provided via `WithHook`.
 
-| Symbol | v1 | v2 |
-|--------|----|----|
-| `Hook` interface | `engine.Hook` | `internal.Hook` (re-exported) |
-| `OverflowHook` | `engine.OverflowHook` | `internal.OverflowHook` |
-| `SupervisionHook` | `engine.SupervisionHook` | `internal.SupervisionHook` |
-| `SampleHook` | `engine.SampleHook` | `internal.SampleHook` |
-| `GraphHook` | `engine.GraphHook` | `internal.GraphHook` |
-| `BufferHook` | `engine.BufferHook` | `internal.BufferHook` |
-| `MetricsHook` | `Snapshot` | `MetricsSnapshot` (renamed) |
-| `LogHook` | ● | ● |
-| `MultiHook` | ● | ● |
-| `JSONCodec` | – | `JSONCodec` (v2 only; explicit alias) |
+| Interface | Package | Notes |
+|-----------|---------|-------|
+| `Hook` | `internal` (re-exported) | Base: `OnStageStart`, `OnItem`, `OnStageDone` |
+| `OverflowHook` | `internal` | `OnOverflow` fired on `DropNewest` / `DropOldest` |
+| `SupervisionHook` | `internal` | `OnRestart` fired on supervision restart |
+| `SampleHook` | `internal` | `OnItemSample` fired every N items (configurable via `WithSampleRate`) |
+| `GraphHook` | `internal` | `OnGraph` fired at run-time with full `[]GraphNode` |
+| `BufferHook` | `internal` | `OnBufferChange` fired on channel depth changes |
+| `LogHook` | root | Structured log output for every hook event |
+| `MultiHook` | root | Fan-out to multiple hook implementations |
+| `MetricsHook` | root | Lock-free atomic counters per stage; `Snapshot()` / `Reset()` / `Snapshot().JSON()` |
+| `JSONCodec` | root | Default codec for cache and store-backed `Ref` serialization |
 
----
-
-## Summary: Features Gained and Lost in v2
-
-### Gained in v2
-
-| Feature | Details |
-|---------|---------|
-| Fast path / fusion | Serial Map → FlatMap → ForEach chains fuse into one goroutine with zero channel hops |
-| `Filter`/`Tap`/`Reject` supervision | Stages can now restart on error/panic via `Supervise` |
-| `Filter`/`Tap`/`Reject` overflow | Output buffer drop policy configurable via `Overflow` |
-| `ForEach` Concurrency/Ordered/OnError/Supervise restored | v2 restores `Concurrency(n)`, `Ordered()`, `OnError`, and `Supervise` on `ForEach` — parity with v1 plus the new `Ordered()` mode |
-| `SwitchMap`/`ExhaustMap` Timeout/Supervise/Overflow | Timeout threads a per-item deadline into the inner fn context; Supervise enables stage-level restart; Overflow controls the output channel drop policy |
-| `Or` as Stage method | `stage1.Or(stage2)` chains two full Stages as try/fallback |
-| `BloomDedupSet` | Probabilistic dedup with bounded memory |
-| `DedupeBy` | Key-based dedup as a free function (was method-only in v1) |
-| `GroupByStream` | Streaming GroupBy that emits `Group[K,T]` mid-pipeline |
-| `FrequenciesStream`/`FrequenciesByStream` | Streaming count accumulation |
-| `WithLatestFromWith` | Combining variant of `WithLatestFrom` |
-| `BroadcastN` | Explicit N-way broadcast alias |
-| `ChunkBy`/`ChunkWhile` | Key-change and predicate-change grouping |
-| `ErrEmpty` | Sentinel error for "no items produced" |
-| `LiftFallible`, `FilterFunc`, `RejectFunc`, `TapFunc` | Adapter helpers for plain functions |
-| `DrainRunner.Build()` | Drain branches can now be used with `MergeRunners` |
-| `Iter`/`ElementAt` as Pipeline methods | Both forms available |
-| `MapWithKey`/`FlatMapWithKey` key-sharded concurrency | Lock-free per-entity state: key space sharded across n workers by `hash(key) % n`; same-key items always reach the same worker; no cross-worker locking in the hot path |
-| `MapWith`/`FlatMapWith` worker-local concurrency | Each of the n workers owns an independent `Ref[S]`; useful for parallelising expensive fns needing per-worker state |
-| OnError/Supervise on all state operators | All four operators now read `cfg.errorHandler` and wrap with `internal.Supervise`; Ref values are preserved across restarts |
-
-### Lost or Regressed in v2
-
-| Feature | Details |
-|---------|---------|
-| State operators (MapWith etc.) Concurrency/Ordered/OnError/Supervise | **Restored in v2**: all four operators now support Concurrency/Ordered/OnError/Supervise. Concurrency semantics are explicitly defined per operator (worker-local for MapWith; key-sharded for MapWithKey). |
-| `ErrGraphMismatch` | Removed (architecture changed; runners no longer hold a shared graph pointer) |
-| `Snapshot` type | Renamed to `MetricsSnapshot` |
-| CB/RL options as `StageOption` | `FailureThreshold`, `CooldownDuration`, `HalfOpenProbes`, `HalfOpenTimeout`, `Burst`, `RateMode` are now dedicated opt types — passing them as StageOption silently does nothing |
+**`GraphNode`** exposes: `Kind`, `Name`, `Concurrency`, `Buffer`, `Overflow`, `BatchSize`, `Timeout`, `HasRetry`, `HasSupervision`.
