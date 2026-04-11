@@ -239,19 +239,21 @@ These bounds are enforced by `TestAllocBounds` in `bench_allocs_test.go` and run
 **Core operator benchmarks** (throughput + allocation benchmarks):
 
 ```
-go test -bench=. -benchmem ./...
+task bench
 ```
 
-For stable results across multiple runs:
+For the canonical baseline count (10 samples):
 
 ```
-go test -bench=. -benchmem -count=5 ./...
+task bench:baseline
 ```
 
-**Comparison benchmarks** (Kitsune vs raw goroutines, conc, go-streams):
+**Regression check** (diff current branch against `testdata/bench/baseline.txt`):
 
 ```
-cd archive/bench && go test -bench=. -benchmem -count=5 -timeout 300s ./...
+task bench:current    # capture current results (6 samples)
+task bench:compare    # print benchstat diff table
+task bench:check      # full check — generate, diff, fail on > 15% regression
 ```
 
 **Allocation regression tests** (hard-fail on ceiling violation):
@@ -266,9 +268,18 @@ go test -run TestAllocBounds -count=1 ./...
 go test -v -run TestLatencyPercentiles ./...
 ```
 
-Or via Task:
+---
 
-```
-task bench           # core benchmarks
-task bench:compare   # comparison benchmarks
-```
+## Performance regression baseline
+
+`testdata/bench/baseline.txt` is a committed benchmark snapshot used by CI to detect throughput regressions on pull requests. The CI `bench` job runs on every PR, compares the PR branch against the baseline using `benchstat`, and fails if any benchmark regresses by more than 15% with statistical significance (p < 0.05).
+
+The threshold is intentionally conservative at 15% to avoid flaky failures from GitHub runner jitter. Silent regressions below 15% are tracked by the geomean row in the diff table — use it to spot trends across a series of PRs.
+
+**Regenerating the baseline** after accepting an intentional performance change:
+
+1. Dispatch the `.github/workflows/bench-baseline.yml` workflow on `main` via GitHub's "Run workflow" button.
+2. Download the `baseline` artifact from the workflow run.
+3. Replace `testdata/bench/baseline.txt` with the downloaded file and commit.
+
+The baseline workflow generates the snapshot on the same `ubuntu-latest` runner class used by PR checks, ensuring the environment matches.

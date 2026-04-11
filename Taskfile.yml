@@ -98,15 +98,34 @@ tasks:
         vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
 
   bench:
-    desc: Run benchmarks
+    desc: Run root-package benchmarks (fast; count=1 for local iteration)
     cmds:
-      - go test -bench=. -benchmem -count=1 -timeout 60s ./...
+      - go test -run=^$ -bench=. -benchmem -benchtime=1s -count=1 -timeout 10m .
+
+  bench:baseline:
+    desc: Generate the committed baseline (count=10; run on a quiet machine or via CI workflow_dispatch)
+    cmds:
+      - mkdir -p testdata/bench
+      - go test -run=^$ -bench=. -benchmem -benchtime=1s -count=10 -timeout 15m . | tee testdata/bench/baseline.txt
+
+  bench:current:
+    desc: Capture current-branch benchmark results for comparison (count=6)
+    cmds:
+      - mkdir -p testdata/bench
+      - go test -run=^$ -bench=. -benchmem -benchtime=1s -count=6 -timeout 15m . | tee testdata/bench/current.txt
 
   bench:compare:
-    desc: Run comparison benchmarks (Kitsune vs raw goroutines, conc, go-streams)
-    dir: archive/bench
+    desc: Diff current.txt against committed baseline using benchstat
     cmds:
-      - go test -bench=. -benchmem -count=5 -timeout 300s ./...
+      - command -v benchstat >/dev/null 2>&1 || go install golang.org/x/perf/cmd/benchstat@latest
+      - benchstat testdata/bench/baseline.txt testdata/bench/current.txt
+
+  bench:check:
+    desc: Full regression check — generate current results, diff, and fail on regressions > threshold
+    cmds:
+      - task: bench:current
+      - task: bench:compare
+      - go run ./internal/tools/benchcheck -threshold=15 testdata/bench/baseline.txt testdata/bench/current.txt
 
   test:examples:
     desc: Build and run all examples
