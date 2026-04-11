@@ -2767,6 +2767,33 @@ Replace the failed item with `val` and continue. In `FlatMap` stages, behaves li
 kitsune.OnError(kitsune.Return(User{Name: "unknown"}))
 ```
 
+**Type safety caveat:** `ErrorHandler` is not parameterized on the stage's output type. The type parameter `T` on `Return` is inferred from `val` and is not checked against the stage's output type at compile time. If they do not match, the substitution silently fails at runtime: the original error is propagated as though `Halt` has been used. Use a typed variable or prefer `TypedReturn` (see below) for a compile-time guarantee.
+
+`Return` can be composed as a fallback inside `RetryThen` and `RetryIfThen`. `TypedReturn` cannot.
+
+### TypedReturn
+
+```go
+func TypedReturn[O any](val O) StageOption
+```
+
+A type-safe alternative to `OnError(Return(val))`. The output type `O` is verified at the call site, so a mismatch between `val` and the stage's output type is a compile-time error rather than a silent runtime fallback to `Halt`:
+
+```go
+kitsune.Map(orders, fetchUser,
+    kitsune.TypedReturn[User](User{Name: "unknown"}),
+)
+```
+
+`TypedReturn` returns a `StageOption` directly, so it cannot be composed inside `RetryThen` or `RetryIfThen`. For composed retry chains, use `Return` with a typed variable:
+
+```go
+var fallback User
+kitsune.OnError(kitsune.RetryThen(3, kitsune.FixedBackoff(time.Second), kitsune.Return(fallback)))
+```
+
+In `FlatMap` stages, `TypedReturn` behaves like `ActionDrop` because `FlatMap` has no single replacement value to emit.
+
 ### RetryMax / RetryThen
 
 ```go

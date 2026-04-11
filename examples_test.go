@@ -45,6 +45,7 @@ func TestExamples(t *testing.T) {
 		"ticker",
 		"timeout",
 		"ttldedup",
+		"typedreturn",
 	}
 	for _, name := range examples {
 		t.Run(name, func(t *testing.T) {

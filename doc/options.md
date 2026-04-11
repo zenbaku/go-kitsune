@@ -102,7 +102,8 @@ Default: `Halt()` (stop the pipeline and return the error from `Run`).
 |---|---|
 | `Halt()` | Stop the pipeline immediately. **Default.** |
 | `Skip()` | Drop the failed item and continue. |
-| `Return(v)` | Emit `v` in place of the failed item and continue. |
+| `Return(v)` | Emit `v` in place of the failed item and continue. Composable; see type safety note below. |
+| `TypedReturn[O](v)` | Same as `Return`, but `O` is checked against the stage output type at compile time. Not composable in `RetryThen`. |
 | `RetryMax(n, backoff)` | Retry up to `n` times with the given backoff. |
 | `RetryThen(n, backoff, h)` | Retry, then apply handler `h` if all attempts fail. |
 | `DeadLetter(fn, ...)` | Route successes to one pipeline, exhausted failures to another. |
@@ -117,6 +118,8 @@ out := kitsune.Map(items, callAPI,
 ```
 
 Backoff helpers: `FixedBackoff(d)`, `ExponentialBackoff(min, max)`, `JitteredBackoff(min, max)`.
+
+**`Return(v)` type safety:** `ErrorHandler` is not parameterized on the stage's output type. If the type of `v` does not match the stage's output type, the substitution silently fails at runtime and the original error is propagated as though `Halt` had been used. For a compile-time guarantee, use `TypedReturn[O](v)` as a `StageOption` directly — the type `O` is checked against the stage output at the call site. `TypedReturn` cannot be composed inside `RetryThen`; for retry chains use `Return` with a typed variable. See the [TypedReturn section in operators.md](operators.md#typedreturn) for details.
 
 ---
 

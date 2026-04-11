@@ -3,6 +3,8 @@ package kitsune_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -351,5 +353,87 @@ func TestWithDefaultBuffer_DescribeShowsResolvedSize(t *testing.T) {
 	nodes := p.Describe()
 	if len(nodes) == 0 {
 		t.Fatal("expected at least one node")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TypedReturn: compile-time type-safe error fallback
+// ---------------------------------------------------------------------------
+
+func TestTypedReturn_EmitsFallback(t *testing.T) {
+	// TypedReturn[string] on a Map[int, string] stage: output type matches, so
+	// the fallback value is emitted and no error propagates.
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, n int) (string, error) {
+			if n == 2 {
+				return "", errors.New("boom")
+			}
+			return fmt.Sprintf("%d", n), nil
+		},
+		kitsune.TypedReturn[string]("fallback"),
+	)
+	got, err := runWith(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"1", "fallback", "3"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestTypedReturn_WithName(t *testing.T) {
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("%d", n), nil },
+		kitsune.TypedReturn[string]("x"),
+		kitsune.WithName("typed-ret"),
+	)
+	nodes := p.Describe()
+	if len(nodes) == 0 {
+		t.Fatal("expected at least one node")
+	}
+}
+
+func TestTypedReturn_Buffer(t *testing.T) {
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, n int) (string, error) { return fmt.Sprintf("%d", n), nil },
+		kitsune.TypedReturn[string]("x"),
+		kitsune.Buffer(4),
+	)
+	got, err := runWith(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Return type-mismatch regression
+// ---------------------------------------------------------------------------
+
+func TestReturn_TypeMismatch_PropagatesOriginalError(t *testing.T) {
+	// Return[T] is not parameterized on the stage's output type O. When the
+	// inferred T does not match O, the type assertion val.(O) fails at runtime
+	// and the engine falls back to propagating the original error as though
+	// Halt had been used. This test locks in that contract so any future
+	// refactor of the type-assertion path will trip here.
+	boom := errors.New("boom")
+
+	// Map[int, string]: output type is string.
+	// Return(42) infers T=int, which does not match string.
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (string, error) {
+			return "", boom
+		},
+		kitsune.OnError(kitsune.Return(42)), // int != string: type assertion will fail
+	)
+	got, err := runWith(t, p)
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected original error to propagate; got err=%v, items=%v", err, got)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no items emitted on type mismatch; got %v", got)
 	}
 }

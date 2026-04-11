@@ -21,13 +21,16 @@ Handlers and their outcomes:
 |---|---|
 | `Halt()` | Return the error; stop processing (default). |
 | `ActionDrop()` / `Skip()` | Drop the item and continue with the next one. |
-| `Return(val)` | Replace the failed item with `val` and continue. |
+| `Return(val)` | Replace the failed item with `val` and continue. Composable; see type safety note below. |
+| `TypedReturn[O](val)` | Same as `Return`, but `O` is checked against the stage output type at compile time. |
 | `RetryMax(n, backoff)` | Retry the item up to `n` times; halt if all retries fail. |
 | `RetryThen(n, backoff, fallback)` | Retry up to `n` times; if exhausted, delegate to `fallback`. |
 | `RetryIf(pred, backoff)` | Retry while `pred(err)` is true; halt otherwise. |
 | `RetryIfThen(pred, backoff, fallback)` | Retry while `pred(err)` is true; otherwise delegate to `fallback`. |
 
 `OnError` consumes the item: whether it drops it, replaces it, or exhausts retries, the item is resolved before the next one is processed. The stage loop continues.
+
+**`Return(val)` type safety:** `ErrorHandler` is not parameterized on the stage's output type. The type of `val` is inferred at the call site and is not checked against the stage's output type at compile time. If they do not match, the substitution silently fails at runtime: the original error is propagated as though `Halt` had been used. To avoid this, use `TypedReturn[O](val)` instead: it returns a `StageOption` directly and the type `O` is checked against the stage output type at compile time. `TypedReturn` cannot be composed inside `RetryThen`; for retry chains, use `Return` with a typed variable (`var fallback MyType`).
 
 `OnError` is only triggered for **per-item errors** returned by the stage function. It does not fire for panics or context cancellations.
 

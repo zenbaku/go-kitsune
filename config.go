@@ -491,8 +491,44 @@ func Skip() ErrorHandler { return ActionDrop() }
 //
 // Note: in [FlatMap] stages, Return behaves like [Skip] because FlatMap has no
 // single replacement value to emit.
+//
+// Type safety caveat: [ErrorHandler] is not parameterized on the stage's output
+// type, so the type parameter T on Return is inferred only from val and is not
+// checked against the stage's output type at compile time. If T does not match
+// the stage's output type, the substitution silently fails at runtime: the
+// original error is propagated as though [Halt] had been used, and no replacement
+// value is emitted. To stay safe, prefer letting the compiler infer T from a
+// typed variable that matches the stage's output type:
+//
+//	var fallback User
+//	kitsune.Map(orders, fetchUser, kitsune.OnError(kitsune.Return(fallback)))
+//
+// rather than passing an untyped literal whose type may drift from the stage
+// signature. For a compile-time guarantee, use [TypedReturn] instead.
 func Return[T any](val T) ErrorHandler {
 	return ErrorHandler{h: &returnHandler{val: val}}
+}
+
+// TypedReturn is a type-safe alternative to [OnError]([Return](val)).
+// Unlike [Return], the output type O is fixed at the call site, so a mismatch
+// between val and the stage's output type is a compile-time error rather than
+// a silent runtime fallback to [Halt]:
+//
+//	kitsune.Map(orders, fetchUser,
+//	    kitsune.TypedReturn[User](User{Name: "unknown"}),
+//	)
+//
+// TypedReturn returns a [StageOption] directly and cannot be composed as a
+// fallback inside [RetryThen] or [RetryIfThen]. For composed chains use
+// [Return] with a typed variable to get the compiler's help:
+//
+//	var fallback User
+//	kitsune.OnError(kitsune.RetryThen(3, kitsune.FixedBackoff(time.Second), kitsune.Return(fallback)))
+//
+// Note: in [FlatMap] stages, TypedReturn behaves like [ActionDrop] because
+// FlatMap has no single replacement value to emit.
+func TypedReturn[O any](val O) StageOption {
+	return func(c *stageConfig) { c.errorHandler = &typedReturnHandler[O]{val: val} }
 }
 
 // RetryMax returns an ErrorHandler that retries up to n times with the given
@@ -561,6 +597,17 @@ type returnHandler struct {
 func (h *returnHandler) Handle(error, int) internal.ErrorAction   { return internal.ActionReturn }
 func (h *returnHandler) Backoff() func(attempt int) time.Duration { return nil }
 func (h *returnHandler) ReturnValue() any                         { return h.val }
+
+// typedReturnHandler stores the replacement value as its concrete type O.
+// Because ReturnValue returns h.val whose dynamic type is already O, the
+// val.(O) assertion in ProcessItem is guaranteed to succeed.
+type typedReturnHandler[O any] struct {
+	val O
+}
+
+func (h *typedReturnHandler[O]) Handle(error, int) internal.ErrorAction   { return internal.ActionReturn }
+func (h *typedReturnHandler[O]) Backoff() func(attempt int) time.Duration { return nil }
+func (h *typedReturnHandler[O]) ReturnValue() any                         { return h.val }
 
 type retryHandler struct {
 	max      int
