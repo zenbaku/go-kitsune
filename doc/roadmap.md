@@ -64,6 +64,45 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ---
 
+### Correctness & safety
+
+- [ ] **`Pooled.Value` use-after-release protection**: `Pooled.Value` is a public field, and calling `Release()` followed by a read of `Value` is documented as undefined behaviour — but Go cannot enforce it. Under time pressure, a developer who releases and then reads `Value` in a logging call gets silent corruption. Add a `released atomic.Bool` guard and panic on `Value` access after release (opt-in via a build tag or constructor flag if the overhead is unacceptable in hot paths). At minimum, promote the warning to a prominent `// WARNING:` block in the type godoc rather than a single sentence in `Release`.
+
+- [ ] **`globalIDSeq` truncation on 32-bit platforms**: `nextPipelineID()` atomically increments an `int64` counter but casts the result to `int`. On 32-bit targets `int` is 32 bits; at 2^31 stage IDs the cast silently wraps and channel-memoisation in `runCtx.chans` starts colliding, producing incorrect DAG wiring. Either return `int64` throughout (stage IDs, `stageMeta.id`, `stageMeta.inputs`), or add a `//go:build !386 && !arm` constraint and document the limitation.
+
+- [ ] **`refRegistry.get` should use a read lock**: `refRegistry.get()` acquires a full `sync.Mutex` on every call. Because `init()` is called exactly once during the build phase — before any stage goroutine starts — all subsequent `get()` calls are read-only against a fully-initialised map. Switching to `sync.RWMutex` with `RLock()` in `get()` is more semantically correct and avoids unnecessary write-lock contention when many stage goroutines call `get()` at startup. Alternatively, replace the map with `sync.Map`, which is optimised for append-once, read-many workloads.
+
+---
+
+### Testing
+
+- [x] **Property tests for windowing operators**: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. These are the most stateful, most timing-sensitive operators in the library and the most likely to have subtle partitioning bugs. Laws to verify: `Batch(n)` completeness (every input item appears in exactly one batch; all batches except possibly the last have exactly `n` items); `BufferWith` partition (concatenation of all emitted slices equals the input in order); `SlidingWindow` overlap invariant (adjacent windows share exactly `size - 1` elements for stride 1); `SessionWindow` closure (items separated by more than the timeout appear in different sessions). The property tests already caught a real `Amb` bug missed by 27 example tests — windowing operators deserve the same treatment.
+
+- [ ] **Fuzz targets**: No fuzz tests exist. Add fuzz targets for: (1) operators that accept structured input where a malformed item could panic inside user-supplied functions (e.g. a `Map` fn that calls `json.Unmarshal`); (2) `BloomDedupSet` to verify no panics or incorrect contains-results under adversarial key inputs. Even a minimal `FuzzFromSlice` that drives `FromSlice → Map(panicRecover) → Collect` provides a panic-safety baseline. Fuzz targets live alongside tests and run automatically with `go test -fuzz`.
+
+---
+
+### API and ergonomics
+
+- [ ] **`Or` error discard documentation**: when `primary` errors and `fallback` also errors, the primary error is silently discarded and only the fallback error is returned. This is the right default (most recent error wins), but it is not documented. Users who want both errors for logging or metrics will be surprised. Either document the discard explicitly in the godoc, wrap both errors with `errors.Join` (making them both visible), or accept an optional `onPrimaryError func(error)` callback so callers can observe the discarded error without changing the return value.
+
+- [ ] **`ContextCarrier` non-interface alternative**: tracing context propagation via `ContextCarrier` requires every item type to implement the interface. Third-party structs (Kafka messages, Protobuf-generated types, stdlib types) cannot be retrofitted without a wrapper. Add a `WithContextMapper[T](fn func(T) context.Context) RunOption` (or `StageOption`) that extracts a context from items by value rather than by interface. This makes per-item tracing a configuration choice rather than a type constraint, and removes the need for wrapper types in the common case where only one field carries the trace context.
+
+---
+
+### Developer experience
+
+- [ ] **`IsOptimized()` should surface ineligibility reasons**: `IsOptimized()` returns a per-stage boolean but does not say why a stage lost eligibility. A user who adds `OnError(Skip())` to a hot `Map` stage silently falls off the fast path with no feedback. `stageMeta` already carries `isFastPathCfg` and `supportsFastPath`; extend the return type to `[]OptimizationReport` (or equivalent) where each report names the failing condition: `"OnError handler disables fast path"`, `"Timeout set"`, `"Hook active"`, `"consumerCount > 1 disables fusion"`. This makes `IsOptimized` genuinely actionable rather than a binary indicator.
+
+- [ ] **Document fusion boundaries in the tuning guide**: stage fusion applies to `Map → Filter` chains ending at `ForEach`, but any operator that does not set `fusionEntry` (sources, `FlatMap`, `Batch`, all fan-out/fan-in operators) is a silent fusion boundary. After a `FlatMap`, even a long `Map → Filter → Map` chain will not fuse. The tuning guide explains fast-path conditions but does not list fusion boundaries. Add a table of operators that break fusion so users tuning a hot path know which operators to avoid or isolate.
+
+- [ ] **Document `MapPooled` mutex contention under high concurrency**: `Pool.Get()` acquires a `sync.Mutex`. With `Concurrency(8)`, eight goroutines call `pool.Get()` in the hot loop and all serialize on that lock. `sync.Pool` avoids this via per-P caches but does not offer LIFO semantics or no-eviction guarantees. Add a note to the `MapPooled` and `Pool` godoc explaining the contention behaviour at high worker counts, and consider providing a sharded pool variant (`ShardedPool[T]`) for use cases where allocation avoidance and high concurrency are both required.
+
+- [ ] **Fix `Pool.Warmup` godoc**: the current comment reads "Warmup is best-effort: sync.Pool may evict objects at any time (e.g. on GC)." This is copied from `sync.Pool` documentation and does not apply to the custom `Pool[T]` implementation, which never evicts. Rewrite the comment to accurately describe actual behaviour: objects pre-populated by `Warmup` remain in the pool until retrieved by `Get()` and not yet returned by `Release()`.
+
+- [ ] **Document `DropOldest` behaviour under sustained load**: `dropOldestOutbox` uses a fast lock-free send when the buffer has space but falls back to a mutex-protected drain-and-resend when full. In a pipeline where downstream is consistently slower than upstream — exactly the scenario `DropOldest` is designed for — the slow path becomes the hot path and all `Concurrency(n)` workers serialize on the mutex. Add a note to the `Overflow(DropOldest)` godoc and the tuning guide explaining this, so users can make an informed choice between `DropOldest`, `DropNewest`, and back-pressure.
+
+---
 
 ### Long-term
 

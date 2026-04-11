@@ -1264,3 +1264,397 @@ func TestPropTTLDedupSetDistinctDeduplication(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Batch properties
+// ---------------------------------------------------------------------------
+
+// TestPropBatchPartition verifies that concatenating all batches in order
+// reproduces the original input exactly: no items are added, dropped, or
+// reordered.
+func TestPropBatchPartition(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
+		size := rapid.IntRange(1, 10).Draw(t, "size")
+
+		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Batch error: %v", err)
+		}
+
+		var flat []int
+		for _, b := range got {
+			flat = append(flat, b...)
+		}
+		if !slices.Equal(flat, src) {
+			t.Fatalf("Batch partition mismatch: flat=%v want=%v (size=%d)", flat, src, size)
+		}
+	})
+}
+
+// TestPropBatchSizes verifies three invariants on batch sizes:
+// every batch is non-empty; all batches except possibly the last have exactly
+// size items; the last batch has at most size items.
+func TestPropBatchSizes(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
+		size := rapid.IntRange(1, 10).Draw(t, "size")
+
+		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Batch error: %v", err)
+		}
+
+		if len(src) == 0 && len(got) != 0 {
+			t.Fatalf("Batch(empty) produced %d batches, want 0", len(got))
+		}
+		for i, b := range got {
+			if len(b) == 0 {
+				t.Fatalf("batch[%d] is empty (src=%v size=%d)", i, src, size)
+			}
+			if i < len(got)-1 && len(b) != size {
+				t.Fatalf("batch[%d] has len %d, want %d (not last batch; src=%v size=%d)", i, len(b), size, src, size)
+			}
+			if len(b) > size {
+				t.Fatalf("batch[%d] has len %d > size %d (src=%v)", i, len(b), size, src)
+			}
+		}
+	})
+}
+
+// TestPropBatchSizeOneIsIdentity verifies that Batch(p, 1) wraps each item
+// in its own singleton slice, producing exactly len(src) batches.
+func TestPropBatchSizeOneIsIdentity(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
+
+		got, err := kitsune.Batch(kitsune.FromSlice(src), 1).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Batch error: %v", err)
+		}
+
+		if len(got) != len(src) {
+			t.Fatalf("Batch(p,1) produced %d batches, want %d (src=%v)", len(got), len(src), src)
+		}
+		for i, b := range got {
+			if len(b) != 1 || b[0] != src[i] {
+				t.Fatalf("batch[%d]=%v, want [%d]", i, b, src[i])
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// ChunkBy properties
+// ---------------------------------------------------------------------------
+
+// TestPropChunkByPartition verifies that concatenating all chunks in order
+// reproduces the original input exactly.
+func TestPropChunkByPartition(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-20, 20)).Draw(t, "src")
+		mod := rapid.IntRange(1, 4).Draw(t, "mod")
+		keyFn := func(v int) int { return ((v % mod) + mod) % mod }
+
+		got, err := kitsune.ChunkBy(kitsune.FromSlice(src), keyFn).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkBy error: %v", err)
+		}
+
+		var flat []int
+		for _, c := range got {
+			flat = append(flat, c...)
+		}
+		if !slices.Equal(flat, src) {
+			t.Fatalf("ChunkBy partition mismatch: flat=%v want=%v (mod=%d)", flat, src, mod)
+		}
+	})
+}
+
+// TestPropChunkByKeyConsistency verifies that every item within a chunk shares
+// the same key, and that adjacent chunks have different keys.
+func TestPropChunkByKeyConsistency(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-20, 20)).Draw(t, "src")
+		mod := rapid.IntRange(1, 4).Draw(t, "mod")
+		keyFn := func(v int) int { return ((v % mod) + mod) % mod }
+
+		got, err := kitsune.ChunkBy(kitsune.FromSlice(src), keyFn).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkBy error: %v", err)
+		}
+
+		if len(src) == 0 && len(got) != 0 {
+			t.Fatalf("ChunkBy(empty) produced %d chunks, want 0", len(got))
+		}
+		for i, chunk := range got {
+			if len(chunk) == 0 {
+				t.Fatalf("chunk[%d] is empty (src=%v mod=%d)", i, src, mod)
+			}
+			k0 := keyFn(chunk[0])
+			for j, v := range chunk {
+				if keyFn(v) != k0 {
+					t.Fatalf("chunk[%d][%d] has key %d, want %d (src=%v mod=%d)", i, j, keyFn(v), k0, src, mod)
+				}
+			}
+			if i > 0 {
+				prevKey := keyFn(got[i-1][len(got[i-1])-1])
+				if prevKey == k0 {
+					t.Fatalf("chunks[%d] and [%d] have same key %d but are separate chunks (src=%v mod=%d)", i-1, i, k0, src, mod)
+				}
+			}
+		}
+	})
+}
+
+// TestPropChunkByMatchesReference verifies ChunkBy against an inline reference
+// implementation that groups consecutive equal-key items.
+func TestPropChunkByMatchesReference(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-20, 20)).Draw(t, "src")
+		mod := rapid.IntRange(1, 4).Draw(t, "mod")
+		keyFn := func(v int) int { return ((v % mod) + mod) % mod }
+
+		got, err := kitsune.ChunkBy(kitsune.FromSlice(src), keyFn).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkBy error: %v", err)
+		}
+
+		// Reference: linear scan grouping consecutive equal-key items.
+		var want [][]int
+		for _, v := range src {
+			k := keyFn(v)
+			if len(want) == 0 || keyFn(want[len(want)-1][0]) != k {
+				want = append(want, []int{v})
+			} else {
+				want[len(want)-1] = append(want[len(want)-1], v)
+			}
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("ChunkBy chunk count: got %d, want %d (src=%v mod=%d)", len(got), len(want), src, mod)
+		}
+		for i := range got {
+			if !slices.Equal(got[i], want[i]) {
+				t.Fatalf("ChunkBy chunk[%d]: got %v, want %v (src=%v mod=%d)", i, got[i], want[i], src, mod)
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// ChunkWhile properties
+// ---------------------------------------------------------------------------
+
+// TestPropChunkWhilePartition verifies that concatenating all chunks in order
+// reproduces the original input exactly.
+func TestPropChunkWhilePartition(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-10, 10)).Draw(t, "src")
+		// Predicate: continue the chunk while curr >= prev (non-decreasing runs).
+		pred := func(prev, curr int) bool { return curr >= prev }
+
+		got, err := kitsune.ChunkWhile(kitsune.FromSlice(src), pred).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkWhile error: %v", err)
+		}
+
+		var flat []int
+		for _, c := range got {
+			flat = append(flat, c...)
+		}
+		if !slices.Equal(flat, src) {
+			t.Fatalf("ChunkWhile partition mismatch: flat=%v want=%v", flat, src)
+		}
+	})
+}
+
+// TestPropChunkWhilePredConsistency verifies that the predicate holds for all
+// consecutive pairs within a chunk, and is false at every chunk boundary.
+func TestPropChunkWhilePredConsistency(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-10, 10)).Draw(t, "src")
+		pred := func(prev, curr int) bool { return curr >= prev }
+
+		got, err := kitsune.ChunkWhile(kitsune.FromSlice(src), pred).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkWhile error: %v", err)
+		}
+
+		if len(src) == 0 && len(got) != 0 {
+			t.Fatalf("ChunkWhile(empty) produced %d chunks, want 0", len(got))
+		}
+		for i, chunk := range got {
+			if len(chunk) == 0 {
+				t.Fatalf("chunk[%d] is empty (src=%v)", i, src)
+			}
+			// Within a chunk, every consecutive pair must satisfy pred.
+			for j := 1; j < len(chunk); j++ {
+				if !pred(chunk[j-1], chunk[j]) {
+					t.Fatalf("chunk[%d]: pred(%d,%d)=false at position %d within chunk (src=%v)", i, chunk[j-1], chunk[j], j, src)
+				}
+			}
+			// At the boundary between chunks, pred must be false.
+			if i > 0 {
+				last := got[i-1][len(got[i-1])-1]
+				first := chunk[0]
+				if pred(last, first) {
+					t.Fatalf("boundary chunks[%d→%d]: pred(%d,%d)=true but they are separate chunks (src=%v)", i-1, i, last, first, src)
+				}
+			}
+		}
+	})
+}
+
+// TestPropChunkWhileMatchesReference verifies ChunkWhile against an inline
+// reference implementation.
+func TestPropChunkWhileMatchesReference(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-10, 10)).Draw(t, "src")
+		pred := func(prev, curr int) bool { return curr >= prev }
+
+		got, err := kitsune.ChunkWhile(kitsune.FromSlice(src), pred).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("ChunkWhile error: %v", err)
+		}
+
+		// Reference: linear scan splitting when pred(prev, curr) is false.
+		var want [][]int
+		for _, v := range src {
+			if len(want) == 0 || !pred(want[len(want)-1][len(want[len(want)-1])-1], v) {
+				want = append(want, []int{v})
+			} else {
+				want[len(want)-1] = append(want[len(want)-1], v)
+			}
+		}
+
+		if len(got) != len(want) {
+			t.Fatalf("ChunkWhile chunk count: got %d, want %d (src=%v)", len(got), len(want), src)
+		}
+		for i := range got {
+			if !slices.Equal(got[i], want[i]) {
+				t.Fatalf("ChunkWhile chunk[%d]: got %v, want %v (src=%v)", i, got[i], want[i], src)
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// SlidingWindow properties
+// ---------------------------------------------------------------------------
+
+// TestPropSlidingWindowSize verifies that every emitted window has exactly
+// size items. Partial windows at the end of the stream are dropped by the
+// operator, so this must hold for all emitted windows.
+func TestPropSlidingWindowSize(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		size := rapid.IntRange(1, 10).Draw(t, "size")
+		step := rapid.IntRange(1, size).Draw(t, "step")
+		src := rapid.SliceOf(rapid.IntRange(-100, 100)).Draw(t, "src")
+
+		got, err := kitsune.SlidingWindow(kitsune.FromSlice(src), size, step).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("SlidingWindow error: %v", err)
+		}
+
+		for i, w := range got {
+			if len(w) != size {
+				t.Fatalf("window[%d] has len %d, want %d (size=%d step=%d src=%v)", i, len(w), size, size, step, src)
+			}
+		}
+	})
+}
+
+// TestPropSlidingWindowCount verifies the expected number of windows:
+// max(0, (len(src)-size)/step + 1). Partial windows are dropped.
+func TestPropSlidingWindowCount(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		size := rapid.IntRange(1, 10).Draw(t, "size")
+		step := rapid.IntRange(1, size).Draw(t, "step")
+		src := rapid.SliceOf(rapid.IntRange(-100, 100)).Draw(t, "src")
+
+		got, err := kitsune.SlidingWindow(kitsune.FromSlice(src), size, step).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("SlidingWindow error: %v", err)
+		}
+
+		var wantCount int
+		if len(src) >= size {
+			wantCount = (len(src)-size)/step + 1
+		}
+		if len(got) != wantCount {
+			t.Fatalf("SlidingWindow count: got %d windows, want %d (size=%d step=%d src=%v)", len(got), wantCount, size, step, src)
+		}
+	})
+}
+
+// TestPropSlidingWindowContentAndOverlap verifies two structural invariants:
+// (a) each window is the correct contiguous subsequence of the source, and
+// (b) adjacent windows share exactly size-step elements (the overlap invariant),
+// which only applies when step < size.
+func TestPropSlidingWindowContentAndOverlap(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		size := rapid.IntRange(1, 10).Draw(t, "size")
+		step := rapid.IntRange(1, size).Draw(t, "step")
+		src := rapid.SliceOf(rapid.IntRange(-100, 100)).Draw(t, "src")
+
+		got, err := kitsune.SlidingWindow(kitsune.FromSlice(src), size, step).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("SlidingWindow error: %v", err)
+		}
+
+		for i, w := range got {
+			// (a) Content: window i == src[i*step : i*step+size].
+			start := i * step
+			want := src[start : start+size]
+			if !slices.Equal(w, want) {
+				t.Fatalf("window[%d]: got %v, want %v (size=%d step=%d src=%v)", i, w, want, size, step, src)
+			}
+			// (b) Overlap: w[step:] == got[i+1][:size-step], when step < size.
+			if step < size && i+1 < len(got) {
+				overlap := size - step
+				if !slices.Equal(w[step:], got[i+1][:overlap]) {
+					t.Fatalf("overlap windows[%d→%d]: tail=%v head=%v (size=%d step=%d src=%v)", i, i+1, w[step:], got[i+1][:overlap], size, step, src)
+				}
+			}
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// SessionWindow properties
+// ---------------------------------------------------------------------------
+
+// TestPropSessionWindowLargeGapSingleSession verifies that when the gap is
+// much larger than any realistic inter-item delay, all items from a
+// synchronous source (FromSlice) land in exactly one session.
+//
+// Multi-session properties require precise timing control (a mock clock) and
+// are not suited to rapid property tests; they are covered by example-based
+// tests in window_test.go using testkit's controlled clock.
+func TestPropSessionWindowLargeGapSingleSession(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-100, 100)).Draw(t, "src")
+
+		// A 24-hour gap cannot fire between synchronously-delivered items.
+		got, err := kitsune.SessionWindow(kitsune.FromSlice(src), 24*time.Hour).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("SessionWindow error: %v", err)
+		}
+
+		if len(src) == 0 {
+			if len(got) != 0 {
+				t.Fatalf("SessionWindow(empty) produced %d sessions, want 0", len(got))
+			}
+			return
+		}
+
+		// Non-empty input: exactly one session containing all items.
+		if len(got) != 1 {
+			t.Fatalf("SessionWindow(large gap) produced %d sessions, want 1 (src=%v)", len(got), src)
+		}
+		if !slices.Equal(got[0], src) {
+			t.Fatalf("SessionWindow session mismatch: got %v, want %v", got[0], src)
+		}
+	})
+}
