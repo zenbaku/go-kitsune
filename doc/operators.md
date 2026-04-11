@@ -39,6 +39,8 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`DefaultIfEmpty`](#defaultifempty) | Transform | Emit a fallback if stream is empty |
 | [`Intersperse`](#intersperse) | Transform | Insert separator between items |
 | [`LiftPure`](#liftpure--liftfallible) | Transform | Adapt plain functions to stage signatures |
+| [`Materialize`](#materialize--dematerialize) | Transform | Wrap items and terminal error as Notification values |
+| [`Dematerialize`](#materialize--dematerialize) | Transform | Unwrap Notification stream back to T |
 | [`FlatMap`](#flatmap) | Expansion | 1:N expansion |
 | [`ConcatMap`](#concatmap) | Expansion | Sequential inner pipelines |
 | [`SwitchMap`](#switchmap) | Expansion | Cancel previous inner on new item |
@@ -863,6 +865,79 @@ Adapter helpers that wrap a context-free or context-free-fallible function into 
 ```go
 doubled := kitsune.Map(p, kitsune.LiftPure(func(n int) int { return n * 2 }))
 ```
+
+---
+
+### Materialize / Dematerialize
+
+```go
+func Materialize[T any](p *Pipeline[T]) *Pipeline[Notification[T]]
+func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pipeline[T]
+```
+
+`Materialize` converts each item and the terminal outcome of `p` into a `Notification[T]` value emitted on a single output pipeline. `Dematerialize` is the inverse: it unwraps a `Notification[T]` stream back into a plain `T` stream.
+
+`Notification[T]` is a sum type:
+
+```go
+type Notification[T any] struct {
+    Value T
+    Err   error
+    Done  bool
+}
+```
+
+Helper constructors and predicates are provided:
+
+| Constructor | `IsValue()` | `IsError()` | `IsComplete()` |
+|---|---|---|---|
+| `NextNotification(v)` | ✓ | | |
+| `ErrorNotification(err)` | | ✓ | |
+| `CompleteNotification[T]()` | | | ✓ |
+
+**Materialize emission rules:**
+
+| Upstream event | Emitted notification | `Run` result |
+|---|---|---|
+| Item `v` | `NextNotification(v)` | — |
+| Normal completion | `CompleteNotification[T]()` | `nil` |
+| Pipeline error `err` | `ErrorNotification[T](err)` | `nil` |
+| Context cancellation | *(none)* | `ctx.Err()` |
+
+The key property: `Materialize` never propagates pipeline errors. They are encoded as the final notification instead, so downstream operators continue running. Context cancellation is not materialized; it exits the run immediately.
+
+**Dematerialize processing rules:**
+
+| Notification | Action |
+|---|---|
+| `IsValue()` | Emit `n.Value` downstream |
+| `IsComplete()` | Complete normally |
+| `IsError()` | Re-inject `n.Err` as a pipeline error |
+| Upstream closed without terminal | Complete normally (defensive) |
+
+**When to use:** When you need to pass error events through operators that only handle `T` — for example, routing, logging, or filtering errors without halting the pipeline. The standard pattern:
+
+```go
+// Classify notifications by outcome without halting on errors.
+classified := kitsune.Map(
+    kitsune.Materialize(src),
+    func(_ context.Context, n kitsune.Notification[Event]) (TaggedEvent, error) {
+        if n.IsError() {
+            return TaggedEvent{Err: n.Err, Source: "pipeline"}, nil
+        }
+        if n.IsComplete() {
+            return TaggedEvent{Done: true}, nil
+        }
+        return TaggedEvent{Event: n.Value}, nil
+    },
+)
+```
+
+**Options (`Dematerialize` only):** `Buffer`, `Overflow`, `WithName`.
+
+**Options (`Materialize`):** none — it wraps the upstream run internally and cannot accept per-stage options.
+
+**See also:** [`MapResult`](#mapresult) (routes errors to a separate pipeline without materialization), [`TapError`](#tap--taperror--finally) (side-effect on terminal error), [`Catch`](#catch) (fallback pipeline on error).
 
 ---
 

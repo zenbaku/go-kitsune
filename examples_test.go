@@ -31,6 +31,7 @@ func TestExamples(t *testing.T) {
 		"deadletter",
 		"fanout",
 		"hooks",
+		"materialize",
 		"perkeyratelimit",
 		"ratelimit",
 		"runningtotal",

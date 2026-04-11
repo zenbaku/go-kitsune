@@ -962,3 +962,71 @@ func TestPropIgnoreElementsSideEffects(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Materialize / Dematerialize properties
+// ---------------------------------------------------------------------------
+
+// TestPropMaterializeCount verifies that Materialize emits exactly len(in)+1
+// notifications for any finite input: one value notification per item plus one
+// terminal (complete) notification.
+func TestPropMaterializeCount(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
+
+		got, err := kitsune.Materialize(kitsune.FromSlice(in)).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Materialize error: %v", err)
+		}
+
+		wantLen := len(in) + 1 // items + terminal
+		if len(got) != wantLen {
+			t.Fatalf("Materialize produced %d notifications, want %d", len(got), wantLen)
+		}
+		for i, n := range got[:len(in)] {
+			if !n.IsValue() {
+				t.Fatalf("notification[%d]: want value, got %+v", i, n)
+			}
+		}
+		if !got[len(in)].IsComplete() {
+			t.Fatalf("last notification: want complete, got %+v", got[len(in)])
+		}
+	})
+}
+
+// TestPropMaterializePreservesOrder verifies that the value notifications
+// produced by Materialize appear in the same order as the source items.
+func TestPropMaterializePreservesOrder(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
+
+		got, err := kitsune.Materialize(kitsune.FromSlice(in)).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Materialize error: %v", err)
+		}
+
+		for i, v := range in {
+			if got[i].Value != v {
+				t.Fatalf("notification[%d]: got value %d, want %d", i, got[i].Value, v)
+			}
+		}
+	})
+}
+
+// TestPropMaterializeDematerializeRoundtrip verifies the identity law:
+// Dematerialize(Materialize(p)) ≡ p for any finite, error-free input.
+func TestPropMaterializeDematerializeRoundtrip(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
+
+		got, err := kitsune.Dematerialize(kitsune.Materialize(kitsune.FromSlice(in))).
+			Collect(context.Background())
+		if err != nil {
+			t.Fatalf("roundtrip error: %v", err)
+		}
+
+		if !slices.Equal(got, in) {
+			t.Fatalf("roundtrip mismatch: got %v, want %v", got, in)
+		}
+	})
+}
