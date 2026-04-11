@@ -16,7 +16,6 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`FromIter`](#fromiter) | Source | Wrap `iter.Seq[T]` |
 | [`NewChannel`](#newchannel--channelt) | Source | Send-from-anywhere push source |
 | [`Ticker`](#ticker) | Source | Periodic tick emission |
-| [`Interval`](#interval) | Source | Count-up interval source |
 | [`Timer`](#timer) | Source | One-shot delay source |
 | [`Unfold`](#unfold) | Source | Seed-based generator |
 | [`Iterate`](#iterate) | Source | `x, f(x), f(f(x)), …` |
@@ -292,25 +291,6 @@ Emits the current `time.Time` at regular intervals. The first tick fires after `
 ```go
 // Poll every 30 seconds; stop after 10 polls.
 ticks := kitsune.Ticker(30 * time.Second).Take(10)
-```
-
----
-
-### Interval
-
-```go
-func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64]
-```
-
-Emits a monotonically increasing `int64` (0, 1, 2, …) at regular intervals. The first value fires after `d`. Useful when you need a sequence number alongside the tick.
-
-**When to use:** When you need both a timer signal and an incrementing index, for example labelling periodic snapshots.
-
-**Options:** `WithClock`, `WithName`.
-
-```go
-kitsune.Interval(time.Second).Take(5)
-// emits: 0, 1, 2, 3, 4
 ```
 
 ---
@@ -1054,7 +1034,7 @@ nonEmpty := strings.Reject(func(s string) bool { return s == "" })
 func Take[T any](p *Pipeline[T], n int) *Pipeline[T]
 ```
 
-Emits the first `n` items and then stops the pipeline, signalling upstream sources to stop producing. Infinite sources like [`Ticker`](#ticker) and [`Interval`](#interval) stop cleanly when `Take` closes.
+Emits the first `n` items and then stops the pipeline, signalling upstream sources to stop producing. Infinite sources like [`Ticker`](#ticker) and [`Repeatedly`](#repeatedly) stop cleanly when `Take` closes.
 
 Also available as `p.Take(n)`.
 
@@ -2497,7 +2477,7 @@ kitsune.OnError(kitsune.RetryThen(3,
 | `Timeout(d)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `FlatMapWith` | Per-item deadline. Cancels the item's context after `d`. |
 | `Supervise(policy)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `ForEach` | Restart the stage on error or panic. See `RestartOnError`, `RestartOnPanic`, `RestartAlways`. |
 | `BatchTimeout(d)` | `StageOption` | `Batch`, `MapBatch` | Flush a partial batch after `d` even if it is not full. |
-| `WithClock(c)` | `StageOption` | `Ticker`, `Interval`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval` | Substitute a deterministic clock for testing. |
+| `WithClock(c)` | `StageOption` | `Ticker`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval` | Substitute a deterministic clock for testing. |
 | `CacheBy(keyFn)` | `StageOption` | `Map` only | Enable TTL-based result caching. On a hit, `fn` is skipped. Requires `WithCache` at run time or `CacheBackend`. |
 | `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
 | `VisitedBy(keyFn)` | `StageOption` | `ExpandMap` | Enable cycle detection by key during graph walks. |

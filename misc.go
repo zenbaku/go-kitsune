@@ -119,8 +119,10 @@ func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *P
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -183,8 +185,10 @@ func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped
 			return existing.(chan Timestamped[T])
 		}
 		inCh := p.build(rc)
-		ch := make(chan Timestamped[T], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan Timestamped[T], buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -244,8 +248,10 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 			return existing.(chan TimedInterval[T])
 		}
 		inCh := p.build(rc)
-		ch := make(chan TimedInterval[T], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan TimedInterval[T], buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -311,8 +317,10 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -393,9 +401,11 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 			return existing.(chan A), rc.getChan(bID).(chan B)
 		}
 		inCh := p.build(rc)
-		aCh := make(chan A, cfg.buffer)
-		bCh := make(chan B, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		aCh := make(chan A, buf)
+		bCh := make(chan B, buf)
 		m := aMeta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(aCh) }
 		m.getChanCap = func() int { return cap(aCh) }
 		rc.setChan(aID, aCh)

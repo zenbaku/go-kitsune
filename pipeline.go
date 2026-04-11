@@ -79,12 +79,31 @@ type runCtx struct {
 	refs                *refRegistry // keyed state, populated during build phase
 	gate                *internal.Gate
 	defaultErrorHandler internal.ErrorHandler // nil = use internal.DefaultHandler{}
+	defaultBuffer       int                   // 0 = use internal.DefaultBuffer (16)
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
-	// sources (Ticker, Interval, Repeatedly, …) without cancelling the run
-	// context — which would disrupt downstream stages still draining.
+	// sources (Ticker, Repeatedly, …) without cancelling the run context —
+	// which would disrupt downstream stages still draining.
 	done       chan struct{}
 	signalDone func()
+}
+
+// defaultBufSize returns the run-level default buffer, falling back to
+// internal.DefaultBuffer when [WithDefaultBuffer] was not set.
+func (rc *runCtx) defaultBufSize() int {
+	if rc.defaultBuffer > 0 {
+		return rc.defaultBuffer
+	}
+	return internal.DefaultBuffer
+}
+
+// effectiveBufSize returns the buffer size for a stage: the stage's explicit
+// Buffer(n) value if set, otherwise the run-level default from [WithDefaultBuffer].
+func (rc *runCtx) effectiveBufSize(cfg stageConfig) int {
+	if cfg.bufferExplicit {
+		return cfg.buffer
+	}
+	return rc.defaultBufSize()
 }
 
 func newRunCtx() *runCtx {

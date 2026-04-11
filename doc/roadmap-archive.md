@@ -88,7 +88,7 @@ Completed milestones, preserved for reference. Active work is in [roadmap.md](ro
 
 - [x] **Push-based source**: `Channel[T]` with `Send`, `TrySend`, `Close`; the canonical pattern for bridging external event streams into a pipeline.
 
-- [x] **Time sources**: `Ticker`, `Interval`, `Timer`; respect `WithClock` for deterministic tests.
+- [x] **Time sources**: `Ticker`, `Timer`; respect `WithClock` for deterministic tests.
 
 - [x] **Generative sources**: `Unfold`, `Iterate`, `Repeatedly`, `Cycle`; `Concat` (factory-based, strictly ordered).
 

@@ -376,12 +376,19 @@ func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
 
 // DrainRunner is a terminal stage that discards all items from a pipeline.
 // It is created by [Pipeline.Drain].
+//
+// Deprecated: use [Pipeline.ForEach] with a no-op function instead.
+// DrainRunner will be removed in a future major version.
 type DrainRunner[T any] struct {
 	p *Pipeline[T]
 }
 
 // Drain returns a [DrainRunner] that discards every item in the pipeline.
 // No processing occurs until [DrainRunner.Run] is called.
+//
+// Deprecated: use [Pipeline.ForEach] with a no-op function instead:
+//
+//	p.ForEach(func(_ context.Context, _ T) error { return nil }).Run(ctx)
 func (p *Pipeline[T]) Drain() *DrainRunner[T] {
 	return &DrainRunner[T]{p: p}
 }

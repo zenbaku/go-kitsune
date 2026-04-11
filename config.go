@@ -20,19 +20,20 @@ type StageOption func(*stageConfig)
 type RunOption func(*runConfig)
 
 type stageConfig struct {
-	name         string
-	concurrency  int
-	ordered      bool
-	buffer       int
-	overflow     internal.Overflow
-	errorHandler internal.ErrorHandler
-	batchTimeout time.Duration
-	supervision  internal.SupervisionPolicy
-	cacheConfig  *stageCacheConfig
-	timeout      time.Duration
-	dedupSet     DedupSet
-	clock        internal.Clock
-	visitedKeyFn any // func(T) string, type-erased; set by VisitedBy[T]
+	name           string
+	concurrency    int
+	ordered        bool
+	buffer         int
+	bufferExplicit bool // true when Buffer(n) was called explicitly
+	overflow       internal.Overflow
+	errorHandler   internal.ErrorHandler
+	batchTimeout   time.Duration
+	supervision    internal.SupervisionPolicy
+	cacheConfig    *stageCacheConfig
+	timeout        time.Duration
+	dedupSet       DedupSet
+	clock          internal.Clock
+	visitedKeyFn   any // func(T) string, type-erased; set by VisitedBy[T]
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -52,6 +53,7 @@ type runConfig struct {
 	codec               Codec
 	gate                *Gate
 	defaultErrorHandler internal.ErrorHandler
+	defaultBuffer       int // 0 = use internal.DefaultBuffer (16)
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -99,10 +101,12 @@ func Ordered() StageOption {
 }
 
 // Buffer sets the channel buffer size between this stage and the next (default: 16).
+// Overrides the run-level [WithDefaultBuffer] for this specific stage.
 func Buffer(n int) StageOption {
 	return func(c *stageConfig) {
 		if n >= 0 {
 			c.buffer = n
+			c.bufferExplicit = true
 		}
 	}
 }
@@ -124,7 +128,7 @@ func BatchTimeout(d time.Duration) StageOption {
 }
 
 // WithClock sets the time source for time-sensitive stages (Window, Batch, Throttle, Debounce)
-// and source operators (Ticker, Interval, Timer).
+// and source operators (Ticker, Timer).
 // Use testkit.NewTestClock() for deterministic, sleep-free tests.
 func WithClock(c internal.Clock) StageOption {
 	return func(cfg *stageConfig) { cfg.clock = c }
@@ -375,7 +379,7 @@ func WithPauseGate(g *Gate) RunOption {
 // inherit this policy. Individual stages can override it with [OnError]:
 //
 //	// Skip bad items pipeline-wide; critical stages can still override.
-//	runner.Run(ctx, kitsune.WithErrorStrategy(kitsune.Skip()))
+//	runner.Run(ctx, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 //
 //	// Same default but one stage halts explicitly.
 //	kitsune.Map(p, criticalFn, kitsune.OnError(kitsune.Halt()))
@@ -387,6 +391,20 @@ func WithPauseGate(g *Gate) RunOption {
 // have their own explicit routing semantics.
 func WithErrorStrategy(h ErrorHandler) RunOption {
 	return func(cfg *runConfig) { cfg.defaultErrorHandler = h.h }
+}
+
+// WithDefaultBuffer sets the channel buffer size for all stages in the pipeline
+// run that do not specify their own [Buffer] option. The default when this
+// option is not set is 16. Use smaller values (e.g. 0–4) for lower latency or
+// memory use; use larger values (e.g. 64–256) for higher throughput.
+//
+// Per-stage [Buffer] takes precedence over this run-level default.
+func WithDefaultBuffer(n int) RunOption {
+	return func(cfg *runConfig) {
+		if n >= 0 {
+			cfg.defaultBuffer = n
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -405,8 +423,17 @@ type Backoff func(attempt int) time.Duration
 // This is the default behavior.
 func Halt() ErrorHandler { return ErrorHandler{h: internal.DefaultHandler{}} }
 
+// ActionDrop returns an ErrorHandler that drops the failing item and continues.
+// Use with [OnError] or [WithErrorStrategy] to silently skip items that fail
+// processing rather than halting the pipeline:
+//
+//	kitsune.OnError(kitsune.ActionDrop())
+func ActionDrop() ErrorHandler { return ErrorHandler{h: &skipHandler{}} }
+
 // Skip returns an ErrorHandler that drops the failing item and continues.
-func Skip() ErrorHandler { return ErrorHandler{h: &skipHandler{}} }
+//
+// Deprecated: use [ActionDrop] instead. Skip will be removed in a future version.
+func Skip() ErrorHandler { return ActionDrop() }
 
 // Return returns an [ErrorHandler] that replaces the failed item with val and continues.
 // Use with [OnError] to substitute a default value on failure instead of dropping
@@ -431,9 +458,34 @@ func Retry(n int, b Backoff) ErrorHandler {
 }
 
 // RetryThen returns an ErrorHandler that retries up to n times, then
-// delegates to the fallback handler (e.g., [Skip]).
+// delegates to the fallback handler (e.g., [ActionDrop]).
 func RetryThen(n int, b Backoff, fallback ErrorHandler) ErrorHandler {
 	return ErrorHandler{h: &retryHandler{max: n, bo: b, fallback: fallback.h}}
+}
+
+// RetryIf returns an ErrorHandler that retries with backoff when predicate
+// returns true for the error, and halts when it returns false. This enables
+// per-error-type retry decisions:
+//
+//	kitsune.OnError(kitsune.RetryIf(
+//	    func(err error) bool { return errors.Is(err, io.ErrTimeout) },
+//	    kitsune.ExponentialBackoff(100*time.Millisecond, 5*time.Second),
+//	))
+func RetryIf(predicate func(error) bool, b Backoff) ErrorHandler {
+	return ErrorHandler{h: &retryIfHandler{predicate: predicate, bo: b, fallback: internal.DefaultHandler{}}}
+}
+
+// RetryIfThen returns an ErrorHandler that retries with backoff when predicate
+// returns true, and delegates to the fallback handler when it returns false.
+// This lets you retry transient errors while dropping or halting on permanent ones:
+//
+//	kitsune.OnError(kitsune.RetryIfThen(
+//	    func(err error) bool { return errors.Is(err, io.ErrTimeout) },
+//	    kitsune.FixedBackoff(time.Second),
+//	    kitsune.ActionDrop(), // permanent errors: drop the item
+//	))
+func RetryIfThen(predicate func(error) bool, b Backoff, fallback ErrorHandler) ErrorHandler {
+	return ErrorHandler{h: &retryIfHandler{predicate: predicate, bo: b, fallback: fallback.h}}
 }
 
 // FixedBackoff returns a [Backoff] that always waits the same duration.
@@ -482,6 +534,28 @@ func (h *retryHandler) Handle(err error, attempt int) internal.ErrorAction {
 func (h *retryHandler) Backoff() func(int) time.Duration { return h.bo }
 
 func (h *retryHandler) ReturnValue() any {
+	if r, ok := h.fallback.(internal.Returner); ok {
+		return r.ReturnValue()
+	}
+	return nil
+}
+
+type retryIfHandler struct {
+	predicate func(error) bool
+	bo        Backoff
+	fallback  internal.ErrorHandler
+}
+
+func (h *retryIfHandler) Handle(err error, _ int) internal.ErrorAction {
+	if h.predicate(err) {
+		return internal.ActionRetry
+	}
+	return h.fallback.Handle(err, 0)
+}
+
+func (h *retryIfHandler) Backoff() func(int) time.Duration { return h.bo }
+
+func (h *retryIfHandler) ReturnValue() any {
 	if r, ok := h.fallback.(internal.Returner); ok {
 		return r.ReturnValue()
 	}

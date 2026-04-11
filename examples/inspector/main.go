@@ -74,7 +74,16 @@ func main() {
 	defer close(inspector.done)
 
 	// Build a pipeline with a slow consumer so buffers fill up visibly.
-	src := kitsune.Interval(1 * time.Millisecond)
+	var counter int64
+	src := kitsune.Map(
+		kitsune.Ticker(1*time.Millisecond),
+		func(_ context.Context, _ time.Time) (int64, error) {
+			n := counter
+			counter++
+			return n, nil
+		},
+		kitsune.WithName("counter"),
+	)
 
 	processed := kitsune.Map(src,
 		func(_ context.Context, n int64) (int64, error) {

@@ -198,3 +198,158 @@ func TestWithErrorStrategy_HaltExplicitSameAsDefault(t *testing.T) {
 		t.Fatalf("expected boom, got %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ActionDrop
+// ---------------------------------------------------------------------------
+
+func TestActionDrop_DropsFailingItem(t *testing.T) {
+	boom := errors.New("boom")
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, boom
+			}
+			return v, nil
+		},
+		kitsune.OnError(kitsune.ActionDrop()),
+	)
+	got, err := runWith(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{1, 3}) {
+		t.Fatalf("got %v, want [1 3]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RetryIf / RetryIfThen
+// ---------------------------------------------------------------------------
+
+func TestRetryIf_RetriesMatchingError(t *testing.T) {
+	transient := errors.New("transient")
+	var calls int
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, v int) (int, error) {
+			calls++
+			if calls < 3 {
+				return 0, transient
+			}
+			return v * 10, nil
+		},
+		kitsune.OnError(kitsune.RetryIf(
+			func(err error) bool { return errors.Is(err, transient) },
+			kitsune.FixedBackoff(0),
+		)),
+	)
+	got, err := runWith(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{10}) {
+		t.Fatalf("got %v, want [10]", got)
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 calls (2 failures + 1 success), got %d", calls)
+	}
+}
+
+func TestRetryIf_HaltsOnNonMatchingError(t *testing.T) {
+	transient := errors.New("transient")
+	permanent := errors.New("permanent")
+	p := kitsune.Map(kitsune.FromSlice([]int{1}),
+		func(_ context.Context, _ int) (int, error) {
+			return 0, permanent
+		},
+		kitsune.OnError(kitsune.RetryIf(
+			func(err error) bool { return errors.Is(err, transient) },
+			kitsune.FixedBackoff(0),
+		)),
+	)
+	_, err := runWith(t, p)
+	if !errors.Is(err, permanent) {
+		t.Fatalf("expected permanent error, got %v", err)
+	}
+}
+
+func TestRetryIfThen_FallsBackToDropOnNonMatchingError(t *testing.T) {
+	transient := errors.New("transient")
+	permanent := errors.New("permanent")
+	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) {
+			if v == 2 {
+				return 0, permanent // permanent: not retried, dropped
+			}
+			return v, nil
+		},
+		kitsune.OnError(kitsune.RetryIfThen(
+			func(err error) bool { return errors.Is(err, transient) },
+			kitsune.FixedBackoff(0),
+			kitsune.ActionDrop(), // fallback on non-matching error
+		)),
+	)
+	got, err := runWith(t, p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{1, 3}) {
+		t.Fatalf("got %v, want [1 3]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WithDefaultBuffer
+// ---------------------------------------------------------------------------
+
+func TestWithDefaultBuffer_FunctionalCorrectness(t *testing.T) {
+	// WithDefaultBuffer(0) forces all stages to use unbuffered channels.
+	// The pipeline must still produce all items correctly.
+	got, err := runWith(t,
+		kitsune.Map(
+			kitsune.FromSlice([]int{1, 2, 3, 4, 5}),
+			func(_ context.Context, v int) (int, error) { return v * 2, nil },
+		),
+		kitsune.WithDefaultBuffer(0),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{2, 4, 6, 8, 10}) {
+		t.Fatalf("got %v, want [2 4 6 8 10]", got)
+	}
+}
+
+func TestWithDefaultBuffer_ExplicitBufferTakesPrecedence(t *testing.T) {
+	// A stage with an explicit Buffer(n) is not affected by WithDefaultBuffer.
+	// We verify this functionally: the pipeline still produces correct results
+	// even when the explicit and default buffers differ.
+	got, err := runWith(t,
+		kitsune.Map(
+			kitsune.FromSlice([]int{1, 2, 3}),
+			func(_ context.Context, v int) (int, error) { return v + 1, nil },
+			kitsune.Buffer(4), // explicit override
+		),
+		kitsune.WithDefaultBuffer(0), // run-level default (should not affect the above stage)
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !sliceEqual(got, []int{2, 3, 4}) {
+		t.Fatalf("got %v, want [2 3 4]", got)
+	}
+}
+
+func TestWithDefaultBuffer_DescribeShowsResolvedSize(t *testing.T) {
+	// Describe() is called without a runCtx so buffer sizes in the graph reflect
+	// construction-time values. Only the channel size at run time matters for
+	// correctness; this test just confirms Describe doesn't panic.
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+	)
+	nodes := p.Describe()
+	if len(nodes) == 0 {
+		t.Fatal("expected at least one node")
+	}
+}

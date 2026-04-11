@@ -232,6 +232,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	rc.hook = hook
 	rc.gate = cfg.gate
 	rc.defaultErrorHandler = cfg.defaultErrorHandler
+	rc.defaultBuffer = cfg.defaultBuffer
 	r.terminal(rc)
 
 	// Initialise all Refs with the configured store and codec now that all

@@ -45,8 +45,10 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 		for i, p := range pipelines {
 			inChans[i] = p.build(rc)
 		}
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -130,9 +132,11 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 			return existing.(chan T), rc.getChan(falseID).(chan T)
 		}
 		inCh := p.build(rc)
-		trueC := make(chan T, cfg.buffer)
-		falseC := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		trueC := make(chan T, buf)
+		falseC := make(chan T, buf)
 		m := trueMeta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(trueC) }
 		m.getChanCap = func() int { return cap(trueC) }
 		rc.setChan(id, trueC)
@@ -230,11 +234,13 @@ func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T
 			return chans
 		}
 		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
 		chans := make([]chan T, n)
 		for i := range chans {
-			chans[i] = make(chan T, cfg.buffer)
+			chans[i] = make(chan T, buf)
 		}
 		m := metas[0]
+		m.buffer = buf
 		m.getChanLen = func() int { return len(chans[0]) }
 		m.getChanCap = func() int { return cap(chans[0]) }
 		for i, id := range ids {
@@ -324,11 +330,13 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 			return chans
 		}
 		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
 		chans := make([]chan T, n)
 		for i := range chans {
-			chans[i] = make(chan T, cfg.buffer)
+			chans[i] = make(chan T, buf)
 		}
 		m := metas[0]
+		m.buffer = buf
 		m.getChanLen = func() int { return len(chans[0]) }
 		m.getChanCap = func() int { return cap(chans[0]) }
 		for i, id := range ids {
@@ -425,11 +433,13 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 			return chans
 		}
 		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
 		chans := make([]chan T, n)
 		for i := range chans {
-			chans[i] = make(chan T, cfg.buffer)
+			chans[i] = make(chan T, buf)
 		}
 		m := metas[0]
+		m.buffer = buf
 		m.getChanLen = func() int { return len(chans[0]) }
 		m.getChanCap = func() int { return cap(chans[0]) }
 		for i, id := range ids {
@@ -535,9 +545,10 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 	track(p)
 
 	type branchInfo struct {
-		id     int
-		meta   stageMeta
-		buffer int
+		id             int
+		meta           stageMeta
+		buffer         int
+		bufferExplicit bool
 	}
 
 	var (
@@ -563,13 +574,20 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 			inCh := p.build(rc)
 			chans := make([]chan T, len(bs))
 			for i, b := range bs {
-				ch := make(chan T, b.buffer)
+				bufSize := b.buffer
+				if !b.bufferExplicit {
+					bufSize = rc.defaultBufSize()
+				}
+				ch := make(chan T, bufSize)
 				chans[i] = ch
 				rc.setChan(b.id, ch)
 			}
 
 			firstCh := chans[0]
 			m := bs[0].meta
+			if !bs[0].bufferExplicit {
+				m.buffer = rc.defaultBufSize()
+			}
 			m.getChanLen = func() int { return len(firstCh) }
 			m.getChanCap = func() int { return cap(firstCh) }
 
@@ -626,8 +644,9 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 		}
 		id := nextPipelineID()
 		b := branchInfo{
-			id:     id,
-			buffer: cfg.buffer,
+			id:             id,
+			buffer:         cfg.buffer,
+			bufferExplicit: cfg.bufferExplicit,
 			meta: stageMeta{
 				id:     id,
 				kind:   "share",

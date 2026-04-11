@@ -317,51 +317,6 @@ func TestTicker_TestClock(t *testing.T) {
 	}
 }
 
-// TestInterval_TestClock verifies that Interval emits monotonically increasing
-// int64 counters (0, 1, 2, …) on each Advance(period) call.
-func TestInterval_TestClock(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	clock := testkit.NewTestClock()
-
-	counts := make(chan int64, 10)
-	done := make(chan error, 1)
-	go func() {
-		done <- kitsune.Take(
-			kitsune.Interval(time.Second, kitsune.WithClock(clock)),
-			4,
-		).ForEach(func(_ context.Context, n int64) error {
-			counts <- n
-			return nil
-		}).Run(ctx)
-	}()
-
-	// Wait for the pipeline goroutine to create the ticker before advancing.
-	time.Sleep(pipelineStartup)
-
-	for want := int64(0); want < 4; want++ {
-		clock.Advance(time.Second)
-		select {
-		case got := <-counts:
-			if got != want {
-				t.Errorf("interval %d: got %d, want %d", want, got, want)
-			}
-		case <-time.After(tickTimeout):
-			t.Fatalf("timeout waiting for interval %d", want)
-		}
-	}
-
-	select {
-	case err := <-done:
-		if err != nil && err != context.Canceled {
-			t.Fatalf("pipeline error: %v", err)
-		}
-	case <-time.After(tickTimeout):
-		t.Fatal("pipeline did not finish after 4 intervals")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Sample
 // ---------------------------------------------------------------------------

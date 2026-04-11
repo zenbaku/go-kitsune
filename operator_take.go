@@ -26,8 +26,10 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -82,8 +84,10 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -138,8 +142,10 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -190,8 +196,10 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -258,8 +266,10 @@ func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		bufSize := rc.defaultBufSize()
+		ch := make(chan T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -334,8 +344,10 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		}
 		inCh := p.build(rc)
 		boundaryCh := boundary.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -404,8 +416,10 @@ func SkipUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		}
 		inCh := p.build(rc)
 		boundaryCh := boundary.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

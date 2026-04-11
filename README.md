@@ -171,7 +171,7 @@ The [`examples/`](examples/) directory contains standalone programs. Run any wit
 | `enrich` | MapBatch, LookupBy, Enrich |
 | `dedupe` | Dedupe, Distinct, CacheBy |
 | `timeout` | Timeout StageOption: per-item deadline |
-| `ticker` | Ticker, Interval: scheduled sources |
+| `ticker` | Ticker, Timer: scheduled sources |
 | `pairwise` | Pairwise, SlidingWindow |
 | `concatmap` | ConcatMap vs FlatMap: ordered sequential expansion |
 | `mapresult` | MapResult: route errors to a separate pipeline |

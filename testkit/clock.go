@@ -2,7 +2,7 @@
 //
 // The primary export is [TestClock], a virtual clock for testing time-sensitive
 // operators (Throttle, Debounce, SessionWindow, Batch with BatchTimeout, Ticker,
-// Interval, Timer) without real sleeps.
+// Timer) without real sleeps.
 //
 // Usage:
 //

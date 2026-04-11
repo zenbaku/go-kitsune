@@ -347,8 +347,10 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 		}
 
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -358,6 +360,7 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 			hook = internal.NoopHook{}
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
@@ -715,8 +718,10 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 		}
 
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -726,6 +731,7 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 			hook = internal.NoopHook{}
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {

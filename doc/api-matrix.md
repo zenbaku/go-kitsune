@@ -204,7 +204,6 @@ Source operators produce items from external input. They accept no `StageOption`
 | Operator | Signature |
 |----------|-----------|
 | `Ticker` | `Ticker(d, opts...)` → `*Pipeline[time.Time]` |
-| `Interval` | `Interval(d, opts...)` → `*Pipeline[int]` |
 | `Timer` | `Timer(delay, fn, opts...)` → `*Pipeline[T]` |
 
 ---

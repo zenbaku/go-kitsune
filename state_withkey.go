@@ -408,8 +408,10 @@ func MapWithKey[I, O, S any](
 		}
 
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -419,6 +421,7 @@ func MapWithKey[I, O, S any](
 			hook = internal.NoopHook{}
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {
@@ -827,8 +830,10 @@ func FlatMapWithKey[I, O, S any](
 		}
 
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -838,6 +843,7 @@ func FlatMapWithKey[I, O, S any](
 			hook = internal.NoopHook{}
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
 
 		if n == 1 {

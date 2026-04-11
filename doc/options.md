@@ -177,7 +177,7 @@ Useful for latency-sensitive pipelines where a full batch might never arrive wit
 
 ## `WithClock(c Clock)`
 
-**Applies to:** `Ticker`, `Interval`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval`
+**Applies to:** `Ticker`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval`
 
 Substitute a deterministic clock for testing. Instead of calling `time.Now()` or `time.Sleep()`, the stage uses the provided `Clock` implementation.
 

@@ -29,8 +29,10 @@ func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOpt
 			return existing.(chan S)
 		}
 		inCh := p.build(rc)
-		ch := make(chan S, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan S, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -84,8 +86,10 @@ func Reduce[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageO
 			return existing.(chan S)
 		}
 		inCh := p.build(rc)
-		ch := make(chan S, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan S, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -141,8 +145,10 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -238,8 +244,10 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -353,8 +361,10 @@ func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 			return existing.(chan Group[K, T])
 		}
 		inCh := p.build(rc)
-		ch := make(chan Group[K, T], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan Group[K, T], buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -442,8 +452,10 @@ func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, o
 			return existing.(chan map[K]int64)
 		}
 		inCh := p.build(rc)
-		ch := make(chan map[K]int64, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan map[K]int64, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

@@ -43,8 +43,10 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 			return existing.(chan O)
 		}
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

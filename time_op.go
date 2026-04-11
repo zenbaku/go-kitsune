@@ -30,8 +30,10 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -108,8 +110,10 @@ func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -180,8 +184,10 @@ func Debounce[T any](p *Pipeline[T], silence time.Duration, opts ...StageOption)
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

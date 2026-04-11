@@ -41,8 +41,10 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 			return existing.(chan O)
 		}
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -179,8 +181,10 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 			return existing.(chan O)
 		}
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -311,9 +315,11 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 			return existing.(chan O), rc.getChan(errID).(chan ErrItem[I])
 		}
 		inCh := p.build(rc)
-		okC := make(chan O, cfg.buffer)
-		errC := make(chan ErrItem[I], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		okC := make(chan O, buf)
+		errC := make(chan ErrItem[I], buf)
 		m := okMeta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(okC) }
 		m.getChanCap = func() int { return cap(okC) }
 		rc.setChan(okID, okC)
@@ -385,8 +391,10 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 			return existing.(chan O)
 		}
 		inCh := p.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

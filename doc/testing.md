@@ -260,7 +260,7 @@ testkit.AssertNoErrors(t, hook)
 
 ## Testing time-sensitive operators
 
-Operators like `Debounce`, `Throttle`, `Batch` (with `BatchTimeout`), `Ticker`, `Interval`, and `SessionWindow` depend on wall-clock time. Use `TestClock` to control time deterministically: no sleeps, no flaky tests.
+Operators like `Debounce`, `Throttle`, `Batch` (with `BatchTimeout`), `Ticker`, and `SessionWindow` depend on wall-clock time. Use `TestClock` to control time deterministically: no sleeps, no flaky tests.
 
 ### Batch with a timeout flush
 

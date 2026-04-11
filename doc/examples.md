@@ -1199,11 +1199,10 @@ Create a push-based source with `NewChannel`. External producers call `Send` whi
 
 ### `ticker` { #ticker }
 
-Time-based sources: periodic ticks, monotonic counters, and one-shot timers.
+Time-based sources: periodic ticks and one-shot timers.
 
-**Demonstrates:** `Ticker`, `Interval`, `Timer`, `Take`
+**Demonstrates:** `Ticker`, `Timer`, `Take`, `Map`
 
-[:material-play: Run in Playground](https://go.dev/play/p/hn7zBJl78Fh){ .md-button .md-button--primary }
 [:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/ticker/main.go){ .md-button }
 
 ??? example "Full source"
@@ -1232,8 +1231,14 @@ Time-based sources: periodic ticks, monotonic counters, and one-shot timers.
                 }))
         fmt.Println("ticks:", ticks)
 
-        // Interval: monotonically increasing counter
-        counts, _ := kitsune.Collect(ctx, kitsune.Take(kitsune.Interval(20*time.Millisecond), 4))
+        // Ticker as counter: map time.Time to a monotonic index
+        var i int64
+        counts, _ := kitsune.Collect(ctx,
+            kitsune.Map(
+                kitsune.Take(kitsune.Ticker(20*time.Millisecond), 4),
+                func(_ context.Context, _ time.Time) (int64, error) {
+                    n := i; i++; return n, nil
+                }))
         fmt.Println("counts:", counts)
 
         // Timer: one-shot after a delay

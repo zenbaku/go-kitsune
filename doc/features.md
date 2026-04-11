@@ -185,7 +185,6 @@ Stages are independently testable with [`FromSlice`](operators.md#fromslice) + [
 | Operator | What it does |
 |---|---|
 | [`Ticker(d)`](operators.md#ticker) | Emit `time.Time` at interval `d` |
-| [`Interval(d)`](operators.md#interval) | Emit a monotonically increasing counter at interval `d` |
 | [`Timer(d, fn)`](operators.md#timer) | Emit one value after delay `d` |
 | [`Throttle(d)`](operators.md#throttle) | Emit at most one item per `d`, leading edge |
 | [`Debounce(d)`](operators.md#debounce) | Emit only after `d` of silence |

@@ -321,8 +321,10 @@ func WindowByTime[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

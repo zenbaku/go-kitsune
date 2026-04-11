@@ -61,8 +61,10 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
 		}
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -117,8 +119,10 @@ func From[T any](src <-chan T) *Pipeline[T] {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
 		}
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -177,8 +181,10 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
 		}
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -188,7 +194,7 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		if internal.IsNoopHook(rc.hook) && gate == nil {
 			// Fast path: yield selects between the output channel and the pipeline
 			// done signal. The done channel is closed by early-exit stages (Take,
-			// TakeWhile) so infinite sources (Ticker, Interval, …) stop cleanly.
+			// TakeWhile) so infinite sources (Ticker, Repeatedly, …) stop cleanly.
 			//
 			// A derived stageCtx is also cancelled when done closes, so blocking
 			// external calls inside the generator (e.g. long-poll RPCs) are
@@ -395,40 +401,6 @@ func Ticker(d time.Duration, opts ...StageOption) *Pipeline[time.Time] {
 				if !yield(t) {
 					return nil
 				}
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Interval
-// ---------------------------------------------------------------------------
-
-// Interval emits a monotonically increasing int64 (0, 1, 2, …) at regular intervals.
-// The first value fires after d. The pipeline runs until the context is cancelled.
-// Pass [WithClock] to use a deterministic clock for testing.
-//
-//	p := kitsune.Interval(time.Second)
-//	p.Take(5) // → 0, 1, 2, 3, 4
-func Interval(d time.Duration, opts ...StageOption) *Pipeline[int64] {
-	cfg := buildStageConfig(opts)
-	clk := cfg.clock
-	if clk == nil {
-		clk = internal.RealClock{}
-	}
-	return Generate(func(ctx context.Context, yield func(int64) bool) error {
-		ticker := clk.NewTicker(d)
-		defer ticker.Stop()
-		var i int64
-		for {
-			select {
-			case <-ticker.C():
-				if !yield(i) {
-					return nil
-				}
-				i++
 			case <-ctx.Done():
 				return ctx.Err()
 			}

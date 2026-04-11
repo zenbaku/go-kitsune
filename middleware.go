@@ -75,15 +75,11 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 	if scfg.name != "" {
 		name = scfg.name
 	}
-	buf := internal.DefaultBuffer
-	if scfg.buffer != internal.DefaultBuffer {
-		buf = scfg.buffer
-	}
 	meta := stageMeta{
 		id:     id,
 		kind:   "rate_limit",
 		name:   name,
-		buffer: buf,
+		buffer: scfg.buffer,
 		inputs: []int{p.id},
 	}
 	build := func(rc *runCtx) chan T {
@@ -91,8 +87,10 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, meta.buffer)
+		buf := rc.effectiveBufSize(scfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

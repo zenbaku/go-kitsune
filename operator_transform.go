@@ -45,8 +45,10 @@ func WithIndex[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Indexed[T]]
 			return existing.(chan Indexed[T])
 		}
 		inCh := p.build(rc)
-		ch := make(chan Indexed[T], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan Indexed[T], buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -99,8 +101,10 @@ func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] 
 			return existing.(chan Pair[T, T])
 		}
 		inCh := p.build(rc)
-		ch := make(chan Pair[T, T], cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan Pair[T, T], buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -159,8 +163,10 @@ func TakeEvery[T any](p *Pipeline[T], n int) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -213,8 +219,10 @@ func DropEvery[T any](p *Pipeline[T], n int) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, internal.DefaultBuffer)
+		buf := rc.defaultBufSize()
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -268,8 +276,10 @@ func MapEvery[T any](p *Pipeline[T], n int, fn func(context.Context, T) (T, erro
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -331,8 +341,10 @@ func Intersperse[T any](p *Pipeline[T], sep T, opts ...StageOption) *Pipeline[T]
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

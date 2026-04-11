@@ -45,8 +45,10 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 		}
 		aCh := a.build(rc)
 		bCh := b.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -133,8 +135,10 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 		}
 		aCh := a.build(rc)
 		bCh := b.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -269,8 +273,10 @@ func WithLatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn f
 		}
 		mainCh := main.build(rc)
 		otherCh := other.build(rc)
-		ch := make(chan O, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan O, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

@@ -1,6 +1,6 @@
 // Example: ticker — time-based sources and limiting.
 //
-// Demonstrates: Ticker, Interval, Timer, Take, Map
+// Demonstrates: Ticker, Timer, Take, Map
 package main
 
 import (
@@ -30,10 +30,18 @@ func main() {
 		fmt.Println(" ", ts)
 	}
 
-	// --- Interval: emits a monotonically increasing counter ---
+	// --- Ticker as counter: map time.Time to a monotonic index ---
 
-	fmt.Println("\n=== Interval (counter, 4 ticks) ===")
-	counts, err := kitsune.Collect(ctx, kitsune.Take(kitsune.Interval(20*time.Millisecond), 4))
+	fmt.Println("\n=== Ticker as counter (4 ticks) ===")
+	var i int64
+	counts, err := kitsune.Collect(ctx,
+		kitsune.Map(
+			kitsune.Take(kitsune.Ticker(20*time.Millisecond), 4),
+			func(_ context.Context, _ time.Time) (int64, error) {
+				n := i
+				i++
+				return n, nil
+			}))
 	if err != nil {
 		panic(err)
 	}

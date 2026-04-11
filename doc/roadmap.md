@@ -32,17 +32,17 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### API and ergonomics
 
-- [ ] **`WithDefaultBuffer(n)` RunOption**: set the channel buffer size for all stages in a run without annotating every operator individually. Currently every stage defaults to 16; users tuning for latency (smaller buffers, lower memory) or throughput (larger buffers, less scheduling) must annotate each stage. A run-level default would let a single option flip the entire pipeline's buffering posture, with per-stage `Buffer(n)` still taking precedence.
+- [x] **`WithDefaultBuffer(n)` RunOption**: set the channel buffer size for all stages in a run without annotating every operator individually. Currently every stage defaults to 16; users tuning for latency (smaller buffers, lower memory) or throughput (larger buffers, less scheduling) must annotate each stage. A run-level default would let a single option flip the entire pipeline's buffering posture, with per-stage `Buffer(n)` still taking precedence.
 
-- [ ] **Consolidate `Ticker` / `Interval`**: the two operators are identical in behavior and signature. Deprecate `Interval` with a compile-time alias and a godoc note pointing to `Ticker`, then remove `Interval` in the next major version. Keeping both creates confusion about whether there is a semantic difference.
+- [x] **Consolidate `Ticker` / `Interval`**: `Interval` removed. Use `Ticker` (which emits `time.Time`) and `Map` to derive a counter if needed.
 
-- [ ] **Consolidate `Drain` / `ForEach`**: both return a `Runner` and accept the same arguments. Pick one as canonical (prefer `ForEach`, which is the RxJS/RxGo convention) and deprecate the other with a type alias. Having two names for the same terminal operation in the same package inflates the API surface with no benefit.
+- [x] **Consolidate `Drain` / `ForEach`**: `Drain` and `DrainRunner` are deprecated with a godoc note. `ForEach` is now the canonical terminal stage for all item processing, including the discard case.
 
-- [ ] **Numeric type constraint on `Sum`**: `Sum[T any]` currently accepts any type and returns the zero value silently for non-numeric `T`. Introduce a `Numeric` constraint (integer + float kinds, mirroring `golang.org/x/exp/constraints.Integer | constraints.Float`) and apply it to `Sum`. Same audit for any other operator that implicitly assumes numeric semantics.
+- [x] **Numeric type constraint on `Sum`**: already implemented; `Sum[T Numeric]` uses the `Numeric` constraint defined in collect.go. `Min`, `Max`, and `MinMax` also use it.
 
-- [ ] **Error action naming audit**: the error action `Skip()` drops the current item; the operator `Drop(n)` also drops items; `Reject` drops items matching a predicate; `OverflowDropNewest`/`OverflowDropOldest` drop on overflow. The term "drop" is already the dominant vocabulary. Rename the error action to `ActionDrop()` (keeping `Skip` as a deprecated alias) to align with the rest of the codebase and reduce the mental model load for new users.
+- [x] **Error action naming audit**: `ActionDrop()` is now the canonical name. `Skip()` is kept as a deprecated alias pointing to `ActionDrop()`.
 
-- [ ] **Per-error-type retry control**: `OnError(Retry(...))` retries on any error. There is no way to express "retry on `io.ErrTimeout` but halt on `ErrNotFound`". Add a predicate form — `RetryIf(predicate func(error) bool, backoff)` — so callers can make fine-grained decisions per error type without wrapping the whole stage in a custom `ErrorHandler`.
+- [x] **Per-error-type retry control**: `RetryIf(predicate func(error) bool, backoff)` and `RetryIfThen(predicate, backoff, fallback)` added. `RetryIf` retries when the predicate returns true and halts otherwise; `RetryIfThen` delegates to a fallback handler on non-retryable errors.
 
 ---
 

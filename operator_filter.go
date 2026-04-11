@@ -29,8 +29,10 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -227,8 +229,10 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -375,8 +379,10 @@ func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], 
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
 		}
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)

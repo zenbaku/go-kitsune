@@ -31,8 +31,10 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -130,8 +132,10 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 			return existing.(chan T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan T, cfg.buffer)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
 		m := meta
+		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -189,8 +193,10 @@ func Window[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T]
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -258,8 +264,10 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -324,8 +332,10 @@ func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -429,8 +439,10 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
@@ -504,8 +516,10 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 			return existing.(chan []T)
 		}
 		inCh := p.build(rc)
-		ch := make(chan []T, cfg.buffer)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
 		m := meta
+		m.buffer = bufSize
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
