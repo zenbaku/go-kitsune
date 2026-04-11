@@ -20,6 +20,97 @@ The default buffer size of 16 (`engine.DefaultBuffer`) is intentionally modest. 
 
 ---
 
+## Fast path and stage fusion
+
+Kitsune has two internal execution shortcuts that can dramatically increase throughput for serial, hook-free pipelines: the **fast path** and **stage fusion**. Both are applied automatically when the pipeline meets certain conditions. Understanding them helps you avoid accidentally disabling them — and helps you diagnose throughput drops when you do.
+
+### What the fast path is
+
+By default, each item passes through a processing loop that:
+
+- calls `time.Now()` before and after user code to measure latency
+- wraps user code in `ProcessItem`, which handles error policies (retry, skip, return)
+- calls `hook.OnItem(...)` for every item
+- guards against context cancellation with a `select` on `ctx.Done()`
+
+For serial, hook-free pipelines that use default error handling, all of this overhead is unnecessary. The **fast path** is a simplified loop that:
+
+- reads items in micro-batches of up to 16 (one blocking receive, then up to 15 non-blocking non-blocking receives)
+- passes items directly to user code with no hook calls, no `time.Now`, and no `ProcessItem` wrapper
+- returns the first error immediately
+
+Throughput improvements of 2–5x are common in CPU-bound pipelines. I/O-bound pipelines (HTTP, database) benefit less because I/O wait dominates.
+
+### What stage fusion is
+
+When a `Map → Filter → ForEach` chain is serial and hook-free, Kitsune can go further: it composes all three stages into **one goroutine** with no inter-stage channel hops. Items flow from source through Map and Filter directly into ForEach without ever being written to an intermediate `chan T`. This eliminates two channel sends and two goroutine handoffs per item.
+
+Fusion is only possible for single-consumer chains. If two operators both consume the output of a `Map` stage, fusion cannot be used for that stage.
+
+Operators that support fusion: `Map`, `Filter`. `FlatMap` has a fast path but does not fuse. `Batch`, windowing operators, and multi-input operators never fuse.
+
+### Exact eligibility conditions
+
+Both fast path and fusion require **all** of the following conditions to hold simultaneously:
+
+| Condition | How to disable it (unintentionally) |
+|---|---|
+| Serial execution (`Concurrency(1)`) | `Concurrency(n)` with `n >= 2` |
+| No supervision | `Supervise(...)` on the stage |
+| Default error handler | `OnError(...)` on the stage |
+| Block overflow | `Overflow(DropNewest)` or `Overflow(DropOldest)` |
+| No per-item timeout | `Timeout(d)` on the stage |
+| No hook at run time | `WithHook(...)` on `Runner.Run` (any non-`NoopHook`) |
+| No pipeline-level error strategy | `WithErrorStrategy(...)` on `Runner.Run` |
+| No cache (Map only) | `CacheBy(keyFn)` on the Map stage |
+| Single consumer (fusion only) | Passing the same pipeline to two operators, or using `MergeRunners` with two ForEach on the same upstream |
+
+### Inspecting optimisation status with `IsOptimized`
+
+`Pipeline[T].IsOptimized(opts ...RunOption)` returns an `[]OptimizationReport` showing, for each stage, whether it would use the fast path and whether it would be fused. Call it after the full DAG (including the terminal `ForEach`) is constructed.
+
+```go
+src    := kitsune.FromSlice(records)
+mapped := kitsune.Map(src, enrich)
+runner := mapped.Filter(isValid).ForEach(store)
+
+// Assert the chain stays on the fast path in your test suite:
+for _, r := range mapped.IsOptimized() {
+    if r.SupportsFastPath && !r.FastPath {
+        t.Errorf("stage %s left fast path: %v", r.Name, r.Reasons)
+    }
+}
+```
+
+`Pipeline[T].IsFastPath(opts ...RunOption) bool` is a convenience wrapper that returns `false` if any fast-path-capable stage would leave the fast path:
+
+```go
+if !mapped.IsFastPath() {
+    t.Error("expected pipeline to stay on the fast path")
+}
+```
+
+Both methods accept the same `RunOption`s as `Runner.Run`, so you can test the run-time hook condition too:
+
+```go
+// Verify the pipeline stays fast-path without a hook,
+// but correctly reports the drop when LogHook is added.
+assert.True(t, pipeline.IsFastPath())
+assert.False(t, pipeline.IsFastPath(kitsune.WithHook(kitsune.LogHook(slog.Default()))))
+```
+
+`IsOptimized` is non-destructive: it allocates a temporary channel graph (like `Describe`) and returns before any goroutines are started.
+
+### Common pitfalls
+
+**Adding `WithHook(LogHook(...))` for debugging** silently disables the fast path across every Map and Filter stage in the run. If you need per-item logging without losing throughput, install the hook only in non-production builds, or use `WithSampleRate(-1)` to disable the sampling hooks while keeping stage lifecycle events.
+
+**Setting `Concurrency(2)` on a cheap CPU-bound Map** is almost always slower than staying on the fast path. The goroutine scheduling overhead, channel synchronisation, and cache-line contention typically exceed the gains. Measure with `pprof` before reaching for concurrency on fast operations.
+
+**`CacheBy` on Map always disables the Map fast path.** If you need caching on one stage but want the rest of the chain to be fast, put the cached Map first in the chain and let the downstream Maps stay cache-free.
+
+---
+
 ## Buffer Sizing (`Buffer(n)`)
 
 The channel buffer between two stages holds up to `n` items in memory. Each stage sees at most `Buffer` pending items at any time.

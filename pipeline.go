@@ -46,6 +46,27 @@ type stageMeta struct {
 	hasSuperv   bool
 	getChanLen  func() int
 	getChanCap  func() int
+
+	// Optimization metadata: set at construction time, read by IsOptimized.
+	//
+	// supportsFastPath is true for operators that have a fast-path
+	// implementation (Map, Filter). Operators like Batch, FlatMap, or sources
+	// do not have a fast path; they always run the full processing loop.
+	//
+	// isFastPathCfg is the result of isFastPathEligibleCfg at construction
+	// time, plus any operator-specific conditions (e.g. cacheConfig == nil for
+	// Map). The run-time NoopHook check is deferred to IsOptimized.
+	//
+	// hasFusionEntry is true when a fusionEntry was set on the output pipeline
+	// at construction time. Fusion composes a Map/Filter chain into a single
+	// goroutine with a downstream ForEach.
+	//
+	// getConsumerCount returns the output pipeline's consumerCount at query
+	// time. Fusion is used only when this returns 1 (single-consumer chain).
+	supportsFastPath bool
+	isFastPathCfg    bool
+	hasFusionEntry   bool
+	getConsumerCount func() int32
 }
 
 // ---------------------------------------------------------------------------

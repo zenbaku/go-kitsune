@@ -106,7 +106,6 @@ The next unimplemented items in `doc/roadmap.md` (as of 2026-04-11):
 
 **Developer experience:**
 - "Choosing a concurrency model" guide
-- Fast-path eligibility documentation (`doc/tuning.md`)
 - `WithInspectorStore(store)` option
 - `benchstat` performance regression baseline
 - Unified tail integration test matrix

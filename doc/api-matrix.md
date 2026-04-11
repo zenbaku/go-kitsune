@@ -56,7 +56,8 @@ Documents every exported operator and which `StageOption` features each one actu
 - `ExpandMap` performs BFS expansion: items at depth N are all emitted before any item at depth N+1. fn may return nil for leaf nodes. Accepts `WithName` and `Buffer`. Use `VisitedBy(keyFn)` to enable cycle detection (items whose key was already seen are skipped, along with their subtrees); combine with `WithDedupSet` to override the default `MemoryDedupSet` backend.
 - `ForEach` returns a typed `ForEachRunner[T]`; call `.Run(ctx)` or `.RunAsync(ctx)`. Supports `Concurrency`, `Ordered`, `OnError`, and `Supervise`.
 - `Drain` returns a `DrainRunner[T]` with a `Build()` method for use with `MergeRunners`.
-- Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column).
+- Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column). See [doc/tuning.md](tuning.md#fast-path-and-stage-fusion) for exact eligibility conditions.
+- `Pipeline[T].IsOptimized(opts ...RunOption) []OptimizationReport` reports fast-path and fusion eligibility for each stage. `Pipeline[T].IsFastPath(opts ...RunOption) bool` is a convenience wrapper. Both are non-destructive.
 
 ---
 

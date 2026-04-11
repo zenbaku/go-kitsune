@@ -26,17 +26,20 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
+	fastPathCfg := isFastPathEligibleCfg(cfg) && cfg.cacheConfig == nil
 	meta := stageMeta{
-		id:          id,
-		kind:        "map",
-		name:        orDefault(cfg.name, "map"),
-		concurrency: cfg.concurrency,
-		buffer:      cfg.buffer,
-		overflow:    cfg.overflow,
-		timeout:     cfg.timeout,
-		hasRetry:    !internal.IsDefaultHandler(cfg.errorHandler),
-		inputs:      []int{p.id},
-		hasSuperv:   cfg.supervision.HasSupervision(),
+		id:               id,
+		kind:             "map",
+		name:             orDefault(cfg.name, "map"),
+		concurrency:      cfg.concurrency,
+		buffer:           cfg.buffer,
+		overflow:         cfg.overflow,
+		timeout:          cfg.timeout,
+		hasRetry:         !internal.IsDefaultHandler(cfg.errorHandler),
+		inputs:           []int{p.id},
+		hasSuperv:        cfg.supervision.HasSupervision(),
+		supportsFastPath: true,
+		isFastPathCfg:    fastPathCfg,
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -112,7 +115,13 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 	}
 	result := newPipeline(id, meta, build)
 	// Set fusionEntry when cfg conditions hold (hook check deferred to run time).
-	if isFastPathEligibleCfg(cfg) && cfg.cacheConfig == nil {
+	if fastPathCfg {
+		// Update optimization metadata captured by the build closure.
+		// The build closure captures meta by reference (Go variable capture),
+		// so these updates are visible when build runs during IsOptimized or Run.
+		meta.hasFusionEntry = true
+		meta.getConsumerCount = func() int32 { return result.consumerCount.Load() }
+
 		name0 := orDefault(cfg.name, "map")
 		fn0 := fn
 		p0 := p

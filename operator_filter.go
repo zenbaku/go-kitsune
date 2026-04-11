@@ -16,13 +16,19 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
+	filterFastPathCfg := isFastPathEligibleCfg(cfg)
 	meta := stageMeta{
-		id:       id,
-		kind:     "filter",
-		name:     orDefault(cfg.name, "filter"),
-		buffer:   cfg.buffer,
-		overflow: cfg.overflow,
-		inputs:   []int{p.id},
+		id:               id,
+		kind:             "filter",
+		name:             orDefault(cfg.name, "filter"),
+		concurrency:      cfg.concurrency,
+		buffer:           cfg.buffer,
+		overflow:         cfg.overflow,
+		timeout:          cfg.timeout,
+		hasSuperv:        cfg.supervision.HasSupervision(),
+		inputs:           []int{p.id},
+		supportsFastPath: true,
+		isFastPathCfg:    filterFastPathCfg,
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -86,7 +92,11 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 	}
 	result := newPipeline(id, meta, build)
 	// Set fusionEntry when cfg conditions hold (hook check deferred to run time).
-	if isFastPathEligibleCfg(cfg) {
+	if filterFastPathCfg {
+		// Update optimization metadata captured by the build closure.
+		meta.hasFusionEntry = true
+		meta.getConsumerCount = func() int32 { return result.consumerCount.Load() }
+
 		pred0 := pred
 		p0 := p
 		result.fusionEntry = func(rc *runCtx, sink func(context.Context, T) error) stageFunc {
