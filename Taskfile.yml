@@ -55,9 +55,9 @@ tasks:
         cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
 
   test:property:
-    desc: Run property-based tests (rapid); excluded from default test run
+    desc: Run property-based tests (rapid) at full iteration count (100 checks each)
     cmds:
-      - go test -tags=property -count=1 -timeout 120s {{.PACKAGE}}
+      - go test -count=1 -timeout 120s {{.PACKAGE}}
 
   test:fuzz:
     desc: Run fuzz seed corpus only (fast; use fuzz:* tasks to actively search for bugs)
@@ -115,9 +115,10 @@ tasks:
       - go test -v -run TestExamples -timeout 120s -count=1 .
 
   test:all:
-    desc: Run core + tail + example tests
+    desc: Run core + property + tail + example tests
     cmds:
       - task: test:race
+      - task: test:property
       - task: test:ext
       - task: test:examples
 

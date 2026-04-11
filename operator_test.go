@@ -393,6 +393,78 @@ func TestFinally_MethodForm(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// IgnoreElements
+// ---------------------------------------------------------------------------
+
+func TestIgnoreElements_NoItemsDownstream(t *testing.T) {
+	got := collectAll(t, kitsune.IgnoreElements(kitsune.FromSlice([]int{1, 2, 3})))
+	if len(got) != 0 {
+		t.Fatalf("IgnoreElements emitted items: %v", got)
+	}
+}
+
+func TestIgnoreElements_MethodForm(t *testing.T) {
+	got := collectAll(t, kitsune.FromSlice([]int{1, 2, 3}).IgnoreElements())
+	if len(got) != 0 {
+		t.Fatalf("IgnoreElements method form emitted items: %v", got)
+	}
+}
+
+func TestIgnoreElements_SideEffectsRun(t *testing.T) {
+	var count int
+	p := kitsune.Tap(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) error {
+			count++
+			return nil
+		},
+	)
+	got := collectAll(t, kitsune.IgnoreElements(p))
+	if len(got) != 0 {
+		t.Fatalf("IgnoreElements emitted items: %v", got)
+	}
+	if count != 3 {
+		t.Fatalf("Tap ran %d times, want 3", count)
+	}
+}
+
+func TestIgnoreElements_ErrorPropagates(t *testing.T) {
+	sentinel := errors.New("boom")
+	p := kitsune.Map(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(_ context.Context, _ int) (int, error) { return 0, sentinel },
+	)
+	ctx := context.Background()
+	err := kitsune.IgnoreElements(p).ForEach(func(_ context.Context, _ int) error {
+		return nil
+	}).Run(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIgnoreElements_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	var items []int
+	err := kitsune.IgnoreElements(kitsune.Never[int]()).ForEach(func(_ context.Context, v int) error {
+		items = append(items, v)
+		return nil
+	}).Run(ctx)
+
+	if len(items) != 0 {
+		t.Fatalf("IgnoreElements emitted items: %v", items)
+	}
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ExpandMap
 // ---------------------------------------------------------------------------
 

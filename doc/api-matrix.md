@@ -45,6 +45,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Finally` | `Finally[T](p, fn func(ctx,error))` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `ExpandMap` | `ExpandMap[T](p, fn func(ctx,T)*Pipeline[T], opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
 | `Reject` | `Reject[T](p, pred func(ctx,T)(bool,error), opts...)` | – | – | ✓ | ✓ | – | ✓ | – | – | ✓ | – | – | – | ✓ |
+| `IgnoreElements` | `IgnoreElements[T](p)`; also `(p).IgnoreElements()` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `ForEach` | `(p).ForEach(fn, opts...)` → `*ForEachRunner[T]` | ✓ | ✓ | – | ✓ | ✓ | ✓ | ✓ | – | – | – | – | – | ✓ |
 | `Drain` | `(p).Drain()` → `*DrainRunner[T]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 
@@ -194,6 +195,8 @@ Source operators produce items from external input. They accept no `StageOption`
 | `Iterate` | `Iterate[T](seed T, fn func(T)T)` |
 | `Repeatedly` | `Repeatedly[T](fn func()T)` |
 | `Cycle` | `Cycle[T](items []T)` |
+| `Empty` | `Empty[T]()` |
+| `Never` | `Never[T]()` |
 | `Concat` | `Concat[T](factories ...func()*Pipeline[T])` |
 | `Amb` | `Amb[T](factories ...func()*Pipeline[T])` |
 | `Using` | `Using[T,R](acquire func(ctx)(R,error), build func(R)*Pipeline[T], release func(R))` |

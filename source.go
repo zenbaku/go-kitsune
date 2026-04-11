@@ -497,6 +497,28 @@ func Repeatedly[T any](fn func() T) *Pipeline[T] {
 	})
 }
 
+// Empty returns a Pipeline that completes immediately with no items.
+// It is the identity element for pipeline composition: Merge(Empty[T](), p)
+// behaves identically to p for any pipeline p.
+// Useful as a base case in tests and as a placeholder in pipeline algebra.
+func Empty[T any]() *Pipeline[T] {
+	return Generate(func(_ context.Context, _ func(T) bool) error {
+		return nil
+	})
+}
+
+// Never returns a Pipeline that never emits any items and never completes
+// until the context is cancelled. It is the absorbing element for Amb:
+// Amb(Never[T](), p) emits whatever p emits.
+// Useful as a placeholder in tests that assert on other branches, and as
+// the identity element for Merge with respect to liveness.
+func Never[T any]() *Pipeline[T] {
+	return Generate(func(ctx context.Context, _ func(T) bool) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+}
+
 // Cycle creates an infinite stream that repeatedly loops over items.
 // Panics if items is empty.
 //
@@ -600,11 +622,20 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			factory int
 		}
 
-		// Per-factory item channels.
+		// Per-factory item channels and per-factory contexts so that
+		// cancelling a non-winner does not interrupt the winner's goroutine.
 		chs := make([]chan ambItem, len(factories))
-		for i := range chs {
+		factoryCtxs := make([]context.Context, len(factories))
+		factoryCancels := make([]context.CancelFunc, len(factories))
+		for i := range factories {
 			chs[i] = make(chan ambItem, internal.DefaultBuffer)
+			factoryCtxs[i], factoryCancels[i] = context.WithCancel(innerCtx)
 		}
+		defer func() {
+			for _, cancel := range factoryCancels {
+				cancel()
+			}
+		}()
 
 		var (
 			wg       sync.WaitGroup
@@ -612,20 +643,22 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			firstErr error
 		)
 
-		// Start each factory in its own goroutine.
+		// Start each factory in its own goroutine using its own context,
+		// so only non-winners are cancelled when a winner is determined.
 		for i, factory := range factories {
 			i, factory := i, factory
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				fCtx := factoryCtxs[i]
 				err := factory().ForEach(func(_ context.Context, v T) error {
 					select {
 					case chs[i] <- ambItem{val: v, factory: i}:
 						return nil
-					case <-innerCtx.Done():
-						return innerCtx.Err()
+					case <-fCtx.Done():
+						return fCtx.Err()
 					}
-				}).Run(innerCtx)
+				}).Run(fCtx)
 				if err != nil && !errors.Is(err, context.Canceled) {
 					errOnce.Do(func() { firstErr = err })
 					innerCancel()
@@ -634,19 +667,20 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			}()
 		}
 
-		// Fan all per-factory channels into a merged channel.
+		// Fan all per-factory channels into a merged channel. Each fanner
+		// uses its factory's context so cancelled factories stop forwarding.
 		merged := make(chan ambItem, internal.DefaultBuffer)
 		go func() {
 			var fanWg sync.WaitGroup
-			for _, ch := range chs {
-				ch := ch
+			for i, ch := range chs {
+				i, ch := i, ch
 				fanWg.Add(1)
 				go func() {
 					defer fanWg.Done()
 					for it := range ch {
 						select {
 						case merged <- it:
-						case <-innerCtx.Done():
+						case <-factoryCtxs[i].Done():
 							return
 						}
 					}
@@ -656,28 +690,23 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			close(merged)
 		}()
 
-		// Determine winner: first factory to emit.
+		// Determine winner: first factory to emit. Cancel all non-winners
+		// while keeping the winner's context alive so it drains completely.
 		winner := -1
 		for it := range merged {
 			if winner == -1 {
 				winner = it.factory
-				innerCancel()
+				for j, cancel := range factoryCancels {
+					if j != winner {
+						cancel()
+					}
+				}
 			}
 			if it.factory != winner {
 				continue
 			}
 			if !yield(it.val) {
 				return nil
-			}
-		}
-
-		// Drain remaining items from the winner's channel if any arrived
-		// after merged was closed but before we read them all.
-		if winner >= 0 {
-			for it := range chs[winner] {
-				if !yield(it.val) {
-					return nil
-				}
 			}
 		}
 

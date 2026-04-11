@@ -128,6 +128,12 @@ func (p *Pipeline[T]) Finally(fn func(error)) *Pipeline[T] {
 	return Finally(p, func(_ context.Context, err error) { fn(err) })
 }
 
+// IgnoreElements drains p for its side effects and emits nothing downstream.
+// The returned pipeline completes when p completes.
+func (p *Pipeline[T]) IgnoreElements() *Pipeline[T] {
+	return IgnoreElements(p)
+}
+
 // Dedupe drops items whose key (returned by keyFn) has already been seen.
 // Uses a global in-process [MemoryDedupSet] unless [WithDedupSet] is provided.
 func (p *Pipeline[T]) Dedupe(keyFn func(T) string, opts ...StageOption) *Pipeline[T] {

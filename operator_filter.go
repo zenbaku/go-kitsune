@@ -283,6 +283,28 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 	return newPipeline(id, meta, build)
 }
 
+// IgnoreElements drains p for its side effects and emits nothing downstream.
+// The returned pipeline completes (or errors) when p completes (or errors).
+// Any Tap, Map, or other side-effecting operators in p still run.
+//
+// Equivalent to Filter(p, func(_ T) bool { return false }) but more readable
+// and semantically explicit about intent.
+//
+// Also available as p.IgnoreElements().
+func IgnoreElements[T any](p *Pipeline[T]) *Pipeline[T] {
+	return Generate(func(ctx context.Context, _ func(T) bool) error {
+		innerCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		err := p.ForEach(func(_ context.Context, _ T) error {
+			return nil
+		}).Run(innerCtx)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // TapError calls fn as a side-effect when the pipeline terminates with a
 // non-context error, then re-propagates that error unchanged. It is the
 // complement to [Tap]: Tap observes items; TapError observes terminal errors.

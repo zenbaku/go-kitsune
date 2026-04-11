@@ -21,6 +21,8 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Iterate`](#iterate) | Source | `x, f(x), f(f(x)), …` |
 | [`Repeatedly`](#repeatedly) | Source | Repeat a function call indefinitely |
 | [`Cycle`](#cycle) | Source | Loop over a fixed slice |
+| [`Empty`](#empty) | Source | Complete immediately with no items |
+| [`Never`](#never) | Source | Block forever (until context cancellation) |
 | [`Concat`](#concat) | Source | Strictly ordered concat of pipelines |
 | [`Amb`](#amb) | Source | Race factories; keep the winner |
 | [`Catch`](#catch) | Source | Fallback pipeline on error |
@@ -45,6 +47,7 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Pairwise`](#pairwise) | Expansion | Emit consecutive pairs |
 | [`Unbatch`](#unbatch) | Expansion | Flatten slices to individual items |
 | [`Filter`](#filter) | Filter | Keep matching items |
+| [`IgnoreElements`](#ignoreelements) | Filter | Drain for side effects, emit nothing |
 | [`Reject`](#reject) | Filter | Drop matching items |
 | [`Take`](#take) | Filter | First N items |
 | [`Drop`](#drop) | Filter | Skip first N items |
@@ -386,6 +389,56 @@ Creates an infinite stream that repeatedly loops over `items`. Panics if `items`
 kitsune.Cycle([]string{"a", "b", "c"}).Take(7)
 // emits: "a","b","c","a","b","c","a"
 ```
+
+---
+
+### Empty
+
+```go
+func Empty[T any]() *Pipeline[T]
+```
+
+Returns a Pipeline that completes immediately with no items. Useful as an identity element in pipeline composition and as a base case in tests.
+
+`Merge(Empty[T](), p)` behaves identically to `p` for any pipeline `p`. `Amb(Empty[T](), p)` is not the same — `Amb` forwards whichever emits first, and `Empty` completes before emitting, so the winner is `p`.
+
+**Options:** none.
+
+```go
+// Use as a no-op source in conditional pipelines:
+var src *kitsune.Pipeline[Event]
+if cond {
+    src = realSource()
+} else {
+    src = kitsune.Empty[Event]()
+}
+```
+
+**See also:** [`Never`](#never) (blocks indefinitely), [`FromSlice`](#fromslice) with a nil slice.
+
+---
+
+### Never
+
+```go
+func Never[T any]() *Pipeline[T]
+```
+
+Returns a Pipeline that never emits any items and never completes until the context is cancelled. The absorbing element for `Amb`: `Amb(Never[T](), p)` always forwards from `p`.
+
+Useful as a placeholder in tests that assert on other branches, or to keep a merged pipeline alive while other branches are active.
+
+**Options:** none.
+
+```go
+// In a test: ensure the other branch wins the race.
+winner := kitsune.Amb(
+    func() *kitsune.Pipeline[int] { return kitsune.Never[int]() },
+    func() *kitsune.Pipeline[int] { return kitsune.FromSlice([]int{1, 2, 3}) },
+)
+```
+
+**See also:** [`Empty`](#empty) (completes immediately), [`Amb`](#amb).
 
 ---
 
@@ -1062,6 +1115,37 @@ active := kitsune.Filter(users, func(ctx context.Context, u User) (bool, error) 
 // Method form with simple predicate:
 adults := users.Filter(func(u User) bool { return u.Age >= 18 })
 ```
+
+---
+
+### IgnoreElements
+
+```go
+func IgnoreElements[T any](p *Pipeline[T]) *Pipeline[T]
+```
+
+Drains `p` for its side effects and emits nothing downstream. The returned pipeline completes (or errors) when `p` completes (or errors). Any [`Tap`](#tap--taperror--finally), [`Map`](#map), or other side-effecting operators in `p` still run.
+
+Also available as a method: `p.IgnoreElements()`.
+
+**When to use:** You want a pipeline to run for its side effects (writes, metrics, logging) without forwarding any items to downstream consumers.
+
+**Options:** none.
+
+```go
+// Run a Tap-instrumented pipeline for its side effects only:
+kitsune.IgnoreElements(
+    kitsune.Tap(events, func(_ context.Context, e Event) error {
+        metrics.Record(e)
+        return nil
+    }),
+).Run(ctx)
+
+// Method form:
+events.Tap(metrics.Record).IgnoreElements().Run(ctx)
+```
+
+**See also:** [`ForEach`](#foreach) (terminal; use when you own the run), [`Filter`](#filter) (keeps matching items).
 
 ---
 

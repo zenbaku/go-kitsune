@@ -12,9 +12,9 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **`Sample(p, sampler)`**: emit the most recent item from `p` whenever the `sampler` pipeline fires. Distinct from `Throttle` (which limits emission rate) and `Debounce` (which waits for a gap): `Sample` is clock-driven by an external signal. Useful for "poll latest value every N seconds" patterns without holding a reference to the latest value manually.
 
-- [ ] **`IgnoreElements(p)`**: drain `p` for side effects and emit nothing downstream. Currently requires `Filter(p, func(_ T) bool { return false })` which reads as intent-obscuring. A named combinator is clearer and optimizable (no outbox allocation needed).
+- [x] **`IgnoreElements(p)`**: drain `p` for side effects and emit nothing downstream. Currently requires `Filter(p, func(_ T) bool { return false })` which reads as intent-obscuring. A named combinator is clearer and optimizable (no outbox allocation needed).
 
-- [ ] **`Empty[T]()`** and **`Never[T]()`**: named source primitives. `Empty()` completes immediately with no items; `Never()` blocks forever until context cancellation. Both are implied by existing combinators (`FromSlice(nil)`, `Generate` that never yields) but unnamed, which makes pipeline algebra tests awkward. Used as identity elements in composition proofs.
+- [x] **`Empty[T]()`** and **`Never[T]()`**: named source primitives. `Empty()` completes immediately with no items; `Never()` blocks forever until context cancellation. Both are implied by existing combinators (`FromSlice(nil)`, `Generate` that never yields) but unnamed, which makes pipeline algebra tests awkward. Used as identity elements in composition proofs.
 
 - [ ] **`Materialize[T]` / `Dematerialize[T]`**: `Materialize` wraps each item and the terminal error into a sum type `Notification[T]{Value T; Err error; Done bool}`; `Dematerialize` unwraps it. Enables passing error events through operators that only handle `T`, and makes error routing composable without needing `MapResult` at every stage.
 
@@ -56,7 +56,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **`benchstat` performance regression baseline**: commit a `testdata/bench/baseline.txt` snapshot produced by `benchstat` from the main branch. Add a CI step that runs benchmarks on PRs and diffs against the baseline, failing if any benchmark regresses beyond a threshold (e.g. 10%). Prevents silent throughput regressions from landing unnoticed, especially around fast-path and fusion logic.
 
-- [ ] **Property-based tests in the default test run**: the `pgregory.net/rapid` property tests in `properties_test.go` are gated behind a `// +build property` tag and excluded from `task test`. They catch classes of bugs (operator algebra invariants, fan-out completeness, ordering guarantees) that example-based tests miss. Remove the build tag and include them in `task test`; if runtime is a concern, run them with a reduced number of iterations (`rapid.Settings{MaxRuns: 50}`) in the default run and the full count in `task test:all`.
+- [x] **Property-based tests in the default test run**: the `pgregory.net/rapid` property tests in `properties_test.go` are gated behind a `// +build property` tag and excluded from `task test`. They catch classes of bugs (operator algebra invariants, fan-out completeness, ordering guarantees) that example-based tests miss. Remove the build tag and include them in `task test`; if runtime is a concern, run them with a reduced number of iterations (`rapid.Settings{MaxRuns: 50}`) in the default run and the full count in `task test:all`.
 
 - [ ] **Unified tail integration test matrix**: the 27 tail packages each have their own test module, but there is no single CI step that reports their combined pass/fail status. `task test:ext` runs them sequentially but the output is scattered. Add a unified matrix report — a table of tail name, pass/fail, and skipped-reason (e.g. "no broker in CI") — so regressions across tails are visible at a glance rather than buried in individual log streams.
 

@@ -259,6 +259,30 @@ func TestAmb(t *testing.T) {
 	}
 }
 
+func TestAmbForwardsAllWinnerItems(t *testing.T) {
+	// Regression: Amb previously cancelled the winner's context when the winner
+	// was identified, causing the winner's goroutine to drop in-flight items.
+	// Now non-winners are cancelled while the winner drains completely.
+	const n = 100
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+	got := collectAll(t, kitsune.Amb(
+		func() *kitsune.Pipeline[int] { return kitsune.Never[int]() },
+		func() *kitsune.Pipeline[int] { return kitsune.FromSlice(items) },
+	))
+	sort.Ints(got)
+	if len(got) != n {
+		t.Fatalf("Amb dropped items: got %d, want %d", len(got), n)
+	}
+	for i, v := range got {
+		if v != i {
+			t.Fatalf("item %d: got %d, want %d", i, v, i)
+		}
+	}
+}
+
 func TestDrain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -368,5 +392,56 @@ func TestChannel_Backpressure(t *testing.T) {
 	v := <-received
 	if v != 42 {
 		t.Errorf("received %d, want 42", v)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Empty / Never
+// ---------------------------------------------------------------------------
+
+func TestEmpty(t *testing.T) {
+	got := collectAll(t, kitsune.Empty[int]())
+	if len(got) != 0 {
+		t.Fatalf("Empty emitted %v, want no items", got)
+	}
+}
+
+func TestEmptyString(t *testing.T) {
+	got := collectAll(t, kitsune.Empty[string]())
+	if len(got) != 0 {
+		t.Fatalf("Empty emitted %v, want no items", got)
+	}
+}
+
+func TestEmptyIsMergeIdentity(t *testing.T) {
+	want := []int{1, 2, 3}
+	got := collectAll(t, kitsune.Merge(kitsune.Empty[int](), kitsune.FromSlice(want)))
+	sort.Ints(got)
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i, v := range want {
+		if got[i] != v {
+			t.Errorf("index %d: got %d, want %d", i, got[i], v)
+		}
+	}
+}
+
+func TestNever(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	var items []int
+	err := kitsune.Never[int]().ForEach(func(_ context.Context, v int) error {
+		items = append(items, v)
+		return nil
+	}).Run(ctx)
+
+	if len(items) != 0 {
+		t.Fatalf("Never emitted items: %v", items)
+	}
+	// err is context.DeadlineExceeded or context.Canceled — both are acceptable
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
