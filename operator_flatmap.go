@@ -1,0 +1,356 @@
+package kitsune
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/zenbaku/go-kitsune/internal"
+)
+
+// ---------------------------------------------------------------------------
+// FlatMap
+// ---------------------------------------------------------------------------
+
+// FlatMap transforms each item from p into zero or more output items using fn.
+// fn calls yield for each output item it wants to emit.
+//
+// With Concurrency(n) > 1, items are processed in parallel. Add Ordered() to
+// emit results in the original input order (all items from input i are emitted
+// before any from input i+1).
+func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:          id,
+		kind:        "flat_map",
+		name:        orDefault(cfg.name, "flat_map"),
+		concurrency: cfg.concurrency,
+		buffer:      cfg.buffer,
+		overflow:    cfg.overflow,
+		inputs:      []int{p.id},
+	}
+	build := func(rc *runCtx) chan O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan O)
+		}
+		inCh := p.build(rc)
+		ch := make(chan O, cfg.buffer)
+		m := meta
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		fmHook := rc.hook
+		if fmHook == nil {
+			fmHook = internal.NoopHook{}
+		}
+		cfg := cfg // local copy; resolve pipeline-level default handler
+		cfg.errorHandler = resolveHandler(cfg, rc)
+
+		var stage stageFunc
+		switch {
+		case cfg.concurrency > 1 && cfg.ordered:
+			stage = flatMapOrdered(inCh, ch, fn, cfg, fmHook)
+		case cfg.concurrency > 1:
+			stage = flatMapConcurrent(inCh, ch, fn, cfg, fmHook)
+		case isFastPathEligible(cfg, fmHook):
+			stage = flatMapSerialFastPath(inCh, ch, fn, cfg.name)
+		default:
+			stage = flatMapSerial(inCh, ch, fn, cfg, fmHook)
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// flatMapSerialFastPath is the drain-protocol + micro-batching fast path for serial FlatMap.
+// The yield closure is allocated once outside the loop — zero allocs per item.
+func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, name string) stageFunc {
+	return func(ctx context.Context) error {
+		defer close(outCh)
+		defer func() { go internal.DrainChan(inCh) }()
+
+		// yield is allocated once; outCh <- v is a plain send (drain protocol).
+		yield := func(v O) error {
+			outCh <- v
+			return nil
+		}
+
+		var buf [internal.ReceiveBatchSize]I
+		for {
+			item, ok := <-inCh
+			if !ok {
+				return nil
+			}
+			buf[0] = item
+			n := 1
+			closed := false
+		fillFlatMap:
+			for n < internal.ReceiveBatchSize {
+				select {
+				case v, ok2 := <-inCh:
+					if !ok2 {
+						closed = true
+						break fillFlatMap
+					}
+					buf[n] = v
+					n++
+				default:
+					break fillFlatMap
+				}
+			}
+			for i := range n {
+				it := buf[i]
+				var zero I
+				buf[i] = zero
+				if err := fn(internal.ItemCtx(ctx, it), it, yield); err != nil {
+					return internal.WrapStageErr(name, err, 0)
+				}
+			}
+			if closed {
+				return nil
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+	}
+}
+
+func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	return func(ctx context.Context) error {
+		defer close(outCh)
+		defer func() { go internal.DrainChan(inCh) }()
+
+		hook.OnStageStart(ctx, cfg.name)
+		var processed, errs int64
+		defer func() { hook.OnStageDone(ctx, cfg.name, processed, errs) }()
+
+		outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+		send := func(v O) error { return outbox.Send(ctx, v) }
+
+		inner := func() error {
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					itemCtx, cancelItem := itemContext(ctx, cfg)
+					start := time.Now()
+					err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, item, cfg.errorHandler, send)
+					dur := time.Since(start)
+					cancelItem()
+					if err == internal.ErrSkipped {
+						continue
+					}
+					if err != nil {
+						errs++
+						hook.OnItem(ctx, cfg.name, dur, err)
+						return internal.WrapStageErr(cfg.name, err, attempt)
+					}
+					processed++
+					hook.OnItem(ctx, cfg.name, dur, nil)
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
+	}
+}
+
+// flatMapConcurrent does not support supervision (Supervise stage option is silently
+// ignored when Concurrency > 1). Use Concurrency(1) to enable supervision on FlatMap.
+func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	return func(ctx context.Context) error {
+		defer close(outCh)
+		defer func() { go internal.DrainChan(inCh) }()
+
+		hook.OnStageStart(ctx, cfg.name)
+		var procCount, errCount atomic.Int64
+		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
+
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			errCh := make(chan error, 1)
+			var wg sync.WaitGroup
+
+			func() {
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return
+						}
+						// Use innerCtx.Done() only — reading errCh here would drain it (BUG: removed for test)
+						// before the final select below can return it to Supervise.
+						select {
+						case sem <- struct{}{}:
+						case <-innerCtx.Done():
+							return
+						}
+						wg.Add(1)
+						go func(it I) {
+							defer wg.Done()
+							defer func() { <-sem }()
+
+							itemCtx, cancelItem := itemContext(innerCtx, cfg)
+							send := func(v O) error { return outbox.Send(innerCtx, v) }
+							start := time.Now()
+							err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+							dur := time.Since(start)
+							cancelItem()
+							if err != nil && err != internal.ErrSkipped {
+								errCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, err)
+								reportErr(errCh, internal.WrapStageErr(cfg.name, err, attempt))
+								cancel()
+								return
+							}
+							if err == nil {
+								procCount.Add(1)
+								hook.OnItem(ctx, cfg.name, dur, nil)
+							}
+						}(item)
+					case <-innerCtx.Done():
+						return
+					}
+				}
+			}()
+
+			wg.Wait()
+
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return nil
+			}
+		}
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
+	}
+}
+
+func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	type result struct {
+		items []O
+		dur   time.Duration
+		err   error
+		att   int
+	}
+	return func(ctx context.Context) error {
+		defer close(outCh)
+		defer func() { go internal.DrainChan(inCh) }()
+
+		hook.OnStageStart(ctx, cfg.name)
+		var procCount, errCount atomic.Int64
+		defer func() { hook.OnStageDone(ctx, cfg.name, procCount.Load(), errCount.Load()) }()
+
+		inner := func() error {
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			sem := make(chan struct{}, cfg.concurrency)
+			slots := make(chan chan result, cfg.concurrency*2)
+			drainErrs := make(chan error, 1)
+
+			go func() {
+				for slotCh := range slots {
+					r := <-slotCh
+					if r.err == internal.ErrSkipped {
+						continue
+					}
+					if r.err != nil {
+						errCount.Add(1)
+						hook.OnItem(ctx, cfg.name, r.dur, r.err)
+						cancel()
+						go func() {
+							for s := range slots {
+								<-s
+							}
+						}()
+						drainErrs <- internal.WrapStageErr(cfg.name, r.err, r.att)
+						return
+					}
+					procCount.Add(1)
+					hook.OnItem(ctx, cfg.name, r.dur, nil)
+					for _, v := range r.items {
+						if err := outbox.Send(innerCtx, v); err != nil {
+							cancel()
+							go func() {
+								for s := range slots {
+									<-s
+								}
+							}()
+							drainErrs <- err
+							return
+						}
+					}
+				}
+				drainErrs <- nil
+			}()
+
+			func() {
+				for {
+					var item I
+					var ok bool
+					select {
+					case item, ok = <-inCh:
+						if !ok {
+							return
+						}
+					case <-innerCtx.Done():
+						return
+					}
+
+					select {
+					case sem <- struct{}{}:
+					case <-innerCtx.Done():
+						return
+					}
+
+					slotCh := make(chan result, 1)
+					select {
+					case slots <- slotCh:
+					case <-innerCtx.Done():
+						<-sem
+						return
+					}
+
+					go func(it I, sc chan result) {
+						defer func() { <-sem }()
+						itemCtx, cancelItem := itemContext(innerCtx, cfg)
+						var buf []O
+						collect := func(v O) error {
+							buf = append(buf, v)
+							return nil
+						}
+						start := time.Now()
+						err, att := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, collect)
+						dur := time.Since(start)
+						cancelItem()
+						sc <- result{items: buf, dur: dur, err: err, att: att}
+					}(item, slotCh)
+				}
+			}()
+
+			for i := 0; i < cfg.concurrency; i++ {
+				sem <- struct{}{}
+			}
+			close(slots)
+			return <-drainErrs
+		}
+
+		return internal.Supervise(ctx, cfg.supervision, hook, cfg.name, inner)
+	}
+}
