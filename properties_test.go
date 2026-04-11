@@ -865,6 +865,61 @@ func TestPropNeverAmbIdentity(t *testing.T) {
 // IgnoreElements properties
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SampleWith properties
+// ---------------------------------------------------------------------------
+
+// TestPropSampleWithOutputIsSubsequence verifies three invariants that hold
+// regardless of scheduling:
+//  1. len(output) <= len(samplerTicks): at most one emission per sampler signal.
+//  2. len(output) <= len(src): consume-on-emit means each item emitted at most once.
+//  3. The output is a subsequence of src (order preserved, items come from src).
+func TestPropSampleWithOutputIsSubsequence(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
+		nTicks := rapid.IntRange(0, 20).Draw(t, "nTicks")
+
+		// Build a sampler that fires nTicks times then closes.
+		ticks := make([]struct{}, nTicks)
+		sampler := kitsune.FromSlice(ticks)
+
+		// Source emits all items from src then closes.
+		p := kitsune.FromSlice(src)
+
+		got, err := kitsune.SampleWith(p, sampler).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("SampleWith error: %v", err)
+		}
+
+		// Invariant 1: never more outputs than sampler ticks.
+		if len(got) > nTicks {
+			t.Fatalf("len(got)=%d > nTicks=%d", len(got), nTicks)
+		}
+
+		// Invariant 2: never more outputs than source items (consume-on-emit).
+		if len(got) > len(src) {
+			t.Fatalf("len(got)=%d > len(src)=%d", len(got), len(src))
+		}
+
+		// Invariant 3: output is a subsequence of src.
+		if !isSubsequence(got, src) {
+			t.Fatalf("output is not a subsequence of src:\n  got: %v\n  src: %v", got, src)
+		}
+	})
+}
+
+// isSubsequence reports whether sub is a subsequence of seq (same order, not
+// necessarily contiguous).
+func isSubsequence[T comparable](sub, seq []T) bool {
+	si := 0
+	for _, v := range seq {
+		if si < len(sub) && sub[si] == v {
+			si++
+		}
+	}
+	return si == len(sub)
+}
+
 // TestPropIgnoreElementsAlwaysEmpty verifies that IgnoreElements always
 // produces zero items regardless of the upstream content.
 func TestPropIgnoreElementsAlwaysEmpty(t *testing.T) {

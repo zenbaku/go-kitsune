@@ -82,6 +82,7 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Unzip`](#unzip) | Fan-out | Split pairs into two pipelines |
 | [`WithLatestFrom`](#withlatestfrom--withlatestfromwith) | Fan-in | Primary + latest secondary value |
 | [`CombineLatest`](#combinelatest--combinelatestwith) | Fan-in | Symmetric latest-pair emission |
+| [`SampleWith`](#samplewith) | Fan-in | Emit latest on external pipeline signal |
 | [`LookupBy`](#lookupby) | Enrichment | Batched key lookup |
 | [`Enrich`](#enrich) | Enrichment | LookupBy + join function |
 | [`Scan`](#scan) | Aggregate | Running fold, emits each step |
@@ -2236,6 +2237,33 @@ Emits the most-recently-seen item from `p` at each tick of a `d`-duration interv
 ```go
 // Emit the latest quote at most once every 100ms.
 sampled := kitsune.Sample(liveQuotes, 100*time.Millisecond)
+```
+
+---
+
+### SampleWith
+
+```go
+func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOption) *Pipeline[T]
+```
+
+Emits the most recent item from `p` whenever the `sampler` pipeline fires. If no item has arrived since the last sampler signal, that signal is skipped silently. The latest item is consumed on emit: if the sampler fires twice without a new source item arriving in between, only the first fire emits.
+
+Unlike [`Sample`](#sample) (driven by a fixed wall-clock interval) and [`Throttle`](#throttle) (rate-limits on item arrival), `SampleWith` is driven by an arbitrary pipeline. The sampler's item values are discarded; only the occurrence of each item matters.
+
+The pipeline completes when the sampler closes. If the source closes and its last item has already been emitted, the pipeline also completes early.
+
+**When to use:** Polling a high-frequency stream at an externally defined rate — for example, sampling sensor readings on each heartbeat, or snapshotting the latest price whenever a timer ticks.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Emit the latest quote once per second, driven by a Ticker.
+clock  := kitsune.Ticker(1 * time.Second)
+polled := kitsune.SampleWith(liveQuotes, clock)
+
+// Snapshot the latest sensor value on each heartbeat signal.
+snapped := kitsune.SampleWith(sensorStream, heartbeatPipeline)
 ```
 
 ---

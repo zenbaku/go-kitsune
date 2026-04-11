@@ -10,7 +10,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **`Retry[T]` standalone operator**: first-class `Retry(p, policy)` stage that re-subscribes to the upstream on failure, independent of the `OnError(RetryMax(...))` handler path. The handler-based retry is per-item; standalone `Retry` re-runs the entire upstream pipeline, making it the right primitive for sources that should reconnect on drop (e.g. a websocket tail that disconnects). Policy controls max attempts, backoff, and which errors are retryable.
 
-- [ ] **`Sample(p, sampler)`**: emit the most recent item from `p` whenever the `sampler` pipeline fires. Distinct from `Throttle` (which limits emission rate) and `Debounce` (which waits for a gap): `Sample` is clock-driven by an external signal. Useful for "poll latest value every N seconds" patterns without holding a reference to the latest value manually.
+- [x] **`SampleWith(p, sampler)`**: emit the most recent item from `p` whenever the `sampler` pipeline fires. Distinct from `Throttle` (which limits emission rate) and `Debounce` (which waits for a gap): `SampleWith` is driven by an external pipeline signal. Useful for "poll latest value every N seconds" patterns without holding a reference to the latest value manually.
 
 - [x] **`IgnoreElements(p)`**: drain `p` for side effects and emit nothing downstream. Currently requires `Filter(p, func(_ T) bool { return false })` which reads as intent-obscuring. A named combinator is clearer and optimizable (no outbox allocation needed).
 

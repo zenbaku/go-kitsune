@@ -324,6 +324,139 @@ func TestDebounce(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SampleWith
+// ---------------------------------------------------------------------------
+
+func TestSampleWith_Basic(t *testing.T) {
+	// Source emits 1..5; sampler fires after source is done; we should get
+	// the last item emitted before the sampler fires.
+	src := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
+
+	// Use a channel-based sampler: fire one tick after collecting from source.
+	samCh := kitsune.NewChannel[struct{}](1)
+	sam := samCh.Source()
+
+	got := make([]int, 0)
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.SampleWith(src, sam).Collect(context.Background())
+		errCh <- err
+	}()
+
+	// Give the source goroutine time to push items.
+	time.Sleep(20 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{})
+	samCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// We fired the sampler once after all items; should emit exactly one item.
+	if len(got) != 1 {
+		t.Fatalf("expected 1 emission, got %d: %v", len(got), got)
+	}
+	// The emitted value must be one of the source items.
+	if got[0] < 1 || got[0] > 5 {
+		t.Fatalf("emitted value %d out of source range", got[0])
+	}
+}
+
+func TestSampleWith_SamplerBeforeData(t *testing.T) {
+	// Fire sampler before source emits anything — nothing should come out.
+	srcCh := kitsune.NewChannel[int](1)
+	samCh := kitsune.NewChannel[struct{}](2)
+
+	got := make([]int, 0)
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.SampleWith(srcCh.Source(), samCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	// Fire sampler before any source data.
+	time.Sleep(5 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{})
+	// Now push a source item and fire again.
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 42)
+	time.Sleep(5 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{})
+	samCh.Close()
+	srcCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The first tick (before data) was skipped; the second tick emits 42.
+	if len(got) != 1 || got[0] != 42 {
+		t.Fatalf("expected [42], got %v", got)
+	}
+}
+
+func TestSampleWith_ConsumeOnEmit(t *testing.T) {
+	// Source emits one item, sampler fires twice: only the first tick emits.
+	srcCh := kitsune.NewChannel[int](1)
+	samCh := kitsune.NewChannel[struct{}](2)
+
+	got := make([]int, 0)
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.SampleWith(srcCh.Source(), samCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 99)
+	srcCh.Close()
+	time.Sleep(5 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{}) // emits 99
+	time.Sleep(5 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{}) // nothing to emit (consumed above)
+	samCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != 99 {
+		t.Fatalf("expected [99] (consume-on-emit), got %v", got)
+	}
+}
+
+func TestSampleWith_SamplerClosesFirst(t *testing.T) {
+	// Sampler emits one signal then closes; source is closed before waiting
+	// so the source stage terminates and RunStages can complete.
+	// Output should be exactly one item.
+	srcCh := kitsune.NewChannel[int](10)
+	samCh := kitsune.NewChannel[struct{}](1)
+
+	got := make([]int, 0)
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.SampleWith(srcCh.Source(), samCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 7)
+	time.Sleep(5 * time.Millisecond)
+	samCh.Send(context.Background(), struct{}{})
+	// Close both channels so all stages can terminate cleanly.
+	samCh.Close()
+	srcCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != 7 {
+		t.Fatalf("expected [7], got %v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SwitchMap
 // ---------------------------------------------------------------------------
 

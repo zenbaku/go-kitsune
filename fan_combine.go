@@ -341,3 +341,129 @@ func WithLatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn f
 	}
 	return newPipeline(id, meta, build)
 }
+
+// ---------------------------------------------------------------------------
+// SampleWith
+// ---------------------------------------------------------------------------
+
+// SampleWith emits the most recent item from p whenever the sampler pipeline
+// fires. If no item has arrived since the last sampler signal, that tick is
+// skipped silently. The latest item is consumed on emit: if the sampler fires
+// twice without a new source item in between, only the first fire emits.
+//
+// Unlike [Sample] (driven by a fixed wall-clock interval) and [Throttle]
+// (rate-limits on item arrival), SampleWith is driven by an arbitrary pipeline:
+// a [Ticker], a user-action stream, a heartbeat, or any other event source.
+// The sampler's item values are discarded; only the occurrence of each item
+// matters.
+//
+// The pipeline completes when the sampler closes. If the source closes and
+// its last item has already been emitted, the pipeline also completes early
+// to avoid a hung goroutine waiting for a sampler that may never fire again.
+//
+// Supports [Buffer], [WithName].
+//
+//	clock  := kitsune.Ticker(1 * time.Second)
+//	polled := kitsune.SampleWith(liveQuotes, clock)
+//	// emits the latest quote each second, driven by the clock signal
+func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOption) *Pipeline[T] {
+	track(p)
+	track(sampler)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "sample_with",
+		name:   orDefault(cfg.name, "sample_with"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id, sampler.id},
+	}
+	build := func(rc *runCtx) chan T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan T)
+		}
+		srcCh := p.build(rc)
+		samCh := sampler.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan T, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				go internal.DrainChan(srcCh)
+				go internal.DrainChan(samCh)
+			}()
+
+			outbox := internal.NewBlockingOutbox(ch)
+
+			var (
+				mu        sync.Mutex
+				latest    T
+				hasLatest bool
+				srcDone   bool
+			)
+
+			// Background goroutine tracks the latest value from the source.
+			go func() {
+				for {
+					select {
+					case v, ok := <-srcCh:
+						if !ok {
+							mu.Lock()
+							srcDone = true
+							mu.Unlock()
+							return
+						}
+						mu.Lock()
+						latest = v
+						hasLatest = true
+						mu.Unlock()
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+
+			// Main loop: sampler signals drive emissions.
+			for {
+				select {
+				case _, ok := <-samCh:
+					if !ok {
+						return nil
+					}
+					mu.Lock()
+					ready := hasLatest
+					v := latest
+					if ready {
+						hasLatest = false // consume-on-emit
+					}
+					// Early exit: source is done and no item is pending.
+					earlyExit := srcDone && !hasLatest
+					mu.Unlock()
+
+					if !ready {
+						if earlyExit {
+							return nil
+						}
+						continue
+					}
+					if err := outbox.Send(ctx, v); err != nil {
+						return err
+					}
+					if earlyExit {
+						return nil
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
