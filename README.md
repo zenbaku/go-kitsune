@@ -84,6 +84,7 @@ func main() {
 |---|---|
 | [Getting Started](doc/getting-started.md) | Mental model, first pipeline, concurrency, error handling, branching, testing |
 | [Operator Catalog](doc/operators.md) | Every source, transform, terminal, and option with signature and description |
+| [Error Handling](doc/error-handling.md) | Per-item `OnError`, stage-level `Supervise`, evaluation order, retry-then-restart patterns |
 | [Tails](doc/tails.md) | Connecting to Kafka, Redis, S3, Postgres, and 20+ external systems |
 | [Inspector](doc/inspector.md) | Real-time web dashboard: pipeline DAG, per-stage metrics, stop/restart |
 | [Testing](doc/testing.md) | Mocking clients, error paths, time-sensitive operators, testkit reference |

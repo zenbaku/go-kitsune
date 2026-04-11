@@ -120,6 +120,10 @@ func WithName(name string) StageOption {
 }
 
 // OnError sets the error handling policy for a stage (default: [Halt]).
+// OnError is evaluated per item: if the stage function returns an error, the
+// handler decides whether to halt, drop, replace, or retry that item.
+// To restart the entire stage goroutine when an error is not handled, combine
+// with [Supervise].
 func OnError(h ErrorHandler) StageOption {
 	return func(c *stageConfig) { c.errorHandler = h.h }
 }
@@ -275,6 +279,8 @@ func RestartAlways(maxRestarts int, b Backoff) SupervisionPolicy {
 
 // Supervise sets the supervision policy for a stage.
 // See [RestartOnError], [RestartOnPanic], [RestartAlways] for convenience constructors.
+// When combined with [OnError], the error handler runs first per item; Supervise
+// only triggers a restart when the error handler's final decision is Halt.
 func Supervise(policy SupervisionPolicy) StageOption {
 	return func(c *stageConfig) {
 		c.supervision = internal.SupervisionPolicy{

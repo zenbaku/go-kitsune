@@ -4,6 +4,12 @@ Completed milestones, preserved for reference. Active work is in [roadmap.md](ro
 
 ---
 
+### Developer experience
+
+- [x] **`WithStore(store)` option for persistent inspector state** (2026-04-11): `inspector.New(inspector.WithStore(store))` attaches an `InspectorStore` to the Inspector. State (graph topology, per-stage counters, log ring buffer) is restored on construction and saved every 250 ms and on `Close`. `inspector.NewMemoryInspectorStore(logTTL)` is the built-in in-process implementation with optional log TTL. A `StoreErr() error` accessor surfaces non-fatal store errors. See `inspector/store.go` and `doc/inspector.md`.
+
+---
+
 ### Code organization
 
 - [x] **Split large implementation files by concern**: `operator.go` (2118 lines), `state.go` (1924 lines), and `fan.go` (979 lines) split into 11 focused files. `operator.go` → `operator_map.go`, `operator_flatmap.go`, `operator_filter.go`, `operator_take.go`, `operator_transform.go`. `state.go` → `state_ref.go`, `state_with.go`, `state_withkey.go`. `fan.go` → `fan_out.go`, `fan_combine.go`. Shared helpers (`orDefault`, `itemContext`, `reportErr`) extracted to `helpers.go`. Empty `fusion.go` deleted. No public API changes; all symbols remain in the root package.

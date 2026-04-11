@@ -36,6 +36,23 @@ const (
 	logCapacity  = 200
 )
 
+// Option configures an Inspector at construction time.
+type Option func(*Inspector)
+
+// WithStore attaches a persistent store to the Inspector. Previously saved state
+// is restored immediately on construction, so metrics and log history survive
+// pipeline restart loops within the same process (or across process restarts when
+// using an external-store implementation).
+//
+// State is saved on every 250 ms stats tick and on [Close]. A store error never
+// crashes the Inspector; retrieve the most recent error with [Inspector.StoreErr].
+//
+// Use [NewMemoryInspectorStore] for in-process persistence or implement
+// [InspectorStore] over any external backend.
+func WithStore(store InspectorStore) Option {
+	return func(i *Inspector) { i.store = store }
+}
+
 // Inspector collects pipeline events and serves a live dashboard at its HTTP address.
 // It implements kitsune.Hook, kitsune.GraphHook, kitsune.OverflowHook,
 // kitsune.SupervisionHook, kitsune.SampleHook, and kitsune.BufferHook —
@@ -50,7 +67,7 @@ type Inspector struct {
 	stages  map[string]*stageState
 	order   []string // insertion order for deterministic table rendering
 	graph   []kithooks.GraphNode
-	logBuf  []logEntry
+	logBuf  []LogEntry
 	clients map[chan sseMsg]struct{}
 
 	bufferQuery func() []kithooks.BufferStatus // set by OnBuffers; nil until engine calls it
@@ -64,8 +81,10 @@ type Inspector struct {
 	ticker *time.Ticker
 	done   chan struct{}
 
-	url string
-	srv *http.Server
+	url      string
+	srv      *http.Server
+	store    InspectorStore // nil = no persistence
+	storeErr atomic.Value   // last non-nil error from a store save (type: error)
 }
 
 // stageState tracks live metrics for a single named stage.
@@ -87,13 +106,6 @@ type stageState struct {
 func (s *stageState) setRate(r float64) { s.rateBits.Store(math.Float64bits(r)) }
 func (s *stageState) getRate() float64  { return math.Float64frombits(s.rateBits.Load()) }
 
-type logEntry struct {
-	TS    int64  `json:"ts"`
-	Type  string `json:"type"`
-	Stage string `json:"stage,omitempty"`
-	Msg   string `json:"msg,omitempty"`
-}
-
 type sseMsg struct {
 	event string
 	data  []byte
@@ -113,8 +125,8 @@ type stageSnapshot struct {
 
 // New creates an Inspector listening on a random available port.
 // It panics if the listener cannot be created.
-func New() *Inspector {
-	insp, err := NewAt("localhost:0")
+func New(opts ...Option) *Inspector {
+	insp, err := NewAt("localhost:0", opts...)
 	if err != nil {
 		panic(fmt.Sprintf("inspector: %v", err))
 	}
@@ -122,7 +134,7 @@ func New() *Inspector {
 }
 
 // NewAt creates an Inspector listening on addr (e.g. ":8080").
-func NewAt(addr string) (*Inspector, error) {
+func NewAt(addr string, opts ...Option) (*Inspector, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -140,6 +152,14 @@ func NewAt(addr string) (*Inspector, error) {
 		url:       "http://" + ln.Addr().String(),
 	}
 
+	for _, opt := range opts {
+		opt(insp)
+	}
+
+	if insp.store != nil {
+		insp.loadFromStore(context.Background())
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", insp.handleSSE)
 	mux.HandleFunc("GET /state", insp.handleState)
@@ -151,6 +171,17 @@ func NewAt(addr string) (*Inspector, error) {
 	go insp.broadcastLoop()
 
 	return insp, nil
+}
+
+// StoreErr returns the most recent non-nil error from a store save operation,
+// or nil if all saves have succeeded. Store errors are non-fatal and never stop
+// the Inspector; use this method to surface them in monitoring code.
+func (i *Inspector) StoreErr() error {
+	v := i.storeErr.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(error)
 }
 
 // URL returns the inspector's HTTP address (e.g. "http://localhost:54321").
@@ -213,7 +244,8 @@ func (i *Inspector) ResumeCh() <-chan struct{} {
 	return ch
 }
 
-// Close sends a final stats update, stops the ticker, and shuts down the HTTP server.
+// Close sends a final stats update, saves state to the store (if configured),
+// stops the ticker, and shuts down the HTTP server.
 func (i *Inspector) Close() error {
 	// Broadcast final state before closing so browsers see terminal stats.
 	if snap := i.buildSnapshot(); snap != nil {
@@ -221,9 +253,108 @@ func (i *Inspector) Close() error {
 			i.broadcast(sseMsg{"stats", data})
 		}
 	}
+	if i.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		i.saveToStore(ctx)
+		cancel()
+	}
 	i.ticker.Stop()
 	close(i.done)
 	return i.srv.Shutdown(context.Background())
+}
+
+// loadFromStore restores previously persisted state. Called once during NewAt.
+func (i *Inspector) loadFromStore(ctx context.Context) {
+	if graph, err := i.store.LoadGraph(ctx); err == nil && graph != nil {
+		i.graph = graph
+	}
+	if order, stages, err := i.store.LoadStages(ctx); err == nil && stages != nil {
+		for _, name := range order {
+			ps, ok := stages[name]
+			if !ok {
+				continue
+			}
+			s := &stageState{}
+			s.items.Store(ps.Items)
+			s.errors.Store(ps.Errors)
+			s.drops.Store(ps.Drops)
+			s.restarts.Store(ps.Restarts)
+			s.totalNs.Store(ps.TotalNs)
+			// status will be overwritten by the next OnStageStart; restore it
+			// as a best-effort so the UI can show prior terminal state
+			switch ps.Status {
+			case "running":
+				s.status.Store(1)
+			case "done":
+				s.status.Store(2)
+			}
+			i.stages[name] = s
+			i.order = append(i.order, name)
+		}
+	}
+	if entries, err := i.store.LoadLog(ctx); err == nil && entries != nil {
+		i.logBuf = append(i.logBuf, entries...)
+		if len(i.logBuf) > logCapacity {
+			i.logBuf = i.logBuf[len(i.logBuf)-logCapacity:]
+		}
+	}
+}
+
+// saveToStore persists current state to the configured store. Must not be called
+// with i.mu held, as it acquires the lock internally.
+func (i *Inspector) saveToStore(ctx context.Context) {
+	i.mu.Lock()
+	graph := i.graph
+	order := make([]string, len(i.order))
+	copy(order, i.order)
+	stagesSnap := make(map[string]*stageState, len(i.stages))
+	for k, v := range i.stages {
+		stagesSnap[k] = v
+	}
+	logSnap := make([]LogEntry, len(i.logBuf))
+	copy(logSnap, i.logBuf)
+	i.mu.Unlock()
+
+	if graph != nil {
+		if err := i.store.SaveGraph(ctx, graph); err != nil {
+			i.storeErr.Store(err)
+		}
+	}
+
+	persisted := make(map[string]PersistedStage, len(stagesSnap))
+	for name, s := range stagesSnap {
+		items := s.items.Load()
+		errs := s.errors.Load()
+		drops := s.drops.Load()
+		restarts := s.restarts.Load()
+		totalNs := s.totalNs.Load()
+		status := "pending"
+		switch s.status.Load() {
+		case 1:
+			status = "running"
+		case 2:
+			status = "done"
+		}
+		persisted[name] = PersistedStage{
+			Items:    items,
+			Errors:   errs,
+			Drops:    drops,
+			Restarts: restarts,
+			TotalNs:  totalNs,
+			Status:   status,
+		}
+	}
+	if len(persisted) > 0 {
+		if err := i.store.SaveStages(ctx, order, persisted); err != nil {
+			i.storeErr.Store(err)
+		}
+	}
+
+	if len(logSnap) > 0 {
+		if err := i.store.SaveLog(ctx, logSnap); err != nil {
+			i.storeErr.Store(err)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +389,7 @@ func (i *Inspector) OnStageStart(_ context.Context, stage string) {
 	i.mu.Unlock()
 	s.status.Store(1)
 
-	i.emitLog(logEntry{TS: nowMs(), Type: "start", Stage: stage})
+	i.emitLog(LogEntry{TS: nowMs(), Type: "start", Stage: stage})
 }
 
 // OnItem implements engine.Hook.
@@ -286,7 +417,7 @@ func (i *Inspector) OnStageDone(_ context.Context, stage string, processed int64
 		return
 	}
 	s.status.Store(2)
-	i.emitLog(logEntry{TS: nowMs(), Type: "done", Stage: stage})
+	i.emitLog(LogEntry{TS: nowMs(), Type: "done", Stage: stage})
 }
 
 // OnDrop implements engine.OverflowHook.
@@ -298,7 +429,7 @@ func (i *Inspector) OnDrop(_ context.Context, stage string, _ any) {
 		return
 	}
 	s.drops.Add(1)
-	i.emitLog(logEntry{TS: nowMs(), Type: "drop", Stage: stage})
+	i.emitLog(LogEntry{TS: nowMs(), Type: "drop", Stage: stage})
 }
 
 // OnStageRestart implements engine.SupervisionHook.
@@ -316,7 +447,7 @@ func (i *Inspector) OnStageRestart(_ context.Context, stage string, attempt int,
 	if cause != nil {
 		msg += ": " + cause.Error()
 	}
-	i.emitLog(logEntry{TS: nowMs(), Type: "restart", Stage: stage, Msg: msg})
+	i.emitLog(LogEntry{TS: nowMs(), Type: "restart", Stage: stage, Msg: msg})
 }
 
 // OnItemSample implements engine.SampleHook.
@@ -409,7 +540,7 @@ func (i *Inspector) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Replay current graph and log buffer.
 	i.mu.Lock()
 	graph := i.graph
-	logSnapshot := make([]logEntry, len(i.logBuf))
+	logSnapshot := make([]LogEntry, len(i.logBuf))
 	copy(logSnapshot, i.logBuf)
 	i.mu.Unlock()
 
@@ -506,6 +637,12 @@ func (i *Inspector) broadcastLoop() {
 			if data, err := json.Marshal(snap); err == nil {
 				i.broadcast(sseMsg{"stats", data})
 			}
+
+			if i.store != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				i.saveToStore(ctx)
+				cancel()
+			}
 		}
 	}
 }
@@ -539,7 +676,7 @@ func (i *Inspector) broadcast(msg sseMsg) {
 	i.mu.Unlock()
 }
 
-func (i *Inspector) emitLog(entry logEntry) {
+func (i *Inspector) emitLog(entry LogEntry) {
 	i.mu.Lock()
 	if len(i.logBuf) >= logCapacity {
 		i.logBuf = i.logBuf[1:]

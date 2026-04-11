@@ -2792,6 +2792,12 @@ kitsune.OnError(kitsune.RetryThen(3,
 ))
 ```
 
+### Combining `OnError` and `Supervise`
+
+`OnError` and `Supervise` operate at different levels and can be used together on the same stage. `OnError` is evaluated per item; `Supervise` is evaluated when the stage loop itself crashes. The evaluation order is: `OnError` runs first; only when its final decision is `Halt` (including after retry exhaustion) does `Supervise` see the error and decide whether to restart the stage.
+
+See the [Error Handling guide](error-handling.md) for the full evaluation model, common combination patterns (retry-then-restart, skip-unless-fatal-then-restart), and observability.
+
 ---
 
 ## :material-tune: Stage Options Reference { #options }

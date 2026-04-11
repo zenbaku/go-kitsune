@@ -141,6 +141,66 @@ See the [`inspector` example](examples.md#inspector) and the [source on GitHub](
 
 Toggle between dark and light themes with the **☀** button in the top-right corner.
 
+## Persistent state
+
+By default, the inspector holds all metrics and log history in memory. When the process exits or the Inspector is closed, that state is lost. Use `WithStore` to persist state across restarts.
+
+### In-process persistence (restart loops)
+
+For pipelines that restart in a loop inside the same process, `NewMemoryInspectorStore` retains cumulative totals across each restart so the dashboard shows lifetime metrics rather than per-run counters:
+
+```go
+store := inspector.NewMemoryInspectorStore(24 * time.Hour) // evict log entries older than 24h
+insp  := inspector.New(inspector.WithStore(store))
+defer insp.Close()
+
+for {
+    ctx, cancel := context.WithCancel(context.Background())
+    go func() { <-insp.RestartCh(); cancel() }()
+    sink.Run(ctx, kitsune.WithHook(insp))
+    cancel()
+    select {
+    case <-insp.RestartCh():
+        continue // restarted by UI; loop back
+    default:
+        break
+    }
+    break
+}
+```
+
+The `logTTL` argument to `NewMemoryInspectorStore` bounds how long log entries are retained. Pass `0` to keep all entries up to the log capacity (200). A 24-hour TTL is a reasonable default for post-mortem debugging.
+
+### Cross-process persistence (custom store)
+
+To survive process restarts, implement `InspectorStore` over any external backend:
+
+```go
+// InspectorStore persists inspector state between restarts.
+type InspectorStore interface {
+    SaveGraph(ctx context.Context, nodes []kithooks.GraphNode) error
+    LoadGraph(ctx context.Context) ([]kithooks.GraphNode, error)
+    SaveStages(ctx context.Context, order []string, stages map[string]PersistedStage) error
+    LoadStages(ctx context.Context) (order []string, stages map[string]PersistedStage, err error)
+    SaveLog(ctx context.Context, entries []LogEntry) error
+    LoadLog(ctx context.Context) ([]LogEntry, error)
+}
+```
+
+State is saved on every 250 ms stats tick and on `Close`. Load happens once at construction time, so the dashboard immediately shows prior state on the next browser connection.
+
+Store errors are non-fatal: the inspector logs the most recent error internally and continues running. Retrieve it with `insp.StoreErr()` for monitoring or alerting.
+
+### What is and is not persisted
+
+| Persisted | Not persisted |
+|---|---|
+| Pipeline graph topology | SSE client connections |
+| Per-stage counters (items, errors, drops, restarts, latency) | Buffer fill levels (re-queried live by the engine) |
+| Event log ring buffer | `bufferQuery` closure (re-registered by the engine on each run) |
+
+Stage counters are cumulative totals. Restoring them on startup means the dashboard displays lifetime totals across all restarts, not just the most recent run.
+
 ## Production considerations
 
 - The inspector starts an HTTP server on an ephemeral port (`localhost:0`). It is not suitable for exposure to the internet without authentication.

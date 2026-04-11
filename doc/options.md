@@ -231,6 +231,8 @@ policy := kitsune.SupervisionPolicy{
 }
 ```
 
+**Using `OnError` and `Supervise` together:** `OnError` is evaluated first, per item. Only when the error handler's final decision is `Halt` (including after retry exhaustion) does `Supervise` see the error and decide whether to restart the stage. Items that are dropped or replaced by `OnError` never reach `Supervise`. See the [Error Handling guide](error-handling.md) for worked examples.
+
 ---
 
 ## `CacheBy(keyFn func(T) string, opts ...CacheOpt)`

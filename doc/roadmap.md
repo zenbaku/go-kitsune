@@ -52,7 +52,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **Fast-path eligibility documentation**: the fast-path and stage-fusion optimizations are entirely opaque. Users who add a `WithHook` for debugging or set `Concurrency(2)` don't know they've disabled the fast path, and can't diagnose the resulting throughput drop. Add a section in `doc/tuning.md` listing the exact conditions for fast-path eligibility and stage fusion, and expose `Pipeline.IsOptimized() bool` (or similar) for use in tests.
 
-- [ ] **`WithInspectorStore(store)` for persistent inspector state**: the live inspector dashboard holds all pipeline metrics in-memory and loses them on restart. A `WithInspectorStore` option would let operators persist node snapshots and metric history to an external store (or even the existing `MemoryStore` equivalent with a longer TTL), enabling post-mortem analysis of pipeline behaviour after a crash or restart.
+- [x] **`WithInspectorStore(store)` for persistent inspector state**: the live inspector dashboard holds all pipeline metrics in-memory and loses them on restart. A `WithInspectorStore` option would let operators persist node snapshots and metric history to an external store (or even the existing `MemoryStore` equivalent with a longer TTL), enabling post-mortem analysis of pipeline behaviour after a crash or restart.
 
 - [ ] **`benchstat` performance regression baseline**: commit a `testdata/bench/baseline.txt` snapshot produced by `benchstat` from the main branch. Add a CI step that runs benchmarks on PRs and diffs against the baseline, failing if any benchmark regresses beyond a threshold (e.g. 10%). Prevents silent throughput regressions from landing unnoticed, especially around fast-path and fusion logic.
 
@@ -60,7 +60,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **Unified tail integration test matrix**: the 27 tail packages each have their own test module, but there is no single CI step that reports their combined pass/fail status. `task test:ext` runs them sequentially but the output is scattered. Add a unified matrix report — a table of tail name, pass/fail, and skipped-reason (e.g. "no broker in CI") — so regressions across tails are visible at a glance rather than buried in individual log streams.
 
-- [ ] **Supervision + error handler interaction documentation**: it is not documented whether `OnError` and `Supervise` can be used together on the same stage, and if so, which takes precedence. Add a dedicated section to `doc/operators.md` (or a new `doc/error-handling.md`) that covers: the evaluation order of error handler → supervision policy, worked examples for common combinations (retry-then-restart, skip-unless-fatal-then-restart), and the distinction between per-item errors (`OnError`) and stage-level restart (`Supervise`).
+- [x] **Supervision + error handler interaction documentation**: it is not documented whether `OnError` and `Supervise` can be used together on the same stage, and if so, which takes precedence. Add a dedicated section to `doc/operators.md` (or a new `doc/error-handling.md`) that covers: the evaluation order of error handler → supervision policy, worked examples for common combinations (retry-then-restart, skip-unless-fatal-then-restart), and the distinction between per-item errors (`OnError`) and stage-level restart (`Supervise`).
 
 ---
 
