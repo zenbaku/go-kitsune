@@ -457,6 +457,226 @@ func TestSampleWith_SamplerClosesFirst(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BufferWith
+// ---------------------------------------------------------------------------
+
+func TestBufferWith_Basic(t *testing.T) {
+	// Source emits 1..6; selector fires twice then source closes.
+	// All items must appear in output in order (partition property).
+	srcCh := kitsune.NewChannel[int](10)
+	selCh := kitsune.NewChannel[struct{}](2)
+
+	var got [][]int
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.BufferWith(srcCh.Source(), selCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	for _, v := range []int{1, 2, 3} {
+		srcCh.Send(context.Background(), v)
+	}
+	time.Sleep(5 * time.Millisecond)
+	selCh.Send(context.Background(), struct{}{}) // flush [1,2,3]
+	time.Sleep(5 * time.Millisecond)
+	for _, v := range []int{4, 5, 6} {
+		srcCh.Send(context.Background(), v)
+	}
+	time.Sleep(5 * time.Millisecond)
+	selCh.Send(context.Background(), struct{}{}) // flush [4,5,6]
+	selCh.Close()
+	srcCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Flatten and verify partition property: all items in order.
+	var flat []int
+	for _, b := range got {
+		if len(b) == 0 {
+			t.Fatalf("got empty batch")
+		}
+		flat = append(flat, b...)
+	}
+	want := []int{1, 2, 3, 4, 5, 6}
+	if len(flat) != len(want) {
+		t.Fatalf("expected flat=%v, got %v (batches=%v)", want, flat, got)
+	}
+	for i, v := range want {
+		if flat[i] != v {
+			t.Fatalf("flat[%d]=%d want %d (batches=%v)", i, flat[i], v, got)
+		}
+	}
+}
+
+func TestBufferWith_EmptyFlushSkipped(t *testing.T) {
+	// Selector fires when buffer is empty: no batch should be emitted.
+	src := kitsune.FromSlice([]int{})
+	sel := kitsune.FromSlice([]struct{}{{}, {}, {}})
+	got, err := kitsune.BufferWith(src, sel).Collect(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no batches for empty source, got %v", got)
+	}
+}
+
+func TestBufferWith_SelectorBeforeItems(t *testing.T) {
+	// Selector fires before any items arrive (no-op flush), then source sends
+	// items and closes: source-close flushes [10, 20].
+	srcCh := kitsune.NewChannel[int](5)
+	selCh := kitsune.NewChannel[struct{}](1)
+
+	var got [][]int
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.BufferWith(srcCh.Source(), selCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	selCh.Send(context.Background(), struct{}{}) // fires with empty buffer: no emit
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 10)
+	srcCh.Send(context.Background(), 20)
+	time.Sleep(10 * time.Millisecond) // give stage time to append items to buf
+	srcCh.Close()                     // source-close flushes [10, 20]
+	time.Sleep(5 * time.Millisecond)  // give stage time to process close
+	selCh.Close()                     // allow selector stage to exit
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var flat []int
+	for _, b := range got {
+		flat = append(flat, b...)
+	}
+	if len(flat) != 2 || flat[0] != 10 || flat[1] != 20 {
+		t.Fatalf("expected [10 20], got flat=%v batches=%v", flat, got)
+	}
+}
+
+func TestBufferWith_SourceCloseFlushesPartial(t *testing.T) {
+	// Source closes with buffered items and selector never fires:
+	// source-close must flush the partial buffer.
+	srcCh := kitsune.NewChannel[int](5)
+	selCh := kitsune.NewChannel[struct{}](0)
+
+	var got [][]int
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.BufferWith(srcCh.Source(), selCh.Source()).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 1)
+	srcCh.Send(context.Background(), 2)
+	srcCh.Send(context.Background(), 3)
+	time.Sleep(10 * time.Millisecond) // give stage time to append items to buf
+	srcCh.Close()                     // source-close flushes [1, 2, 3]
+	time.Sleep(5 * time.Millisecond)  // give stage time to process close
+	selCh.Close()                     // allow selector stage to exit
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 batch, got %v", got)
+	}
+	if len(got[0]) != 3 || got[0][0] != 1 || got[0][1] != 2 || got[0][2] != 3 {
+		t.Fatalf("expected [[1 2 3]], got %v", got)
+	}
+}
+
+func TestBufferWith_NilSelectorPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil closingSelector")
+		}
+	}()
+	kitsune.BufferWith[int, struct{}](kitsune.FromSlice([]int{1}), nil)
+}
+
+func TestBufferWith_WithName(t *testing.T) {
+	// WithName should not affect correctness: source-close flushes all items.
+	srcCh := kitsune.NewChannel[int](3)
+	selCh := kitsune.NewChannel[struct{}](0)
+
+	var got [][]int
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.BufferWith(srcCh.Source(), selCh.Source(), kitsune.WithName("my-buffer")).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 1)
+	srcCh.Send(context.Background(), 2)
+	srcCh.Send(context.Background(), 3)
+	time.Sleep(10 * time.Millisecond)
+	srcCh.Close()
+	time.Sleep(5 * time.Millisecond)
+	selCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var flat []int
+	for _, b := range got {
+		flat = append(flat, b...)
+	}
+	if len(flat) != 3 || flat[0] != 1 || flat[1] != 2 || flat[2] != 3 {
+		t.Fatalf("WithName affected output: got %v", got)
+	}
+}
+
+func TestBufferWith_BufferOption(t *testing.T) {
+	// Buffer(n) sets the output channel capacity; should not affect correctness.
+	srcCh := kitsune.NewChannel[int](4)
+	selCh := kitsune.NewChannel[struct{}](1)
+
+	var got [][]int
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		got, err = kitsune.BufferWith(srcCh.Source(), selCh.Source(), kitsune.Buffer(2)).Collect(context.Background())
+		errCh <- err
+	}()
+
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 1)
+	srcCh.Send(context.Background(), 2)
+	time.Sleep(5 * time.Millisecond)
+	selCh.Send(context.Background(), struct{}{}) // flush [1, 2]
+	time.Sleep(5 * time.Millisecond)
+	srcCh.Send(context.Background(), 3)
+	srcCh.Send(context.Background(), 4)
+	time.Sleep(10 * time.Millisecond)
+	srcCh.Close()
+	time.Sleep(5 * time.Millisecond)
+	selCh.Close()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var flat []int
+	for _, b := range got {
+		flat = append(flat, b...)
+	}
+	if len(flat) != 4 || flat[0] != 1 || flat[1] != 2 || flat[2] != 3 || flat[3] != 4 {
+		t.Fatalf("Buffer option affected output: got flat=%v batches=%v", flat, got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SwitchMap
 // ---------------------------------------------------------------------------
 

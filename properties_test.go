@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"pgregory.net/rapid"
 
@@ -908,6 +909,53 @@ func TestPropSampleWithOutputIsSubsequence(t *testing.T) {
 	})
 }
 
+// TestPropBufferWithPartitionsInput verifies three invariants for BufferWith:
+//
+//  1. No empty batch is ever emitted.
+//  2. The flattened output is an order-preserving prefix of src. If the
+//     closing selector exhausts before the source, remaining source items are
+//     not read (correct: the stage exits on selector close). If the source
+//     exhausts first, all items appear.
+//  3. The number of output batches is at most nSignals+1.
+func TestPropBufferWithPartitionsInput(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
+		nSignals := rapid.IntRange(0, 20).Draw(t, "nSignals")
+
+		signals := make([]struct{}, nSignals)
+		got, err := kitsune.BufferWith(kitsune.FromSlice(src), kitsune.FromSlice(signals)).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("BufferWith error: %v", err)
+		}
+
+		// Invariant 1: no empty batches.
+		for i, b := range got {
+			if len(b) == 0 {
+				t.Fatalf("batch[%d] is empty (src=%v nSignals=%d)", i, src, nSignals)
+			}
+		}
+
+		// Invariant 2: flatten is an order-preserving prefix of src.
+		var flat []int
+		for _, b := range got {
+			flat = append(flat, b...)
+		}
+		if len(flat) > len(src) {
+			t.Fatalf("got more items than source: len(flat)=%d len(src)=%d\n  batches=%v\n  src=%v", len(flat), len(src), got, src)
+		}
+		for i, v := range flat {
+			if src[i] != v {
+				t.Fatalf("item order mismatch: flat[%d]=%d src[%d]=%d\n  batches=%v\n  src=%v", i, v, i, src[i], got, src)
+			}
+		}
+
+		// Invariant 3: at most nSignals+1 batches.
+		if len(got) > nSignals+1 {
+			t.Fatalf("too many batches: got %d, want <= %d\n  batches=%v\n  src=%v", len(got), nSignals+1, got, src)
+		}
+	})
+}
+
 // isSubsequence reports whether sub is a subsequence of seq (same order, not
 // necessarily contiguous).
 func isSubsequence[T comparable](sub, seq []T) bool {
@@ -1027,6 +1075,69 @@ func TestPropMaterializeDematerializeRoundtrip(t *testing.T) {
 
 		if !slices.Equal(got, in) {
 			t.Fatalf("roundtrip mismatch: got %v, want %v", got, in)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TTLDedupSet properties
+// ---------------------------------------------------------------------------
+
+// TestPropTTLDedupSetFreshKeysPresent verifies that every key added to a
+// TTLDedupSet is immediately visible via Contains before the TTL elapses.
+func TestPropTTLDedupSetFreshKeysPresent(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		ctx := context.Background()
+		keys := rapid.SliceOfN(rapid.StringN(1, 5, 10), 1, 20).Draw(t, "keys")
+
+		set := kitsune.TTLDedupSet(5 * time.Second)
+		for _, k := range keys {
+			if err := set.Add(ctx, k); err != nil {
+				t.Fatalf("Add(%q): %v", k, err)
+			}
+		}
+		for _, k := range keys {
+			ok, err := set.Contains(ctx, k)
+			if err != nil {
+				t.Fatalf("Contains(%q): %v", k, err)
+			}
+			if !ok {
+				t.Fatalf("Contains(%q) = false immediately after Add", k)
+			}
+		}
+	})
+}
+
+// TestPropTTLDedupSetDistinctDeduplication verifies the deduplication law:
+// DistinctBy with a TTLDedupSet produces exactly the set of first-seen keys
+// from a finite input when the TTL is long enough not to expire during the run.
+func TestPropTTLDedupSetDistinctDeduplication(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		ctx := context.Background()
+		in := rapid.SliceOfN(rapid.IntRange(0, 9), 0, 20).Draw(t, "in")
+
+		set := kitsune.TTLDedupSet(5 * time.Second)
+		got, err := kitsune.Collect(ctx, kitsune.DistinctBy(
+			kitsune.FromSlice(in),
+			func(v int) int { return v },
+			kitsune.WithDedupSet(set),
+		))
+		if err != nil {
+			t.Fatalf("DistinctBy error: %v", err)
+		}
+
+		// Build the expected first-seen set in order.
+		seen := make(map[int]bool)
+		var want []int
+		for _, v := range in {
+			if !seen[v] {
+				seen[v] = true
+				want = append(want, v)
+			}
+		}
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("deduplication mismatch: got %v, want %v", got, want)
 		}
 	})
 }

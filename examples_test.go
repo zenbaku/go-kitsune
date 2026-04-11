@@ -24,6 +24,7 @@ func TestExamples(t *testing.T) {
 		"basic",
 		"bloomdedup",
 		"broadcast",
+		"bufferwith",
 		"caching",
 		"channel",
 		"circuitbreaker",
@@ -39,6 +40,7 @@ func TestExamples(t *testing.T) {
 		"switchmap",
 		"ticker",
 		"timeout",
+		"ttldedup",
 	}
 	for _, name := range examples {
 		t.Run(name, func(t *testing.T) {

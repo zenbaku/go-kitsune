@@ -112,6 +112,95 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 }
 
 // ---------------------------------------------------------------------------
+// BufferWith
+// ---------------------------------------------------------------------------
+
+// BufferWith collects items from p into a slice, emitting the accumulated
+// buffer each time closingSelector fires. An empty buffer is never emitted.
+// When the source closes, any remaining buffered items are flushed before the
+// output closes. When closingSelector closes, any remaining buffered items are
+// flushed and the output closes.
+//
+// BufferWith generalizes Batch (fixed-size boundary) and BatchTimeout
+// (periodic boundary) to arbitrary external boundary signals:
+//
+//	// Flush whenever a heartbeat pipeline fires.
+//	heartbeat := kitsune.Ticker(5 * time.Second)
+//	batches := kitsune.BufferWith(events, heartbeat)
+func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...StageOption) *Pipeline[[]T] {
+	if closingSelector == nil {
+		panic("kitsune: BufferWith closingSelector must not be nil")
+	}
+	track(p)
+	track(closingSelector)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "buffer_with",
+		name:   orDefault(cfg.name, "buffer_with"),
+		buffer: cfg.buffer,
+		inputs: []int{p.id, closingSelector.id},
+	}
+	build := func(rc *runCtx) chan []T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan []T)
+		}
+		srcCh := p.build(rc)
+		selCh := closingSelector.build(rc)
+		bufSize := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, bufSize)
+		m := meta
+		m.buffer = bufSize
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() {
+				go internal.DrainChan(srcCh)
+				go internal.DrainChan(selCh)
+			}()
+
+			outbox := internal.NewBlockingOutbox(ch)
+			var buf []T
+
+			flush := func() error {
+				if len(buf) == 0 {
+					return nil
+				}
+				batch := make([]T, len(buf))
+				copy(batch, buf)
+				buf = buf[:0]
+				return outbox.Send(ctx, batch)
+			}
+
+			for {
+				select {
+				case item, ok := <-srcCh:
+					if !ok {
+						return flush()
+					}
+					buf = append(buf, item)
+				case _, ok := <-selCh:
+					if !ok {
+						return flush()
+					}
+					if err := flush(); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// ---------------------------------------------------------------------------
 // Unbatch
 // ---------------------------------------------------------------------------
 

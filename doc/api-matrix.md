@@ -108,6 +108,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
 | `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
+| `BufferWith` | `BufferWith[T,S](p, closingSelector, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Window` | `Window[T](p, size int, opts...)`: count-based | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)`: time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
@@ -119,6 +120,7 @@ Documents every exported operator and which `StageOption` features each one actu
 **Notes**
 - `Window` groups by *count*. Use `WindowByTime` (compat alias) for time-bucketing.
 - `Batch` supports `WithClock` only when `BatchTimeout` is also set (the clock powers the flush ticker).
+- `BufferWith` takes a second pipeline (`closingSelector`) as its flush trigger; each signal from that pipeline emits the current buffer. When the selector closes, any remaining items are flushed. Named `BufferWith` to avoid collision with the `Buffer(n)` stage option.
 - `ChunkBy` emits a group when the key changes. `ChunkWhile` emits a group when the predicate between adjacent items is false.
 
 ---
@@ -417,7 +419,25 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 ---
 
-## 18 · Testing Infrastructure
+## 18 · DedupSet Backends
+
+`WithDedupSet(s)` accepts any value implementing `DedupSet`:
+
+| Backend | Constructor | Bounded Memory | False Positives | Expiry |
+|---------|-------------|----------------|-----------------|--------|
+| `MemoryDedupSet` | `MemoryDedupSet()` | No | No | No |
+| `BloomDedupSet` | `BloomDedupSet(expectedItems, fp)` | Yes | Yes (configurable rate) | No |
+| `TTLDedupSet` | `TTLDedupSet(ttl)` | Yes (bounded by active window) | No | Yes (lazy, per-key TTL) |
+
+**Notes**
+- `MemoryDedupSet` is the default for `Distinct`, `DistinctBy`, `Dedupe`, `DedupeBy`, and `ExpandMap`.
+- `BloomDedupSet` panics if `expectedItems <= 0` or `falsePositiveRate` is not in `(0, 1)`.
+- `TTLDedupSet` panics if `ttl <= 0`. Re-adding an existing key refreshes its expiry. Eviction is lazy (on next `Contains` or `Add`); no background goroutine is started.
+- External backends (Redis, etc.) are available in `tails/kredis` via `kredis.NewDedupSet`.
+
+---
+
+## 19 · Testing Infrastructure
 
 | Component | Notes |
 |-----------|-------|
@@ -433,7 +453,7 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 
 ---
 
-## 19 · Tails (External Adapters)
+## 20 · Tails (External Adapters)
 
 Tails are separate Go modules under `tails/` that adapt external systems to kitsune pipelines. Each follows the "user owns the client" principle: the caller creates, configures, and closes connections; kitsune never opens or closes them. See `doc/tails.md` for detailed usage examples.
 

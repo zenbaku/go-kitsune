@@ -1399,6 +1399,48 @@ changes := kitsune.DedupeBy(statusUpdates, func(s Status) string { return s.Stat
 
 ---
 
+### DedupSet backends
+
+`Distinct`, `DistinctBy`, `Dedupe`, `DedupeBy`, and `ExpandMap` all accept a `WithDedupSet(backend)` option to override their default in-process deduplication store. Three built-in backends are provided:
+
+#### MemoryDedupSet
+
+```go
+func MemoryDedupSet() DedupSet
+```
+
+Unbounded in-memory set. Never evicts. Suitable for finite streams or when the key space is bounded. The default for all dedup operators.
+
+#### BloomDedupSet
+
+```go
+func BloomDedupSet(expectedItems int, falsePositiveRate float64) DedupSet
+```
+
+Bounded probabilistic set backed by a Bloom filter. Memory usage is fixed regardless of key-space size; items are never missed (zero false-negative rate), but a configured false-positive rate allows a small fraction of unseen keys to appear seen. Panics if `expectedItems <= 0` or `falsePositiveRate` is not in `(0, 1)`.
+
+**When to use:** when the key space is unbounded but bounded memory is required and occasional false positives are acceptable (e.g. spam suppression, cache-miss avoidance).
+
+#### TTLDedupSet
+
+```go
+func TTLDedupSet(ttl time.Duration) DedupSet
+```
+
+In-process deduplication set that forgets keys `ttl` after they were last added. Memory is bounded by the set of currently non-expired keys. Eviction is lazy: expired entries are purged on the next `Contains` or `Add` call; there is no background goroutine. Re-adding an existing key refreshes its expiry (touch semantics). Panics if `ttl <= 0`.
+
+**When to use:** deduplicating a high-volume event stream over a sliding time window (e.g. suppress duplicate webhooks received within the last 5 minutes) without unbounded memory growth. Prefer over `MemoryDedupSet` when keys must be forgotten; prefer over `BloomDedupSet` when zero false positives are required.
+
+```go
+// Suppress duplicate webhook deliveries within a 5-minute window.
+set := kitsune.TTLDedupSet(5 * time.Minute)
+unique := kitsune.DistinctBy(events, func(e Event) string { return e.ID },
+    kitsune.WithDedupSet(set),
+)
+```
+
+---
+
 ### ElementAt
 
 ```go
@@ -1567,6 +1609,38 @@ Like `MapWithKey` but allows emitting zero or more outputs per item while mainta
 ---
 
 ## :material-layers-outline: Batching & Windowing { #batching }
+
+### BufferWith
+
+```go
+func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...StageOption) *Pipeline[[]T]
+```
+
+Collects items from `p` into a slice, emitting the accumulated buffer each time `closingSelector` fires. An empty buffer is never emitted. When the source closes, any remaining buffered items are flushed before the output closes. When `closingSelector` closes, any remaining buffered items are flushed and the output closes.
+
+`BufferWith` generalizes [`Batch`](#batch) (fixed-size boundary) and `BatchTimeout` (periodic boundary) to arbitrary external boundary signals. Use it when the flush trigger is externally driven: heartbeats, quiescence signals, control channels, or upstream events.
+
+**When to use:**
+- Flushing accumulated events on an external heartbeat or tick pipeline.
+- Coalescing bursts until a quiescence signal arrives on a separate channel.
+- Building custom batching policies that go beyond size or time.
+
+**Semantics:**
+- Items are emitted in input order; the flattened output preserves source ordering.
+- If `closingSelector` fires while the buffer is empty, no batch is emitted.
+- If `closingSelector` closes before the source, any remaining source items are not read.
+- Context cancellation returns `ctx.Err()` without flushing.
+- Panics if `closingSelector` is nil.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Flush buffered events on every heartbeat tick.
+heartbeat := kitsune.Ticker(5 * time.Second)
+batches := kitsune.BufferWith(events, heartbeat)
+```
+
+---
 
 ### Batch
 

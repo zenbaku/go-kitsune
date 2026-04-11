@@ -151,6 +151,15 @@ func BloomDedupSet(expectedItems int, falsePositiveRate float64) DedupSet {
 	return internal.BloomDedupSet(expectedItems, falsePositiveRate)
 }
 
+// TTLDedupSet returns an in-process deduplication set that forgets keys after
+// ttl has elapsed since they were last added. Memory is bounded by the set of
+// currently non-expired keys. Eviction is lazy: expired entries are purged on
+// the next Contains or Add call; there is no background goroutine.
+//
+// Re-adding an existing key refreshes its expiry (touch semantics).
+// Panics if ttl <= 0.
+func TTLDedupSet(ttl time.Duration) DedupSet { return internal.TTLDedupSet(ttl) }
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
