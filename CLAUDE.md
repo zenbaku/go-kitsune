@@ -41,6 +41,7 @@ Work through this checklist in order. Do not consider the work done until all it
 ### Documentation
 - [ ] **`doc/operators.md`** — full section: signature, description, semantics, "When to use", "Options", code example. Place it in the correct category section.
 - [ ] **`doc/api-matrix.md`** — add a row in the correct section table; add a note if the operator has non-obvious option behaviour
+- [ ] **`doc/options.md`** — if the operator introduces a new `StageOption` or `RunOption`, add a full section here (signature, applies-to, description, code example). RunOptions also go in the `api-matrix.md` section 16 table.
 
 ### Example
 - [ ] **`examples/<operator>/main.go`** — self-contained `main` package demonstrating a realistic use case
@@ -101,9 +102,7 @@ The next unimplemented items in `doc/roadmap.md` (as of 2026-04-11):
 
 **Operators:** *(all complete in Active section)*
 
-**State:**
-- `WithKeyTTL(d)` for `MapWith`/`FlatMapWith`
-- `TTLDedupSet(ttl)`
+**State:** *(all complete in Active section)*
 
 **Developer experience:**
 - "Choosing a concurrency model" guide

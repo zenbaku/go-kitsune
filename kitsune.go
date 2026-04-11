@@ -242,6 +242,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	rc.gate = cfg.gate
 	rc.defaultErrorHandler = cfg.defaultErrorHandler
 	rc.defaultBuffer = cfg.defaultBuffer
+	rc.defaultKeyTTL = cfg.defaultKeyTTL
 	r.terminal(rc)
 
 	// Initialise all Refs with the configured store and codec now that all

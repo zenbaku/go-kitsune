@@ -1108,6 +1108,129 @@ func TestPropTTLDedupSetFreshKeysPresent(t *testing.T) {
 	})
 }
 
+// TestPropWithKeyTTLLargeEquivalence verifies that a very large WithKeyTTL
+// (effectively infinite) produces the same result as not setting the option
+// at all. This is the "large-TTL equivalence" invariant: when no key ever
+// expires, per-entity state accumulates identically whether or not a TTL is
+// configured.
+func TestPropWithKeyTTLLargeEquivalence(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		ctx := context.Background()
+
+		// Draw a small set of entity keys and a sequence of key indices.
+		nKeys := rapid.IntRange(1, 4).Draw(t, "nKeys")
+		indices := rapid.SliceOfN(rapid.IntRange(0, nKeys-1), 1, 20).Draw(t, "indices")
+
+		keys := make([]string, nKeys)
+		for i := range keys {
+			keys[i] = string(rune('a' + i))
+		}
+		items := make([]string, len(indices))
+		for i, idx := range indices {
+			items[i] = keys[idx]
+		}
+
+		stateKey := kitsune.NewKey[int]("prop-keyttl-equiv", 0)
+		counterFn := func(ctx context.Context, ref *kitsune.Ref[int], s string) (string, error) {
+			n, err := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			if err != nil {
+				return "", err
+			}
+			return s + ":" + string(rune('0'+n)), nil
+		}
+
+		// Without TTL.
+		noTTL, err := kitsune.Collect(ctx, kitsune.MapWithKey(
+			kitsune.FromSlice(items),
+			func(s string) string { return s },
+			stateKey,
+			counterFn,
+		))
+		if err != nil {
+			t.Fatalf("no-TTL run: %v", err)
+		}
+
+		// With a very large TTL (1 hour): should behave identically.
+		withTTL, err := kitsune.Collect(ctx, kitsune.MapWithKey(
+			kitsune.FromSlice(items),
+			func(s string) string { return s },
+			stateKey,
+			counterFn,
+			kitsune.WithKeyTTL(time.Hour),
+		))
+		if err != nil {
+			t.Fatalf("with-TTL run: %v", err)
+		}
+
+		if !slices.Equal(noTTL, withTTL) {
+			t.Fatalf("large-TTL broke output: without=%v with=%v", noTTL, withTTL)
+		}
+	})
+}
+
+// TestPropWithKeyTTLResetAfterEviction verifies the freshness invariant: when
+// a key is accessed again after its TTL has elapsed, the next output starts
+// from the initial value (counter resets to 1 when initial=0, increment=1).
+func TestPropWithKeyTTLResetAfterEviction(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		ctx := context.Background()
+
+		// Draw the number of items before and after the sleep boundary.
+		nBefore := rapid.IntRange(1, 5).Draw(t, "nBefore")
+		nAfter := rapid.IntRange(1, 5).Draw(t, "nAfter")
+		ttl := 5 * time.Millisecond
+
+		// Build a slice: nBefore items "k", then nAfter items "k".
+		// The sleep (TTL*3) happens inside the fn body after the last "before" item,
+		// simulating the inactivity window expiring before the "after" items arrive.
+		total := nBefore + nAfter
+		items := make([]int, total)
+		for i := range items {
+			items[i] = i
+		}
+		stateKey := kitsune.NewKey[int]("prop-keyttl-reset", 0)
+
+		got, err := kitsune.Collect(ctx, kitsune.MapWithKey(
+			kitsune.FromSlice(items),
+			func(_ int) string { return "k" },
+			stateKey,
+			func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+				n, err := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+				if err != nil {
+					return 0, err
+				}
+				// v is the item index (0..total-1). Sleep after the last
+				// "before" item (v == nBefore-1) to expire the key TTL before
+				// the first "after" item arrives. Using v (not n) avoids
+				// re-triggering the sleep after an eviction resets the counter.
+				if v == nBefore-1 {
+					time.Sleep(ttl * 3)
+				}
+				return n, nil
+			},
+			kitsune.WithKeyTTL(ttl),
+		))
+		if err != nil {
+			t.Fatalf("pipeline error: %v", err)
+		}
+		if len(got) != total {
+			t.Fatalf("expected %d results, got %d: %v", total, len(got), got)
+		}
+		// First nBefore outputs: 1, 2, ..., nBefore.
+		for i := 0; i < nBefore; i++ {
+			if got[i] != i+1 {
+				t.Fatalf("before[%d]: got %d, want %d", i, got[i], i+1)
+			}
+		}
+		// After eviction: counter restarts from 1.
+		for i := 0; i < nAfter; i++ {
+			if got[nBefore+i] != i+1 {
+				t.Fatalf("after[%d]: got %d, want %d (eviction reset expected)", i, got[nBefore+i], i+1)
+			}
+		}
+	})
+}
+
 // TestPropTTLDedupSetDistinctDeduplication verifies the deduplication law:
 // DistinctBy with a TTLDedupSet produces exactly the set of first-seen keys
 // from a finite input when the TTL is long enough not to expire during the run.

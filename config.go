@@ -31,6 +31,8 @@ type stageConfig struct {
 	supervision    internal.SupervisionPolicy
 	cacheConfig    *stageCacheConfig
 	timeout        time.Duration
+	keyTTL         time.Duration // WithKeyTTL: evict per-key Ref after this much inactivity
+	keyTTLExplicit bool          // true when WithKeyTTL was called explicitly
 	dedupSet       DedupSet
 	clock          internal.Clock
 	visitedKeyFn   any // func(T) string, type-erased; set by VisitedBy[T]
@@ -53,7 +55,8 @@ type runConfig struct {
 	codec               Codec
 	gate                *Gate
 	defaultErrorHandler internal.ErrorHandler
-	defaultBuffer       int // 0 = use internal.DefaultBuffer (16)
+	defaultBuffer       int           // 0 = use internal.DefaultBuffer (16)
+	defaultKeyTTL       time.Duration // 0 = no eviction unless overridden per stage
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -161,6 +164,28 @@ func VisitedBy[T any](keyFn func(T) string) StageOption {
 // Panics at pipeline construction time if used on any stage other than Map or FlatMap.
 func Timeout(d time.Duration) StageOption {
 	return func(c *stageConfig) { c.timeout = d }
+}
+
+// WithKeyTTL sets an inactivity TTL for the per-entity state map used by
+// [MapWithKey] and [FlatMapWithKey]. When no item has been observed for a
+// given entity key for longer than d, the key's [Ref] is evicted from the
+// internal map; the next item for that key starts with a fresh Ref at the
+// key's initial value. Eviction is checked lazily on the next access; there
+// is no background goroutine.
+//
+// Use this on long-running pipelines with unbounded key cardinality (user
+// IDs, session tokens) to prevent unbounded memory growth.
+//
+// WithKeyTTL is independent of [StateTTL]: StateTTL expires the value held
+// by a Ref; WithKeyTTL expires the map entry holding the Ref itself.
+//
+// A d of 0 disables stage-level eviction (the default). Per-stage
+// WithKeyTTL overrides [WithDefaultKeyTTL] set at the runner level.
+func WithKeyTTL(d time.Duration) StageOption {
+	return func(c *stageConfig) {
+		c.keyTTL = d
+		c.keyTTLExplicit = true
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -405,6 +430,19 @@ func WithDefaultBuffer(n int) RunOption {
 			cfg.defaultBuffer = n
 		}
 	}
+}
+
+// WithDefaultKeyTTL sets the default inactivity TTL for the per-entity state
+// maps used by [MapWithKey] and [FlatMapWithKey] stages that do not specify
+// their own [WithKeyTTL] option. When no item has been observed for a given
+// entity key for longer than d, the key's [Ref] is evicted lazily from the
+// internal map on the next access; the next item for that key starts fresh at
+// the key's initial value.
+//
+// A value of 0 disables run-level eviction (the default). Per-stage
+// [WithKeyTTL] takes precedence over this run-level default.
+func WithDefaultKeyTTL(d time.Duration) RunOption {
+	return func(cfg *runConfig) { cfg.defaultKeyTTL = d }
 }
 
 // ---------------------------------------------------------------------------

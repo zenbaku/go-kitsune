@@ -1570,7 +1570,7 @@ Like [`MapWith`](#mapwith) but maintains one independent `Ref[S]` per entity key
 
 **When to use:** Per-entity state in a multiplexed stream: event counts per user, session tracking, per-device rate limiting.
 
-**Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`.
+**Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`, `WithKeyTTL`.
 
 ```go
 var countKey = kitsune.NewKey[int]("event_count", 0)
@@ -1588,6 +1588,20 @@ counted := kitsune.MapWithKey(events,
 )
 ```
 
+**High-cardinality eviction:** On long-running pipelines with unbounded key spaces (user IDs, session tokens), use `WithKeyTTL(d)` to evict entries that have been inactive for longer than `d`. The next item for an evicted key starts from the initial value. Eviction is lazy (checked on the next access; no background goroutine). `WithKeyTTL` is independent of `StateTTL`: `StateTTL` expires the value held by a `Ref`; `WithKeyTTL` expires the map entry that holds the `Ref`.
+
+```go
+// Evict per-user state after 15 minutes of inactivity.
+kitsune.MapWithKey(events,
+    func(e Event) string { return e.UserID },
+    sessionKey,
+    handler,
+    kitsune.WithKeyTTL(15*time.Minute),
+)
+```
+
+The run-level `WithDefaultKeyTTL(d)` sets the default TTL for all `MapWithKey` and `FlatMapWithKey` stages that do not specify their own `WithKeyTTL`. Per-stage `WithKeyTTL(0)` explicitly disables eviction even when a run-level default is set.
+
 ---
 
 ### FlatMapWithKey
@@ -1604,7 +1618,7 @@ func FlatMapWithKey[I, O, S any](
 
 Like `MapWithKey` but allows emitting zero or more outputs per item while maintaining per-key state.
 
-**Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`.
+**Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`, `WithKeyTTL`.
 
 ---
 
@@ -2640,6 +2654,8 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle
 - `WithErrorStrategy(h)`: pipeline-wide default error handler
 - `WithPauseGate(gate)`: attach an external gate
 - `WithCodec(c)`: serialisation codec for state and cache
+- `WithDefaultBuffer(n)`: default channel buffer size for all stages (default 16); per-stage `Buffer(n)` takes precedence
+- `WithDefaultKeyTTL(d)`: default inactivity TTL for all [`MapWithKey`](#mapwithkey) and [`FlatMapWithKey`](#flatmapwithkey) stages; per-stage `WithKeyTTL` takes precedence
 
 ```go
 handle := runner.RunAsync(ctx)
@@ -2795,3 +2811,4 @@ kitsune.OnError(kitsune.RetryThen(3,
 | `CacheBy(keyFn)` | `StageOption` | `Map` only | Enable TTL-based result caching. On a hit, `fn` is skipped. Requires `WithCache` at run time or `CacheBackend`. |
 | `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
 | `VisitedBy(keyFn)` | `StageOption` | `ExpandMap` | Enable cycle detection by key during graph walks. |
+| `WithKeyTTL(d)` | `StageOption` | `MapWithKey`, `FlatMapWithKey` | Evict per-key `Ref` entries after `d` of inactivity. 0 disables (default). Overrides `WithDefaultKeyTTL`. |

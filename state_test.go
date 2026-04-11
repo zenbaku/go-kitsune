@@ -565,6 +565,221 @@ func TestMapWithKey_WithTTL(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// WithKeyTTL tests
+// ---------------------------------------------------------------------------
+
+func TestMapWithKey_KeyTTL_EvictsInactiveKey(t *testing.T) {
+	// After the TTL elapses between items, the Ref for that key is evicted.
+	// The next item for the same key starts from the initial value again.
+	//
+	// The sleep is placed inside the processing function so it executes while
+	// the pipeline is running, ensuring the TTL genuinely expires between the
+	// second and third calls to getRef.
+	ctx := context.Background()
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey[int]("keyttl-evict", 0)
+
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(v int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			if v == 2 {
+				// Sleep past the TTL after the second item so that when item 3
+				// calls getRef, the inactivity window has elapsed.
+				time.Sleep(ttl * 3)
+			}
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.WithKeyTTL(ttl),
+	)
+
+	got, err := p.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 results, got %d: %v", len(got), got)
+	}
+	if got[0] != 1 {
+		t.Errorf("item 0: got %d, want 1", got[0])
+	}
+	if got[1] != 2 {
+		t.Errorf("item 1: got %d, want 2", got[1])
+	}
+	// After TTL eviction the counter resets to 0 and increments to 1.
+	if got[2] != 1 {
+		t.Errorf("item 2 (after key eviction): got %d, want 1", got[2])
+	}
+}
+
+func TestMapWithKey_KeyTTL_KeepsActiveKey(t *testing.T) {
+	// When items arrive more frequently than the TTL, the key is never evicted
+	// and the counter keeps incrementing.
+	ctx := context.Background()
+	ttl := 100 * time.Millisecond
+	key := kitsune.NewKey[int]("keyttl-keep", 0)
+
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(v int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.WithKeyTTL(ttl),
+	)
+
+	got, err := p.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+func TestMapWithKey_KeyTTL_ZeroMeansDisabled(t *testing.T) {
+	// WithKeyTTL(0) disables eviction: the key persists across items regardless
+	// of inactivity. The counter must keep accumulating even when time passes.
+	ctx := context.Background()
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey[int]("keyttl-zero", 0)
+
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2}),
+		func(v int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			if v == 1 {
+				// Simulate TTL*3 of inactivity between items.
+				time.Sleep(ttl * 3)
+			}
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.WithKeyTTL(0), // TTL explicitly disabled
+	)
+
+	got, err := p.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Counter must keep accumulating; no eviction despite the sleep.
+	if got[0] != 1 || got[1] != 2 {
+		t.Errorf("expected [1 2], got %v", got)
+	}
+}
+
+func TestMapWithKey_DefaultKeyTTL_EvictsInactiveKey(t *testing.T) {
+	// WithDefaultKeyTTL at the run level evicts keys that are inactive for
+	// longer than the TTL, just like per-stage WithKeyTTL.
+	ctx := context.Background()
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey[int]("defkeyttl", 0)
+
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		func(v int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			if v == 2 {
+				time.Sleep(ttl * 3)
+			}
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		// No WithKeyTTL here; rely on the run-level default below.
+	)
+
+	got, err := kitsune.Collect(ctx, p, kitsune.WithDefaultKeyTTL(ttl))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 results, got %d: %v", len(got), got)
+	}
+	if got[0] != 1 || got[1] != 2 {
+		t.Errorf("first two items: got %v, want [1 2]", got[:2])
+	}
+	if got[2] != 1 {
+		t.Errorf("item 2 (after key eviction via default TTL): got %d, want 1", got[2])
+	}
+}
+
+func TestMapWithKey_StageKeyTTL_OverridesDefault(t *testing.T) {
+	// Per-stage WithKeyTTL(0) disables eviction even when WithDefaultKeyTTL
+	// is set on the runner.
+	ctx := context.Background()
+	defaultTTL := 20 * time.Millisecond
+	key := kitsune.NewKey[int]("keyttl-override", 0)
+
+	p := kitsune.MapWithKey(
+		kitsune.FromSlice([]int{1, 2}),
+		func(v int) string { return "k" },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+			if v == 1 {
+				// Simulate defaultTTL*3 of inactivity.
+				time.Sleep(defaultTTL * 3)
+			}
+			return ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+		},
+		kitsune.WithKeyTTL(0), // explicitly disable TTL for this stage
+	)
+
+	got, err := kitsune.Collect(ctx, p, kitsune.WithDefaultKeyTTL(defaultTTL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Key must NOT be evicted because the per-stage WithKeyTTL(0) overrides the default.
+	if got[0] != 1 || got[1] != 2 {
+		t.Errorf("expected [1 2] (no eviction), got %v", got)
+	}
+}
+
+func TestFlatMapWithKey_KeyTTL_EvictsInactiveKey(t *testing.T) {
+	// WithKeyTTL also works on FlatMapWithKey: keys inactive for longer than
+	// the TTL are evicted and the next access starts from the initial value.
+	ctx := context.Background()
+	ttl := 20 * time.Millisecond
+	key := kitsune.NewKey[int]("fmwk-keyttl", 0)
+
+	p := kitsune.FlatMapWithKey(
+		kitsune.FromSlice([]string{"a", "a", "a"}),
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string, yield func(int) error) error {
+			n, err := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
+			if err != nil {
+				return err
+			}
+			if n == 2 {
+				// Sleep past the TTL after the second item.
+				time.Sleep(ttl * 3)
+			}
+			return yield(n)
+		},
+		kitsune.WithKeyTTL(ttl),
+	)
+
+	got, err := p.Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 results, got %d: %v", len(got), got)
+	}
+	if got[0] != 1 || got[1] != 2 {
+		t.Errorf("first two items: got %v, want [1 2]", got[:2])
+	}
+	if got[2] != 1 {
+		t.Errorf("item 2 (after FlatMapWithKey key eviction): got %d, want 1", got[2])
+	}
+}
+
 func TestFlatMapWithKey_MultipleOutputs(t *testing.T) {
 	// FlatMapWithKey emitting multiple items per input item.
 	ctx := context.Background()

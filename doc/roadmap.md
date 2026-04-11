@@ -24,7 +24,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### State
 
-- [ ] **`WithKeyTTL(d)` for `MapWith` / `FlatMapWith`**: evict per-key goroutines and their associated `Ref` state after `d` of inactivity. Without this, long-running pipelines keyed on high-cardinality fields (user IDs, session tokens) accumulate goroutines unboundedly. Eviction should be lazy (triggered on next access or a background sweeper, not a hard timer per key) to avoid thundering-herd on periodic activity bursts.
+- [x] **`WithKeyTTL(d)` for `MapWith` / `FlatMapWith`**: evict per-key goroutines and their associated `Ref` state after `d` of inactivity. Without this, long-running pipelines keyed on high-cardinality fields (user IDs, session tokens) accumulate goroutines unboundedly. Eviction should be lazy (triggered on next access or a background sweeper, not a hard timer per key) to avoid thundering-herd on periodic activity bursts.
 
 - [x] **`TTLDedupSet(ttl)`**: a time-bounded `DedupSet` implementation that forgets keys after `ttl`. `MemoryDedupSet` grows unbounded on infinite streams; `BloomDedupSet` is bounded but cannot expire. `TTLDedupSet` enables safe `Distinct`/`Dedupe` on never-ending streams where "seen in the last N minutes" is the correct semantic. Implement with a ring-buffer of `(key, expiry)` pairs and lazy eviction on `Contains`.
 

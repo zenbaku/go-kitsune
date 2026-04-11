@@ -1,0 +1,11 @@
+# 2026/04/11 11:49:38.156042 [TestPropWithKeyTTLResetAfterEviction] [rapid] draw nBefore: 1
+# 2026/04/11 11:49:38.156069 [TestPropWithKeyTTLResetAfterEviction] [rapid] draw nAfter: 2
+# 2026/04/11 11:49:38.294581 [TestPropWithKeyTTLResetAfterEviction] after[1]: got 1, want 2 (eviction reset expected)
+# 
+v0.4.8#1620871526679830469
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1

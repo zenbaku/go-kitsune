@@ -294,3 +294,40 @@ nodes := kitsune.ExpandMap(roots, fetchChildren,
 ```
 
 Silently ignored on all operators other than `ExpandMap`.
+
+---
+
+## `WithKeyTTL(d time.Duration)`
+
+**Applies to:** `MapWithKey`, `FlatMapWithKey`
+
+Evict a per-entity `Ref` from the internal key map after `d` of inactivity. When no item has arrived for a given key for longer than `d`, the entry is removed lazily on the next access; the next item for that key starts from the initial value.
+
+Without this option, the key map grows without bound on high-cardinality streams (unique user IDs, session tokens, device IDs). Use `WithKeyTTL` to cap memory use when "seen in the last N minutes" is the right semantic.
+
+`WithKeyTTL` is independent of `StateTTL` set on the `Key`:
+
+| Option | What expires | When |
+|---|---|---|
+| `StateTTL(d)` (on `Key`) | The value stored inside a `Ref` | On the next `Get` after `d` since the last `Set` |
+| `WithKeyTTL(d)` (StageOption) | The entire map entry holding the `Ref` | On the next item for any key, after `d` of inactivity for the expired key |
+
+Default: `0` (disabled — entries persist for the lifetime of the run).
+
+```go
+var sessionKey = kitsune.NewKey[SessionState]("session", SessionState{})
+
+kitsune.MapWithKey(events,
+    func(e Event) string { return e.UserID },
+    sessionKey,
+    func(ctx context.Context, ref *kitsune.Ref[SessionState], e Event) (Result, error) {
+        s, _ := ref.Get(ctx)
+        // ... update s ...
+        ref.Set(ctx, s)
+        return Result{UserID: e.UserID}, nil
+    },
+    kitsune.WithKeyTTL(15*time.Minute), // evict idle users after 15 min
+)
+```
+
+To apply the same TTL to all `MapWithKey` and `FlatMapWithKey` stages in a run without annotating each one, use the run-level option `WithDefaultKeyTTL(d)`. Per-stage `WithKeyTTL` takes precedence; `WithKeyTTL(0)` explicitly disables eviction for a stage even when a run-level default is set.

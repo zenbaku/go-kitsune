@@ -67,6 +67,11 @@ type Ref[T any] struct {
 	ttl        time.Duration
 	lastWrite  time.Time
 	initialVal T
+
+	// lastAccess is written only by keyedRefMap.getRef under keyedRefMap.mu.
+	// It tracks the stage-level keyTTL (WithKeyTTL option), independent of
+	// lastWrite (StateTTL, value-level). Not used by the public Ref API.
+	lastAccess time.Time
 }
 
 // Get returns the current state value. If a TTL is set and has elapsed since

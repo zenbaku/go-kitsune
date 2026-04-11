@@ -15,27 +15,65 @@ import (
 
 // keyedRefMap holds a map from entity key → Ref. Initialized at run time.
 type keyedRefMap[S any] struct {
-	mu      sync.Mutex
-	refs    map[string]*Ref[S]
-	initial S
-	store   internal.Store
-	codec   internal.Codec
-	keyName string
-	ttl     time.Duration
+	mu        sync.Mutex
+	refs      map[string]*Ref[S]
+	initial   S
+	store     internal.Store
+	codec     internal.Codec
+	keyName   string
+	ttl       time.Duration    // StateTTL: value-level TTL (from Key[S])
+	keyTTL    time.Duration    // WithKeyTTL: map-entry eviction TTL (from StageOption)
+	nextSweep time.Time        // when to next run an opportunistic sweep of stale entries
+	now       func() time.Time // injectable clock for testing; nil means time.Now
+}
+
+func (m *keyedRefMap[S]) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 func (m *keyedRefMap[S]) getRef(entityKey string) *Ref[S] {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := m.clock()
+
+	// Opportunistic sweep: scan for other stale entries at most once every
+	// keyTTL/8 to amortise cost across item arrivals. Skips the requested
+	// key (handled below) to avoid double-deletion.
+	if m.keyTTL > 0 && !now.Before(m.nextSweep) {
+		cutoff := now.Add(-m.keyTTL)
+		for k, r := range m.refs {
+			if k != entityKey && r.lastAccess.Before(cutoff) {
+				delete(m.refs, k)
+			}
+		}
+		m.nextSweep = now.Add(m.keyTTL / 8)
+	}
+
 	if ref, ok := m.refs[entityKey]; ok {
-		if m.ttl > 0 && !ref.lastWrite.IsZero() && time.Now().After(ref.lastWrite.Add(m.ttl)) {
+		evict := false
+		// Stage-level keyTTL: evict the entry if the key has been inactive.
+		if m.keyTTL > 0 && !ref.lastAccess.IsZero() && now.Sub(ref.lastAccess) > m.keyTTL {
+			evict = true
+		}
+		// Value-level StateTTL (existing behaviour): evict when the stored
+		// value has expired so the next access starts with the initial value.
+		if !evict && m.ttl > 0 && !ref.lastWrite.IsZero() && now.After(ref.lastWrite.Add(m.ttl)) {
+			evict = true
+		}
+		if evict {
 			delete(m.refs, entityKey)
 		} else {
+			ref.lastAccess = now
 			return ref
 		}
 	}
+
 	storeKey := m.keyName + ":" + entityKey
 	ref := newRef[S](m.initial, storeKey, m.store, m.codec, m.ttl)
+	ref.lastAccess = now
 	m.refs[entityKey] = ref
 	return ref
 }
@@ -423,6 +461,7 @@ func MapWithKey[I, O, S any](
 		cfg := cfg // local copy; resolve pipeline-level default handler
 		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
+		keyTTL := rc.effectiveKeyTTL(cfg)
 
 		if n == 1 {
 			// Serial path: single shared keyedRefMap.
@@ -434,6 +473,7 @@ func MapWithKey[I, O, S any](
 					codec:   codec,
 					keyName: keyName,
 					ttl:     ttl,
+					keyTTL:  keyTTL,
 				}
 			})
 			stage := func(ctx context.Context) error {
@@ -454,6 +494,7 @@ func MapWithKey[I, O, S any](
 						codec:   codec,
 						keyName: keyName,
 						ttl:     ttl,
+						keyTTL:  keyTTL,
 					}
 				}
 				return maps
@@ -845,6 +886,7 @@ func FlatMapWithKey[I, O, S any](
 		cfg := cfg // local copy; resolve pipeline-level default handler
 		cfg.buffer = buf
 		cfg.errorHandler = resolveHandler(cfg, rc)
+		keyTTL := rc.effectiveKeyTTL(cfg)
 
 		if n == 1 {
 			rc.refs.register(regName, func(store internal.Store, codec internal.Codec) any {
@@ -855,6 +897,7 @@ func FlatMapWithKey[I, O, S any](
 					codec:   codec,
 					keyName: keyName,
 					ttl:     ttl,
+					keyTTL:  keyTTL,
 				}
 			})
 			stage := func(ctx context.Context) error {
@@ -874,6 +917,7 @@ func FlatMapWithKey[I, O, S any](
 						codec:   codec,
 						keyName: keyName,
 						ttl:     ttl,
+						keyTTL:  keyTTL,
 					}
 				}
 				return maps

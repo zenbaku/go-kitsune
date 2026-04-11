@@ -80,6 +80,7 @@ type runCtx struct {
 	gate                *internal.Gate
 	defaultErrorHandler internal.ErrorHandler // nil = use internal.DefaultHandler{}
 	defaultBuffer       int                   // 0 = use internal.DefaultBuffer (16)
+	defaultKeyTTL       time.Duration         // 0 = no eviction unless overridden per stage
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
 	// sources (Ticker, Repeatedly, …) without cancelling the run context —
@@ -104,6 +105,16 @@ func (rc *runCtx) effectiveBufSize(cfg stageConfig) int {
 		return cfg.buffer
 	}
 	return rc.defaultBufSize()
+}
+
+// effectiveKeyTTL returns the key-inactivity TTL for a MapWithKey /
+// FlatMapWithKey stage: the stage's explicit WithKeyTTL(d) if set, otherwise
+// the run-level default from [WithDefaultKeyTTL] (0 = disabled).
+func (rc *runCtx) effectiveKeyTTL(cfg stageConfig) time.Duration {
+	if cfg.keyTTLExplicit {
+		return cfg.keyTTL
+	}
+	return rc.defaultKeyTTL
 }
 
 func newRunCtx() *runCtx {
