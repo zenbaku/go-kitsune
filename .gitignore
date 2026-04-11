@@ -2,6 +2,7 @@
 # produced by `go build ./...` or `go build -o <name>`
 /go-kitsune
 /metrics
+/benchcheck
 
 # Example binaries. Use `go run ./examples/<name>` or the Taskfile targets
 # rather than `go build`; if you do build manually, use `-o main` so this

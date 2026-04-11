@@ -1,0 +1,29 @@
+name: Generate bench baseline
+
+# Manually dispatch this workflow on the main branch after accepting an
+# intentional performance change or when the benchmark suite changes.
+# Download the uploaded artifact and commit it as testdata/bench/baseline.txt.
+on:
+  workflow_dispatch:
+
+jobs:
+  baseline:
+    name: Generate benchmark baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Run benchmarks (count=10 for tight confidence intervals)
+        run: |
+          mkdir -p testdata/bench
+          go test -run=^$ -bench=. -benchmem -benchtime=1s -count=10 -timeout=15m . | tee testdata/bench/baseline.txt
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline
+          path: testdata/bench/baseline.txt
