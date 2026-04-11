@@ -174,7 +174,7 @@ func batchCollectOpts(opts []StageOption) []StageOption {
 // fail permanently go to dlq.
 //
 //	ok, dlq := kitsune.DeadLetter(p, fetchUser,
-//	    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(10*time.Millisecond, time.Second))),
+//	    kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(10*time.Millisecond, time.Second))),
 //	)
 //
 // Both pipelines must be consumed (same rule as [Partition]).
@@ -197,7 +197,7 @@ func DeadLetter[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 // The second return value is a [Runner] that drives the whole graph.
 //
 //	dlq, runner := kitsune.DeadLetterSink(p, writeToDB,
-//	    kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(50*time.Millisecond))),
+//	    kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(50*time.Millisecond))),
 //	)
 //	_ = dlq.ForEach(logFailure).Build()  // must consume dlq
 //	runner.Run(ctx)

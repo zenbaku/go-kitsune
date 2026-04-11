@@ -24,6 +24,7 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Concat`](#concat) | Source | Strictly ordered concat of pipelines |
 | [`Amb`](#amb) | Source | Race factories; keep the winner |
 | [`Catch`](#catch) | Source | Fallback pipeline on error |
+| [`Retry`](#retry) | Source | Re-run a pipeline on failure |
 | [`Using`](#using) | Source | Resource-scoped pipeline |
 | [`Map`](#map) | Transform | 1:1 element transform |
 | [`MapRecover`](#maprecover) | Transform | Map with panic recovery |
@@ -452,6 +453,56 @@ kitsune.Catch(primaryFeed, func(err error) *kitsune.Pipeline[Event] {
 
 ---
 
+### Retry
+
+```go
+func Retry[T any](p *Pipeline[T], pol RetryPolicy) *Pipeline[T]
+```
+
+Re-runs the entire pipeline `p` from scratch whenever it errors, according to `pol`. This is the right primitive for sources that must reconnect on failure — websocket tails, change-data-capture streams, long-poll HTTP — where the correct response to a disconnect is to re-establish the connection and resume.
+
+Items produced during any attempt (including partial output from a failed attempt) are forwarded downstream immediately; `Retry` does not buffer or replay. Downstream observes the concatenation of each attempt's output.
+
+**When to use:** Persistent reconnect-on-drop semantics for a source pipeline. For per-item retries of a transformation function, use `OnError(RetryMax(...))` instead.
+
+**Options:** none. Configure behaviour via the `RetryPolicy` argument.
+
+**`RetryPolicy` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `MaxAttempts` | `int` | Total runs allowed including the first. `≤ 0` means unlimited. |
+| `Backoff` | `Backoff` | Wait duration before the Nth retry (0-indexed). `nil` = no delay. |
+| `Retryable` | `func(error) bool` | Which errors are eligible for retry. `nil` = all non-context errors. |
+| `OnRetry` | `func(attempt int, err error, wait time.Duration)` | Called before each sleep; useful for logging. |
+
+**Convenience constructors:**
+
+```go
+kitsune.RetryUpTo(n, backoff)   // at most n total attempts
+kitsune.RetryForever(backoff)   // retry until context cancellation
+```
+
+```go
+// Reconnecting websocket tail: retry forever with exponential backoff.
+kitsune.Retry(
+    kitsune.Generate(websocketTail),
+    kitsune.RetryForever(kitsune.ExponentialBackoff(100*time.Millisecond, 30*time.Second)),
+)
+
+// Retry up to 5 times, only on transient network errors.
+kitsune.Retry(
+    primaryFeed,
+    kitsune.RetryUpTo(5, kitsune.FixedBackoff(time.Second)).
+        WithRetryable(func(err error) bool { return errors.Is(err, io.ErrUnexpectedEOF) }).
+        WithOnRetry(func(attempt int, err error, _ time.Duration) {
+            log.Printf("retry %d after: %v", attempt+1, err)
+        }),
+)
+```
+
+---
+
 ### Using
 
 ```go
@@ -621,7 +672,7 @@ Like [`MapResult`](#mapresult) but with retry embedded. Use `OnError(Retry(...))
 ok, dlq := kitsune.DeadLetter(orders, func(ctx context.Context, o Order) (Receipt, error) {
     return paymentAPI.Charge(ctx, o)
 }, kitsune.OnError(
-    kitsune.Retry(3, kitsune.ExponentialBackoff(100*time.Millisecond, 5*time.Second)),
+    kitsune.RetryMax(3, kitsune.ExponentialBackoff(100*time.Millisecond, 5*time.Second)),
 ))
 
 receipts := ok.ForEach(saveReceipt).Build()
@@ -652,7 +703,7 @@ Like [`DeadLetter`](#deadletter) but for terminal sinks (where `fn` produces no 
 ```go
 dlq, runner := kitsune.DeadLetterSink(events, func(ctx context.Context, e Event) error {
     return db.Write(ctx, e)
-}, kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(50*time.Millisecond))))
+}, kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(50*time.Millisecond))))
 
 _ = dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[Event]) error {
     return failureLog.Append(ctx, e)
@@ -2285,7 +2336,7 @@ With `Concurrency(n)` > 1, `fn` is called from `n` goroutines. Add `Ordered()` t
 ```go
 err := events.ForEach(func(ctx context.Context, e Event) error {
     return db.Insert(ctx, e)
-}, kitsune.Concurrency(8), kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(100*time.Millisecond)))).
+}, kitsune.Concurrency(8), kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(100*time.Millisecond)))).
     Run(ctx)
 ```
 
@@ -2439,14 +2490,16 @@ Replace the failed item with `val` and continue. In `FlatMap` stages, behaves li
 kitsune.OnError(kitsune.Return(User{Name: "unknown"}))
 ```
 
-### Retry / RetryThen
+### RetryMax / RetryThen
 
 ```go
-func Retry(n int, b Backoff) ErrorHandler
+func RetryMax(n int, b Backoff) ErrorHandler
 func RetryThen(n int, b Backoff, fallback ErrorHandler) ErrorHandler
 ```
 
-Retry up to `n` times with backoff `b`. `Retry` halts after exhausting retries; [`RetryThen`](#retry-retrythen) delegates to `fallback` (e.g., `Skip()`).
+Retry the current item up to `n` times with backoff `b`. `RetryMax` halts after exhausting retries; `RetryThen` delegates to `fallback` (e.g., `ActionDrop()`).
+
+These are error handlers for use with `OnError` — they retry the individual item's transformation function, not the pipeline as a whole. To re-subscribe to an entire upstream source on failure, use the [`Retry`](#retry) operator instead.
 
 ### Backoff helpers
 

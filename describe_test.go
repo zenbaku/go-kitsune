@@ -163,7 +163,7 @@ func TestDescribeCapturesMetadata(t *testing.T) {
 		kitsune.Concurrency(4),
 		kitsune.Buffer(16),
 		kitsune.Timeout(500*time.Millisecond),
-		kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(0))),
+		kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(0))),
 		kitsune.Supervise(kitsune.RestartOnError(1, nil)),
 	)
 

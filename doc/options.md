@@ -103,13 +103,13 @@ Default: `Halt()` (stop the pipeline and return the error from `Run`).
 | `Halt()` | Stop the pipeline immediately. **Default.** |
 | `Skip()` | Drop the failed item and continue. |
 | `Return(v)` | Emit `v` in place of the failed item and continue. |
-| `Retry(n, backoff)` | Retry up to `n` times with the given backoff. |
+| `RetryMax(n, backoff)` | Retry up to `n` times with the given backoff. |
 | `RetryThen(n, backoff, h)` | Retry, then apply handler `h` if all attempts fail. |
 | `DeadLetter(fn, ...)` | Route successes to one pipeline, exhausted failures to another. |
 
 ```go
 out := kitsune.Map(items, callAPI,
-    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(
+    kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(
         100*time.Millisecond,
         5*time.Second,
     ))),
@@ -126,7 +126,7 @@ Backoff helpers: `FixedBackoff(d)`, `ExponentialBackoff(min, max)`, `JitteredBac
 
 Cancel a stage function's context after `d`. If the function does not return within the deadline, its context is cancelled and the item fails with `context.DeadlineExceeded`.
 
-Each retry attempt (when combined with `Retry`) gets a fresh timeout.
+Each retry attempt (when combined with `RetryMax`) gets a fresh timeout.
 
 Panics at pipeline construction time if used on any other operator.
 

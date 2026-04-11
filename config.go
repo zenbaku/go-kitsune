@@ -451,9 +451,9 @@ func Return[T any](val T) ErrorHandler {
 	return ErrorHandler{h: &returnHandler{val: val}}
 }
 
-// Retry returns an ErrorHandler that retries up to n times with the given
+// RetryMax returns an ErrorHandler that retries up to n times with the given
 // backoff strategy, then halts.
-func Retry(n int, b Backoff) ErrorHandler {
+func RetryMax(n int, b Backoff) ErrorHandler {
 	return ErrorHandler{h: &retryHandler{max: n, bo: b, fallback: internal.DefaultHandler{}}}
 }
 

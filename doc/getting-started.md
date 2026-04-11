@@ -258,7 +258,7 @@ Every stage function returns `(O, error)`. By default, any error halts the entir
     ```go
     results := kitsune.Map(queries, callAPI,
         kitsune.Concurrency(10),
-        kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
+        kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
     )
     ```
 
@@ -278,14 +278,14 @@ For more advanced routing: send failures to a dead-letter queue instead of disca
 ```go
 // DeadLetter embeds retry; exhausted items route to the second pipeline.
 ok, dlq := kitsune.DeadLetter(items, transform,
-    kitsune.OnError(kitsune.Retry(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
+    kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
 )
 // ok  is *Pipeline[Output]
 // dlq is *Pipeline[ErrItem[Input]] — items that exhausted all retries
 
 // For terminal operations use DeadLetterSink:
 dlq, runner := kitsune.DeadLetterSink(items, sinkFn,
-    kitsune.OnError(kitsune.Retry(2, kitsune.FixedBackoff(0))),
+    kitsune.OnError(kitsune.RetryMax(2, kitsune.FixedBackoff(0))),
 )
 ```
 

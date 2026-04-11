@@ -53,7 +53,7 @@ go func() { wg.Wait(); close(out) }()
 // Kitsune
 users := kitsune.Map(ids, db.GetUser,
     kitsune.Concurrency(20),
-    kitsune.OnError(kitsune.Retry(3,
+    kitsune.OnError(kitsune.RetryMax(3,
         kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
 )
 ```

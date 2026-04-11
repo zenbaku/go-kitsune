@@ -89,7 +89,7 @@ func main() {
 	ok, dlq := kitsune.DeadLetter(
 		ids,
 		fetchProfile,
-		kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(1*time.Millisecond))),
+		kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(1*time.Millisecond))),
 	)
 
 	// Both branches must be consumed together via MergeRunners.

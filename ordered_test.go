@@ -147,7 +147,7 @@ func TestOrderedRetry(t *testing.T) {
 		}
 		return v, nil
 	}, kitsune.Concurrency(4), kitsune.Ordered(),
-		kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(0))),
+		kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(0))),
 	).Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)

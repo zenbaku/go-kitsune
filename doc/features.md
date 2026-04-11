@@ -111,8 +111,8 @@ Each stage has an independent `OnError` policy. Errors never silently swallow da
 | [`Halt`](operators.md#halt) (default) | Stop the pipeline and return the error from `Run` |
 | [`Skip`](operators.md#skip) | Drop the failed item and continue |
 | [`Return(v)`](operators.md#return) | Emit a default value in place of the failed item |
-| [`Retry(n, backoff)`](operators.md#retry--retrythen) | Retry up to N times with configurable backoff |
-| [`RetryThen(n, backoff, h)`](operators.md#retry--retrythen) | Retry, then apply handler `h` if all attempts fail |
+| [`RetryMax(n, backoff)`](operators.md#retrymax--retrythen) | Retry up to N times with configurable backoff |
+| [`RetryThen(n, backoff, h)`](operators.md#retrymax--retrythen) | Retry, then apply handler `h` if all attempts fail |
 | [`DeadLetter(fn, ...)`](operators.md#deadletter) | Route successes to one pipeline, exhausted failures to another |
 
 Backoff helpers: [`FixedBackoff`, `ExponentialBackoff`, `JitteredBackoff`](operators.md#backoff-helpers).
@@ -159,6 +159,28 @@ For **per-entity rate limiting** (each user gets an independent budget), use [`M
 | [`RestartAlways`](options.md#supervise) | Restart on both errors and panics |
 
 Configurable backoff between restart attempts prevents tight retry loops on persistent failures.
+
+---
+
+## :material-refresh: Pipeline-level retry
+
+[`Retry`](operators.md#retry) re-runs an entire upstream pipeline from scratch when it errors — the right primitive for sources that must reconnect on failure (websocket tails, CDC streams, long-poll HTTP).
+
+```go
+kitsune.Retry(
+    kitsune.Generate(websocketTail),
+    kitsune.RetryForever(kitsune.ExponentialBackoff(100*time.Millisecond, 30*time.Second)),
+)
+```
+
+Unlike `OnError(RetryMax(...))` which retries individual item transformations within a running stage, `Retry` tears down and re-subscribes to the source pipeline on each attempt. Items emitted during failed attempts are forwarded downstream immediately and not replayed.
+
+| Constructor | Behaviour |
+|---|---|
+| [`RetryUpTo(n, backoff)`](operators.md#retry) | At most `n` total attempts including the first |
+| [`RetryForever(backoff)`](operators.md#retry) | Retry indefinitely until context cancellation |
+
+The `RetryPolicy` type exposes `WithRetryable(fn)` to restrict which errors trigger a retry and `WithOnRetry(fn)` for logging or metrics hooks.
 
 ---
 

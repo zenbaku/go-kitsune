@@ -503,7 +503,7 @@ func TestDeadLetterWithRetry(t *testing.T) {
 			}
 			return "ok", nil
 		},
-		kitsune.OnError(kitsune.Retry(1, kitsune.FixedBackoff(0))),
+		kitsune.OnError(kitsune.RetryMax(1, kitsune.FixedBackoff(0))),
 	)
 
 	var okItems []string
@@ -530,7 +530,7 @@ func TestDeadLetterRetryExhausted(t *testing.T) {
 
 	ok, dlq := kitsune.DeadLetter(kitsune.FromSlice([]int{1, 2}),
 		func(_ context.Context, _ int) (string, error) { return "", boom },
-		kitsune.OnError(kitsune.Retry(1, kitsune.FixedBackoff(0))),
+		kitsune.OnError(kitsune.RetryMax(1, kitsune.FixedBackoff(0))),
 	)
 
 	var okItems []string

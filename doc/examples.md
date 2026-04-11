@@ -659,7 +659,7 @@ Retry with a dead-letter fallback. Successful items (including those that succee
         ids := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 7, 8})
         ok, dlq := kitsune.DeadLetter(
             ids, fetchProfile,
-            kitsune.OnError(kitsune.Retry(3, kitsune.FixedBackoff(1*time.Millisecond))),
+            kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(1*time.Millisecond))),
         )
 
         var mu sync.Mutex

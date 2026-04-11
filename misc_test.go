@@ -391,7 +391,7 @@ func TestStageErrorWithRetry(t *testing.T) {
 			return 0, boom
 		},
 		kitsune.WithName("retry-stage"),
-		kitsune.OnError(kitsune.Retry(2, kitsune.FixedBackoff(0))),
+		kitsune.OnError(kitsune.RetryMax(2, kitsune.FixedBackoff(0))),
 	)
 	_, err := p.Collect(context.Background())
 	if err == nil {
