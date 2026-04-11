@@ -141,6 +141,9 @@ A zero-size buffer makes every send block until the receiver is ready. Useful fo
 
 By default each stage runs on a single goroutine. `Concurrency(n)` starts `n` goroutines, all reading from the same input channel.
 
+!!! tip "Choosing a concurrency model"
+    This section covers the performance knobs for `Concurrency(n)`. If you are deciding *which* concurrency primitive to use (`Concurrency`, `Ordered`, `MapWithKey`, or `Partition`/`Balance`), see the [Concurrency Guide](concurrency-guide.md).
+
 **Use for I/O-bound stages:**
 ```go
 pipe.Concurrency(20) // HTTP enrichment, DB lookups, file reads

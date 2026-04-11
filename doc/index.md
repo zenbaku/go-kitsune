@@ -98,6 +98,10 @@ Add one line to any running pipeline to open a real-time web dashboard with a li
 
     Buffer sizing, concurrency settings, batching strategies, and GC-pressure trade-offs.
 
+- :material-transit-connection-variant: [**Concurrency Guide**](concurrency-guide.md)
+
+    When to reach for `Concurrency(n)`, `Ordered()`, `MapWithKey`, or `Partition`: decision flowchart and worked examples.
+
 - :material-play-circle-outline: [**Examples**](examples.md)
 
     20 runnable examples with full source code and Go Playground links.

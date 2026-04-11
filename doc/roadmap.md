@@ -48,7 +48,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### Developer experience
 
-- [ ] **"Choosing a concurrency model" guide**: document when to reach for each of the four concurrency primitives: `Concurrency(n)` (embarrassingly parallel, order optional), `Ordered()` (parallel but preserve input order), `MapWith` key-sharding (per-entity sequential, no locks), `Balance` + `Partition` (explicit fan-out). Include a decision flowchart and worked examples for the most common patterns: per-user rate limiting, parallel enrichment with ordering, stateful aggregation.
+- [x] **"Choosing a concurrency model" guide**: document when to reach for each of the four concurrency primitives: `Concurrency(n)` (embarrassingly parallel, order optional), `Ordered()` (parallel but preserve input order), `MapWith` key-sharding (per-entity sequential, no locks), `Balance` + `Partition` (explicit fan-out). Include a decision flowchart and worked examples for the most common patterns: per-user rate limiting, parallel enrichment with ordering, stateful aggregation.
 
 - [x] **Fast-path eligibility documentation**: the fast-path and stage-fusion optimizations are entirely opaque. Users who add a `WithHook` for debugging or set `Concurrency(2)` don't know they've disabled the fast path, and can't diagnose the resulting throughput drop. Add a section in `doc/tuning.md` listing the exact conditions for fast-path eligibility and stage fusion, and expose `Pipeline.IsOptimized() bool` (or similar) for use in tests.
 
