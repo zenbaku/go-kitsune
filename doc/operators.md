@@ -459,7 +459,7 @@ kitsune.Catch(primaryFeed, func(err error) *kitsune.Pipeline[Event] {
 func Retry[T any](p *Pipeline[T], pol RetryPolicy) *Pipeline[T]
 ```
 
-Re-runs the entire pipeline `p` from scratch whenever it errors, according to `pol`. This is the right primitive for sources that must reconnect on failure — websocket tails, change-data-capture streams, long-poll HTTP — where the correct response to a disconnect is to re-establish the connection and resume.
+Re-runs the entire pipeline `p` from scratch whenever it errors, according to `pol`. This is the right primitive for sources that must reconnect on failure: websocket tails, change-data-capture streams, long-poll HTTP. The correct response to a disconnect is to re-establish the connection and resume.
 
 Items produced during any attempt (including partial output from a failed attempt) are forwarded downstream immediately; `Retry` does not buffer or replay. Downstream observes the concatenation of each attempt's output.
 
@@ -2499,7 +2499,7 @@ func RetryThen(n int, b Backoff, fallback ErrorHandler) ErrorHandler
 
 Retry the current item up to `n` times with backoff `b`. `RetryMax` halts after exhausting retries; `RetryThen` delegates to `fallback` (e.g., `ActionDrop()`).
 
-These are error handlers for use with `OnError` — they retry the individual item's transformation function, not the pipeline as a whole. To re-subscribe to an entire upstream source on failure, use the [`Retry`](#retry) operator instead.
+These are error handlers for use with `OnError`; they retry the individual item's transformation function, not the pipeline as a whole. To re-subscribe to an entire upstream source on failure, use the [`Retry`](#retry) operator instead.
 
 ### Backoff helpers
 

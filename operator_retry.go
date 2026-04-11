@@ -58,7 +58,7 @@ func RetryForever(b Backoff) RetryPolicy {
 
 // Retry re-runs the entire pipeline p whenever it errors, according to pol.
 // It is the right primitive for sources that must reconnect on failure —
-// websocket tails, change-data-capture streams, long-poll HTTP — where the
+// websocket tails, change-data-capture streams, long-poll HTTP: where the
 // correct response to a disconnect is to re-establish the connection and
 // resume.
 //

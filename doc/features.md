@@ -164,7 +164,7 @@ Configurable backoff between restart attempts prevents tight retry loops on pers
 
 ## :material-refresh: Pipeline-level retry
 
-[`Retry`](operators.md#retry) re-runs an entire upstream pipeline from scratch when it errors — the right primitive for sources that must reconnect on failure (websocket tails, CDC streams, long-poll HTTP).
+[`Retry`](operators.md#retry) re-runs an entire upstream pipeline from scratch when it errors: the right primitive for sources that must reconnect on failure (websocket tails, CDC streams, long-poll HTTP).
 
 ```go
 kitsune.Retry(
