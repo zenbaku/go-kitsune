@@ -48,20 +48,11 @@ jobs:
       - name: Examples — smoke test all runnable examples
         run: go test -v -run TestExamples -timeout 120s -count=1 .
 
-      - name: tails/kredis — Redis e2e tests
-        run: cd tails/kredis && go test -race -count=1 -timeout 30s ./...
-
-      - name: tails/ksqlite — SQLite tests
-        run: cd tails/ksqlite && go test -race -count=1 -timeout 30s ./...
-
-      - name: tails/kfile — file/CSV/JSON tests
-        run: cd tails/kfile && go test -race -count=1 -timeout 30s ./...
-
-      - name: tails/khttp — HTTP tests
-        run: cd tails/khttp && go test -race -count=1 -timeout 30s ./...
-
-      - name: tails/kotel — OpenTelemetry tests
-        run: cd tails/kotel && go test -race -count=1 -timeout 30s ./...
+      - name: Tails — unified integration matrix
+        run: >
+          go run ./internal/tools/tailmatrix
+          -timeout=90s -race
+          -require=kredis,ksqlite,kfile,khttp,kotel
 
   bench:
     name: Benchmark regression check

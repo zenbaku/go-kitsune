@@ -49,10 +49,9 @@ tasks:
       - rm -f coverage.out
 
   test:ext:
-    desc: Run tail tests (kredis, ksqlite, kfile, khttp)
+    desc: Run every tail integration package and print a unified pass/fail/skip matrix
     cmds:
-      - for: [kredis, ksqlite, kfile, khttp, kotel, kprometheus, knats, kjetstream, kpubsub, kgrpc, ksqs, kdatadog, kmongo, kclickhouse, kwebsocket, kmqtt, kkinesis, kpulsar, kes, kdynamo, kgcs, kazsb, kazeh]
-        cmd: echo "=== tails/{{.ITEM}} ===" && cd tails/{{.ITEM}} && go test -race -count=1 -timeout 30s ./...
+      - go run ./internal/tools/tailmatrix -timeout=60s -race
 
   test:property:
     desc: Run property-based tests (rapid) at full iteration count (100 checks each)
