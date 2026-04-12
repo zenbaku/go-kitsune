@@ -123,6 +123,10 @@ func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(contex
 }
 
 func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -143,7 +147,7 @@ func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 					}
 					itemCtx, cancelItem := itemContext(ctx, cfg)
 					start := time.Now()
-					err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, item, cfg.errorHandler, send)
+					err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, item, cfg.errorHandler, send, ctxMapper)
 					dur := time.Since(start)
 					cancelItem()
 					if err == internal.ErrSkipped {
@@ -168,6 +172,10 @@ func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 // flatMapConcurrent does not support supervision (Supervise stage option is silently
 // ignored when Concurrency > 1). Use Concurrency(1) to enable supervision on FlatMap.
 func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -207,7 +215,7 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 							itemCtx, cancelItem := itemContext(innerCtx, cfg)
 							send := func(v O) error { return outbox.Send(innerCtx, v) }
 							start := time.Now()
-							err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+							err, attempt := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send, ctxMapper)
 							dur := time.Since(start)
 							cancelItem()
 							if err != nil && err != internal.ErrSkipped {
@@ -243,6 +251,10 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 }
 
 func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	type result struct {
 		items []O
 		dur   time.Duration
@@ -338,7 +350,7 @@ func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Conte
 							return nil
 						}
 						start := time.Now()
-						err, att := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, collect)
+						err, att := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, collect, ctxMapper)
 						dur := time.Since(start)
 						cancelItem()
 						sc <- result{items: buf, dur: dur, err: err, att: att}

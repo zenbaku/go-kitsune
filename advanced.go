@@ -54,6 +54,10 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
 		cfg.errorHandler = resolveHandler(cfg, rc)
+		var ctxMapperSwitch func(I) context.Context
+		if raw := cfg.contextMapperFn; raw != nil {
+			ctxMapperSwitch = raw.(func(I) context.Context)
+		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
@@ -109,7 +113,7 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 								// Use ic for sends so a cancelled goroutine doesn't
 								// block on a full channel or write to a closed one.
 								send := func(v O) error { return outbox.Send(ic, v) }
-								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send, ctxMapperSwitch)
 								if err != nil && err != internal.ErrSkipped && ic.Err() == nil {
 									reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
 								}
@@ -194,6 +198,10 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 		}
 		cfg := cfg // local copy; resolve pipeline-level default handler
 		cfg.errorHandler = resolveHandler(cfg, rc)
+		var ctxMapperExhaust func(I) context.Context
+		if raw := cfg.contextMapperFn; raw != nil {
+			ctxMapperExhaust = raw.(func(I) context.Context)
+		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
@@ -229,7 +237,7 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 								itemCtx, cancelItem := itemContext(ctx, cfg)
 								defer cancelItem()
 								send := func(v O) error { return outbox.Send(ctx, v) }
-								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send)
+								err, _ := internal.ProcessFlatMapItem(itemCtx, fn, it, cfg.errorHandler, send, ctxMapperExhaust)
 								if err != nil && err != internal.ErrSkipped && ctx.Err() == nil {
 									reportErr(errCh, internal.WrapStageErr(cfg.name, err, 0))
 								}

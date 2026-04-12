@@ -21,6 +21,7 @@ func isFastPathEligible(cfg stageConfig, hook internal.Hook) bool {
 		internal.IsDefaultHandler(cfg.errorHandler) &&
 		cfg.overflow == internal.OverflowBlock &&
 		cfg.timeout == 0 &&
+		cfg.contextMapperFn == nil &&
 		internal.IsNoopHook(hook)
 }
 
@@ -32,7 +33,8 @@ func isFastPathEligibleCfg(cfg stageConfig) bool {
 		!cfg.supervision.HasSupervision() &&
 		internal.IsDefaultHandler(cfg.errorHandler) &&
 		cfg.overflow == internal.OverflowBlock &&
-		cfg.timeout == 0
+		cfg.timeout == 0 &&
+		cfg.contextMapperFn == nil
 }
 
 // resolveHandler returns the effective ErrorHandler for a stage, applying the

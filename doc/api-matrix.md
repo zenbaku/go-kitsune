@@ -58,6 +58,7 @@ Documents every exported operator and which `StageOption` features each one actu
 - `Drain` returns a `DrainRunner[T]` with a `Build()` method for use with `MergeRunners`.
 - Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column). See [doc/tuning.md](tuning.md#fast-path-and-stage-fusion) for exact eligibility conditions.
 - `Pipeline[T].IsOptimized(opts ...RunOption) []OptimizationReport` reports fast-path and fusion eligibility for each stage. `Pipeline[T].IsFastPath(opts ...RunOption) bool` is a convenience wrapper. Both are non-destructive.
+- **`WithContextMapper[T](fn func(T) context.Context)`** is accepted by `Map`, `FlatMap`, and `ForEach`. It extracts a per-item context from each item using `fn`, enabling per-item tracing or baggage propagation without requiring the item type to implement `ContextCarrier`. When set, it takes precedence over `ContextCarrier`. Setting `WithContextMapper` disqualifies the stage from the fast path (**FP** = `–` when set). See [`doc/options.md`](options.md#withcontextmappertfn-functcontext-context) for full details.
 
 ---
 

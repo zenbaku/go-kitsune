@@ -40,3 +40,14 @@ func ItemCtx[T any](stageCtx context.Context, item T) context.Context {
 	}
 	return stageCtx
 }
+
+// ItemCtxWithMapper returns a merged context using mapper to extract per-item
+// values from item. The mapper takes precedence over ContextCarrier: if item
+// also implements ContextCarrier, only the mapper is used. If mapper returns
+// nil, stageCtx is returned unchanged.
+func ItemCtxWithMapper[T any](stageCtx context.Context, item T, mapper func(T) context.Context) context.Context {
+	if itemValues := mapper(item); itemValues != nil {
+		return carrierCtx{Context: stageCtx, values: itemValues}
+	}
+	return stageCtx
+}

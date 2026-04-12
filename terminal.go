@@ -59,6 +59,10 @@ func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error) stag
 
 // forEachSerial is the full-featured serial path: OnError, Supervise, hooks.
 func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(T) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(T) context.Context)
+	}
 	adaptedFn := func(ctx context.Context, item T) (struct{}, error) {
 		return struct{}{}, fn(ctx, item)
 	}
@@ -78,7 +82,7 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 					}
 					itemCtx, cancelItem := itemContext(ctx, cfg)
 					start := time.Now()
-					_, err, attempt := internal.ProcessItem(itemCtx, adaptedFn, item, cfg.errorHandler)
+					_, err, attempt := internal.ProcessItem(itemCtx, adaptedFn, item, cfg.errorHandler, ctxMapper)
 					dur := time.Since(start)
 					cancelItem()
 					if err == internal.ErrSkipped {
@@ -105,6 +109,10 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 // forEachConcurrent runs n goroutines in parallel, each reading from the shared
 // inCh and calling fn. There is no output channel — fn is the side effect.
 func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(T) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(T) context.Context)
+	}
 	adaptedFn := func(ctx context.Context, item T) (struct{}, error) {
 		return struct{}{}, fn(ctx, item)
 	}
@@ -142,7 +150,7 @@ func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cf
 
 							itemCtx, cancelItem := itemContext(innerCtx, cfg)
 							start := time.Now()
-							_, err, attempt := internal.ProcessItem(itemCtx, adaptedFn, it, cfg.errorHandler)
+							_, err, attempt := internal.ProcessItem(itemCtx, adaptedFn, it, cfg.errorHandler, ctxMapper)
 							dur := time.Since(start)
 							cancelItem()
 							if err == internal.ErrSkipped {
@@ -182,6 +190,10 @@ func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cf
 // input order. Workers execute fn concurrently; the drainer reads results in
 // insertion order and reports errors deterministically.
 func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(T) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(T) context.Context)
+	}
 	adaptedFn := func(ctx context.Context, item T) (struct{}, error) {
 		return struct{}{}, fn(ctx, item)
 	}
@@ -259,7 +271,7 @@ func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg s
 						defer func() { <-sem }()
 						itemCtx, cancelItem := itemContext(innerCtx, cfg)
 						start := time.Now()
-						_, err, att := internal.ProcessItem(itemCtx, adaptedFn, it, cfg.errorHandler)
+						_, err, att := internal.ProcessItem(itemCtx, adaptedFn, it, cfg.errorHandler, ctxMapper)
 						dur := time.Since(start)
 						cancelItem()
 						sc <- result{dur: dur, err: err, att: att}

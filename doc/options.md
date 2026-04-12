@@ -336,3 +336,39 @@ kitsune.MapWithKey(events,
 ```
 
 To apply the same TTL to all `MapWithKey` and `FlatMapWithKey` stages in a run without annotating each one, use the run-level option `WithDefaultKeyTTL(d)`. Per-stage `WithKeyTTL` takes precedence; `WithKeyTTL(0)` explicitly disables eviction for a stage even when a run-level default is set.
+
+---
+
+## `WithContextMapper[T](fn func(T) context.Context)`
+
+**Applies to:** `Map`, `FlatMap`, `ForEach`
+
+Extracts a per-item context from each item using `fn`, enabling per-item tracing or baggage propagation without requiring the item type to implement [`ContextCarrier`](../kitsune.go).
+
+The returned context contributes values only (e.g. the active trace span). Cancellation and deadlines still come from the stage context, so pipeline shutdown and per-item `Timeout` behaviour are unaffected.
+
+**When to use:** when your item type is a third-party struct (Kafka messages, protobuf types, stdlib types) that cannot implement `ContextCarrier`. For item types you own, implementing `ContextCarrier` is often simpler.
+
+**Precedence:** when `WithContextMapper` is set, it takes precedence over `ContextCarrier`. If the item type implements both, only the mapper function is called.
+
+**Fast-path note:** setting `WithContextMapper` disqualifies a stage from the micro-batching fast path. For tracing-intensive workloads this is negligible (span creation costs far exceed the routing overhead), but it is worth knowing if you are tuning throughput on a hot non-tracing stage.
+
+```go
+// QueueMessage is a third-party type — cannot implement ContextCarrier.
+type QueueMessage struct {
+    Body    string
+    Headers map[string]string // carries W3C traceparent, etc.
+}
+
+msgs := kitsune.FromChan(queueCh)
+processed := kitsune.Map(msgs, processMsg,
+    kitsune.WithContextMapper(func(m QueueMessage) context.Context {
+        // Extract the trace context from the message headers.
+        return otel.GetTextMapPropagator().Extract(
+            context.Background(), propagation.MapCarrier(m.Headers),
+        )
+    }),
+)
+```
+
+If `fn` returns `nil`, the stage context is used unchanged — same behaviour as when `WithContextMapper` is not set.

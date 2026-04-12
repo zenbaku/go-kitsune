@@ -20,22 +20,23 @@ type StageOption func(*stageConfig)
 type RunOption func(*runConfig)
 
 type stageConfig struct {
-	name           string
-	concurrency    int
-	ordered        bool
-	buffer         int
-	bufferExplicit bool // true when Buffer(n) was called explicitly
-	overflow       internal.Overflow
-	errorHandler   internal.ErrorHandler
-	batchTimeout   time.Duration
-	supervision    internal.SupervisionPolicy
-	cacheConfig    *stageCacheConfig
-	timeout        time.Duration
-	keyTTL         time.Duration // WithKeyTTL: evict per-key Ref after this much inactivity
-	keyTTLExplicit bool          // true when WithKeyTTL was called explicitly
-	dedupSet       DedupSet
-	clock          internal.Clock
-	visitedKeyFn   any // func(T) string, type-erased; set by VisitedBy[T]
+	name            string
+	concurrency     int
+	ordered         bool
+	buffer          int
+	bufferExplicit  bool // true when Buffer(n) was called explicitly
+	overflow        internal.Overflow
+	errorHandler    internal.ErrorHandler
+	batchTimeout    time.Duration
+	supervision     internal.SupervisionPolicy
+	cacheConfig     *stageCacheConfig
+	timeout         time.Duration
+	keyTTL          time.Duration // WithKeyTTL: evict per-key Ref after this much inactivity
+	keyTTLExplicit  bool          // true when WithKeyTTL was called explicitly
+	dedupSet        DedupSet
+	clock           internal.Clock
+	visitedKeyFn    any // func(T) string, type-erased; set by VisitedBy[T]
+	contextMapperFn any // func(T) context.Context, type-erased; set by WithContextMapper[T]
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -157,6 +158,32 @@ func WithDedupSet(s DedupSet) StageOption {
 func VisitedBy[T any](keyFn func(T) string) StageOption {
 	return func(c *stageConfig) {
 		c.visitedKeyFn = keyFn
+	}
+}
+
+// WithContextMapper extracts a context from each item using fn, enabling
+// per-item context propagation (trace spans, baggage) without requiring the
+// item type to implement [ContextCarrier]. The returned context contributes
+// values only; cancellation and deadlines still come from the stage context.
+//
+// When set, WithContextMapper takes precedence over [ContextCarrier]: if the
+// item type also implements ContextCarrier, only the mapper function is used
+// and ContextCarrier.Context() is not called.
+//
+// WithContextMapper is supported on [Map], [FlatMap], and [ForEach].
+//
+// Example — propagating an OpenTelemetry span from a Kafka message without
+// modifying the message type:
+//
+//	msgs := kitsune.FromChan(kafkaMsgs)
+//	processed := kitsune.Map(msgs, processMsg,
+//	    kitsune.WithContextMapper(func(m *sarama.ConsumerMessage) context.Context {
+//	        return otel.GetTextMapPropagator().Extract(ctx, kafkaHeaderCarrier(m.Headers))
+//	    }),
+//	)
+func WithContextMapper[T any](fn func(T) context.Context) StageOption {
+	return func(c *stageConfig) {
+		c.contextMapperFn = fn
 	}
 }
 

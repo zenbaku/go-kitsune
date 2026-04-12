@@ -189,6 +189,10 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 }
 
 func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -208,7 +212,7 @@ func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I
 					}
 					itemCtx, cancelItem := itemContext(ctx, cfg)
 					start := time.Now()
-					val, err, attempt := internal.ProcessItem(itemCtx, fn, item, cfg.errorHandler)
+					val, err, attempt := internal.ProcessItem(itemCtx, fn, item, cfg.errorHandler, ctxMapper)
 					dur := time.Since(start)
 					cancelItem()
 					if err == internal.ErrSkipped {
@@ -288,6 +292,10 @@ func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 }
 
 func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -326,7 +334,7 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 
 							itemCtx, cancelItem := itemContext(innerCtx, cfg)
 							start := time.Now()
-							val, err, attempt := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
+							val, err, attempt := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler, ctxMapper)
 							dur := time.Since(start)
 							cancelItem()
 							if err == internal.ErrSkipped {
@@ -369,6 +377,10 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 }
 
 func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	type result struct {
 		val O
 		dur time.Duration
@@ -461,7 +473,7 @@ func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, 
 						defer func() { <-sem }()
 						itemCtx, cancelItem := itemContext(innerCtx, cfg)
 						start := time.Now()
-						val, err, att := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler)
+						val, err, att := internal.ProcessItem(itemCtx, fn, it, cfg.errorHandler, ctxMapper)
 						dur := time.Since(start)
 						cancelItem()
 						sc <- result{val: val, dur: dur, err: err, att: att}

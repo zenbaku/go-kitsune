@@ -28,6 +28,7 @@ func TestExamples(t *testing.T) {
 		"caching",
 		"channel",
 		"circuitbreaker",
+		"contextmapper",
 		"concurrent",
 		"concurrency-guide/enrich",
 		"concurrency-guide/routing",

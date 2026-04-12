@@ -66,6 +66,9 @@ type BufferStatus = internal.BufferStatus
 // and per-item timeouts work correctly. The item's context contributes only
 // its values (e.g. the active trace span).
 //
+// For third-party types that cannot implement this interface (Kafka messages,
+// protobuf-generated types, stdlib types), use [WithContextMapper] instead.
+//
 // Example:
 //
 //	type Order struct {

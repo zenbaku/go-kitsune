@@ -91,6 +91,10 @@ func mapWithKeySerial[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -112,7 +116,7 @@ func mapWithKeySerial[I, O, S any](
 					start := time.Now()
 					val, err, attempt := internal.ProcessItem(ctx, func(ctx context.Context, it I) (O, error) {
 						return fn(ctx, ref, it)
-					}, item, cfg.errorHandler)
+					}, item, cfg.errorHandler, ctxMapper)
 					dur := time.Since(start)
 					if err == internal.ErrSkipped {
 						errs++
@@ -150,6 +154,10 @@ func mapWithKeyConcurrent[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -182,7 +190,7 @@ func mapWithKeyConcurrent[I, O, S any](
 						start := time.Now()
 						val, err, attempt := internal.ProcessItem(innerCtx, func(ctx context.Context, it I) (O, error) {
 							return fn(ctx, ref, it)
-						}, item, cfg.errorHandler)
+						}, item, cfg.errorHandler, ctxMapper)
 						dur := time.Since(start)
 						if err == internal.ErrSkipped {
 							errCount.Add(1)
@@ -257,6 +265,10 @@ func mapWithKeyOrdered[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	type result struct {
 		val O
 		dur time.Duration
@@ -335,7 +347,7 @@ func mapWithKeyOrdered[I, O, S any](
 						start := time.Now()
 						val, err, att := internal.ProcessItem(innerCtx, func(ctx context.Context, it I) (O, error) {
 							return fn(ctx, ref, it)
-						}, wi.item, cfg.errorHandler)
+						}, wi.item, cfg.errorHandler, ctxMapper)
 						dur := time.Since(start)
 						wi.slot <- result{val: val, dur: dur, err: err, att: att}
 					}
@@ -531,6 +543,10 @@ func flatMapWithKeySerial[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -554,7 +570,7 @@ func flatMapWithKeySerial[I, O, S any](
 						return fn(ctx, ref, it, yield)
 					}
 					start := time.Now()
-					err, attempt := internal.ProcessFlatMapItem(ctx, adaptedFn, item, cfg.errorHandler, send)
+					err, attempt := internal.ProcessFlatMapItem(ctx, adaptedFn, item, cfg.errorHandler, send, ctxMapper)
 					dur := time.Since(start)
 					if err == internal.ErrSkipped {
 						errs++
@@ -586,6 +602,10 @@ func flatMapWithKeyConcurrent[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
 		defer func() { go internal.DrainChan(inCh) }()
@@ -620,7 +640,7 @@ func flatMapWithKeyConcurrent[I, O, S any](
 							return fn(ctx, ref, it, yield)
 						}
 						start := time.Now()
-						err, attempt := internal.ProcessFlatMapItem(innerCtx, adaptedFn, item, cfg.errorHandler, send)
+						err, attempt := internal.ProcessFlatMapItem(innerCtx, adaptedFn, item, cfg.errorHandler, send, ctxMapper)
 						dur := time.Since(start)
 						if err == internal.ErrSkipped {
 							errCount.Add(1)
@@ -688,6 +708,10 @@ func flatMapWithKeyOrdered[I, O, S any](
 	cfg stageConfig,
 	hook internal.Hook,
 ) stageFunc {
+	var ctxMapper func(I) context.Context
+	if raw := cfg.contextMapperFn; raw != nil {
+		ctxMapper = raw.(func(I) context.Context)
+	}
 	type result struct {
 		items []O
 		dur   time.Duration
@@ -774,7 +798,7 @@ func flatMapWithKeyOrdered[I, O, S any](
 							return fn(ctx, ref, it, yield)
 						}
 						start := time.Now()
-						err, att := internal.ProcessFlatMapItem(innerCtx, adaptedFn, wi.item, cfg.errorHandler, collectYield)
+						err, att := internal.ProcessFlatMapItem(innerCtx, adaptedFn, wi.item, cfg.errorHandler, collectYield, ctxMapper)
 						dur := time.Since(start)
 						wi.slot <- result{items: items, dur: dur, err: err, att: att}
 					}

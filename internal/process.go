@@ -105,16 +105,24 @@ func WrapStageErr(name string, err error, attempt int) error {
 // ProcessItem invokes fn with retry/skip/halt logic.
 // The third return value is the final attempt index (0-based); callers use it
 // to populate [StageError] via [WrapStageErr].
+// ctxMapper, when non-nil, extracts per-item context values and takes
+// precedence over the ContextCarrier interface. Pass nil to use ContextCarrier.
 func ProcessItem[I, O any](
 	ctx context.Context,
 	fn func(context.Context, I) (O, error),
 	item I,
 	h ErrorHandler,
+	ctxMapper func(I) context.Context,
 ) (O, error, int) {
 	if h == nil {
 		h = DefaultHandler{}
 	}
-	fnCtx := ItemCtx(ctx, item)
+	var fnCtx context.Context
+	if ctxMapper != nil {
+		fnCtx = ItemCtxWithMapper(ctx, item, ctxMapper)
+	} else {
+		fnCtx = ItemCtx(ctx, item)
+	}
 	for attempt := 0; ; attempt++ {
 		result, err := fn(fnCtx, item)
 		if err == nil {
@@ -155,17 +163,25 @@ func ProcessItem[I, O any](
 
 // ProcessFlatMapItem invokes fn with a yield callback, handling retry/skip/halt logic.
 // Returns (err, attempt). On ActionReturn, behaves like ActionSkip (no single replacement).
+// ctxMapper, when non-nil, extracts per-item context values and takes
+// precedence over the ContextCarrier interface. Pass nil to use ContextCarrier.
 func ProcessFlatMapItem[I, O any](
 	ctx context.Context,
 	fn func(context.Context, I, func(O) error) error,
 	item I,
 	h ErrorHandler,
 	send func(O) error,
+	ctxMapper func(I) context.Context,
 ) (error, int) {
 	if h == nil {
 		h = DefaultHandler{}
 	}
-	fnCtx := ItemCtx(ctx, item)
+	var fnCtx context.Context
+	if ctxMapper != nil {
+		fnCtx = ItemCtxWithMapper(ctx, item, ctxMapper)
+	} else {
+		fnCtx = ItemCtx(ctx, item)
+	}
 	for attempt := 0; ; attempt++ {
 		// Collect results into a buffer; only flush on success.
 		var buf []O

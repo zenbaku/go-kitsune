@@ -186,7 +186,7 @@ func DeadLetter[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 	// retrying wraps fn with the retry loop from opts. On permanent failure
 	// the error propagates to MapResult, which routes it to the dlq port.
 	retrying := func(ctx context.Context, item I) (O, error) {
-		result, err, _ := internal.ProcessItem(ctx, fn, item, handler)
+		result, err, _ := internal.ProcessItem(ctx, fn, item, handler, nil)
 		return result, err
 	}
 
@@ -210,7 +210,7 @@ func DeadLetterSink[I any](p *Pipeline[I], fn func(context.Context, I) error, op
 		voidFn := func(ctx context.Context, v I) (struct{}, error) {
 			return struct{}{}, fn(ctx, v)
 		}
-		result, err, _ := internal.ProcessItem(ctx, voidFn, item, handler)
+		result, err, _ := internal.ProcessItem(ctx, voidFn, item, handler, nil)
 		return result, err
 	}
 
