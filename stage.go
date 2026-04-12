@@ -1,6 +1,9 @@
 package kitsune
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // ---------------------------------------------------------------------------
 // Stage — composable pipeline transformer
@@ -48,15 +51,24 @@ func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T] {
 // If primary succeeds its result is emitted; if primary returns an error,
 // fallback is called with the same item and its result (or error) is used.
 //
+// If both primary and fallback return errors, the returned error wraps both
+// via [errors.Join] so neither is silently discarded. Callers can inspect
+// either cause with [errors.Is] or [errors.As].
+//
 //	fetch := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
 func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ...StageOption) Stage[I, O] {
 	return func(p *Pipeline[I]) *Pipeline[O] {
 		return Map(p, func(ctx context.Context, item I) (O, error) {
-			result, err := primary(ctx, item)
-			if err != nil {
-				return fallback(ctx, item)
+			result, primaryErr := primary(ctx, item)
+			if primaryErr == nil {
+				return result, nil
 			}
-			return result, nil
+			result, fallbackErr := fallback(ctx, item)
+			if fallbackErr == nil {
+				return result, nil
+			}
+			var zero O
+			return zero, errors.Join(primaryErr, fallbackErr)
 		}, opts...)
 	}
 }

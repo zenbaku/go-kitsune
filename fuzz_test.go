@@ -208,11 +208,11 @@ func FuzzPipelineMultiStage(f *testing.F) {
 // acceptable by design.
 func FuzzBloomDedupSet(f *testing.F) {
 	// Seed corpus: NUL-delimited key lists
-	f.Add([]byte("\x00"))                              // one empty-string key
-	f.Add([]byte("hello\x00world\x00foo"))             // three ASCII keys
+	f.Add([]byte("\x00"))                             // one empty-string key
+	f.Add([]byte("hello\x00world\x00foo"))            // three ASCII keys
 	f.Add([]byte("\xe2\x9c\x93\x00\xf0\x9f\x92\xa9")) // two UTF-8 keys
-	f.Add([]byte("a"))                                 // single key, no delimiter
-	f.Add([]byte("\x00\x00\x00"))                      // three empty-string keys (repeated add)
+	f.Add([]byte("a"))                                // single key, no delimiter
+	f.Add([]byte("\x00\x00\x00"))                     // three empty-string keys (repeated add)
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Split on NUL to derive a list of string keys.

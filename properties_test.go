@@ -1222,11 +1222,12 @@ func TestPropWithKeyTTLResetAfterEviction(t *testing.T) {
 				t.Fatalf("before[%d]: got %d, want %d", i, got[i], i+1)
 			}
 		}
-		// After eviction: counter restarts from 1.
-		for i := 0; i < nAfter; i++ {
-			if got[nBefore+i] != i+1 {
-				t.Fatalf("after[%d]: got %d, want %d (eviction reset expected)", i, got[nBefore+i], i+1)
-			}
+		// After eviction: counter restarts from 1. Only the first after-item is
+		// asserted: subsequent items might trigger another TTL eviction on a
+		// loaded system (which is correct WithKeyTTL behaviour), so asserting
+		// a strictly incrementing sequence would be a false invariant.
+		if got[nBefore] != 1 {
+			t.Fatalf("after[0]: got %d, want 1 (eviction reset expected)", got[nBefore])
 		}
 	})
 }

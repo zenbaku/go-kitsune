@@ -2710,6 +2710,8 @@ func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ..
 
 `Or` creates a `Stage` that tries `primary` and falls back to `fallback` if `primary` returns an error. Both functions are called with the same item.
 
+If both `primary` and `fallback` return errors, the returned error wraps both via `errors.Join` so neither is silently discarded. Both causes are inspectable with `errors.Is` / `errors.As`.
+
 ```go
 // Define reusable pipeline stages.
 var ParseStage kitsune.Stage[string, Event] = func(lines *kitsune.Pipeline[string]) *kitsune.Pipeline[Event] {

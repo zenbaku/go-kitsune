@@ -2,6 +2,7 @@ package kitsune
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -238,8 +239,11 @@ func deadLetterPassOpts(opts []StageOption) []StageOption {
 // ---------------------------------------------------------------------------
 
 // Or returns a Stage that tries s first and, on error, calls fallback with the
-// same input to produce a value. The returned Stage never propagates an error
-// from s — fallback is always called on failure.
+// same input to produce a value.
+//
+// If both s and fallback return errors, the returned error wraps both via
+// [errors.Join] so neither is silently discarded. Callers can inspect either
+// cause with [errors.Is] or [errors.As].
 //
 //	fetch := kitsune.Stage[ID, User](func(p *Pipeline[ID]) *Pipeline[User] {
 //	    return kitsune.Map(p, fetchFromDB)
@@ -252,17 +256,19 @@ func (s Stage[I, O]) Or(fallback Stage[I, O]) Stage[I, O] {
 		// Run each item through s first; on failure (error or no output) fall back.
 		// We use Map with an item-level function that runs sub-pipelines directly.
 		return Map(p, func(ctx context.Context, v I) (O, error) {
-			result, ok, _ := First(ctx, s(FromSlice([]I{v})))
-			if ok {
-				return result, nil
+			// Use Collect (not First) so that stage errors are captured rather
+			// than silently discarded.
+			results, primaryErr := Collect(ctx, s(FromSlice([]I{v})))
+			if primaryErr == nil && len(results) > 0 {
+				return results[0], nil
 			}
 			// Primary produced no output (errored or empty) — try fallback.
-			result, ok, err := First(ctx, fallback(FromSlice([]I{v})))
-			if ok {
-				return result, nil
+			results, fallbackErr := Collect(ctx, fallback(FromSlice([]I{v})))
+			if fallbackErr == nil && len(results) > 0 {
+				return results[0], nil
 			}
 			var zero O
-			return zero, err
+			return zero, errors.Join(primaryErr, fallbackErr)
 		})
 	}
 }

@@ -383,6 +383,48 @@ func TestOr_BothFail(t *testing.T) {
 	}
 }
 
+func TestOr_BothFailJoinsDistinctErrors(t *testing.T) {
+	ctx := context.Background()
+	errPrimary := errors.New("primary failed")
+	errFallback := errors.New("fallback failed")
+	stage := kitsune.Or(
+		func(_ context.Context, n int) (string, error) { return "", errPrimary },
+		func(_ context.Context, n int) (string, error) { return "", errFallback },
+	)
+	_, err := stage.Apply(kitsune.FromSlice([]int{1})).Collect(ctx)
+	if !errors.Is(err, errPrimary) {
+		t.Errorf("expected primary error in joined error, got %v", err)
+	}
+	if !errors.Is(err, errFallback) {
+		t.Errorf("expected fallback error in joined error, got %v", err)
+	}
+}
+
+func TestStageOr_BothFailJoinsErrors(t *testing.T) {
+	ctx := context.Background()
+	errPrimary := errors.New("primary failed")
+	errFallback := errors.New("fallback failed")
+
+	primary := kitsune.Stage[int, string](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, _ int) (string, error) {
+			return "", errPrimary
+		})
+	})
+	fallback := kitsune.Stage[int, string](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, _ int) (string, error) {
+			return "", errFallback
+		})
+	})
+
+	_, err := primary.Or(fallback).Apply(kitsune.FromSlice([]int{1})).Collect(ctx)
+	if !errors.Is(err, errPrimary) {
+		t.Errorf("expected primary error in joined error, got %v", err)
+	}
+	if !errors.Is(err, errFallback) {
+		t.Errorf("expected fallback error in joined error, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // WindowByTime
 // ---------------------------------------------------------------------------
