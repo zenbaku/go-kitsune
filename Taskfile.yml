@@ -61,7 +61,7 @@ tasks:
   test:fuzz:
     desc: Run fuzz seed corpus only (fast; use fuzz:* tasks to actively search for bugs)
     cmds:
-      - go test -run='FuzzPipeline' .
+      - go test -run='Fuzz' .
 
   fuzz:overflow:
     desc: Fuzz pipeline Map stages across all overflow strategies (FUZZ_TIME default 5m)
@@ -84,6 +84,13 @@ tasks:
     cmds:
       - go test -fuzz=FuzzPipelineMultiStage -fuzztime={{.FUZZ_TIME}} .
 
+  fuzz:bloom:
+    desc: Fuzz BloomDedupSet under adversarial key inputs (FUZZ_TIME default 5m)
+    vars:
+      FUZZ_TIME: '{{default "5m" .FUZZ_TIME}}'
+    cmds:
+      - go test -fuzz=FuzzBloomDedupSet -fuzztime={{.FUZZ_TIME}} .
+
   fuzz:all:
     desc: Run all fuzz targets sequentially (FUZZ_TIME default 5m each; good for nightly CI)
     vars:
@@ -94,6 +101,8 @@ tasks:
       - task: fuzz:cancellation
         vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
       - task: fuzz:multi-stage
+        vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
+      - task: fuzz:bloom
         vars: { FUZZ_TIME: "{{.FUZZ_TIME}}" }
 
   bench:
