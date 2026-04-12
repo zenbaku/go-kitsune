@@ -37,8 +37,8 @@ type stageConfig struct {
 	clock           internal.Clock
 	visitedKeyFn    any // func(T) string, type-erased; set by VisitedBy[T]
 	contextMapperFn any // func(T) context.Context, type-erased; set by WithContextMapper[T]
-	expandMaxDepth         int  // MaxDepth: BFS depth cap for ExpandMap; 0 = unlimited
-	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly
+	expandMaxDepth         int  // MaxDepth: BFS depth cap for ExpandMap; unlimited unless expandMaxDepthExplicit
+	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly; distinguishes MaxDepth(0) from default
 	expandMaxItems         int  // MaxItems: total emission cap for ExpandMap; 0 = unlimited
 }
 
