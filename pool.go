@@ -27,6 +27,17 @@ func NewPool[T any](newFn func() T) *Pool[T] {
 }
 
 // Get acquires an object from the pool. Call [Pooled.Release] when done.
+//
+// Get acquires a sync.Mutex on every call to access the internal stack. With
+// Concurrency(n), all n worker goroutines call Get in their hot loop and
+// serialise on that lock. At low concurrency (n ≤ 4) contention is rarely
+// measurable. At high concurrency (n ≥ 8), profile to verify the pool lock is
+// not capping throughput; increasing fn work size or using Warmup to keep the
+// stack populated can reduce allocation jitter.
+//
+// If per-P cache behaviour is more important than LIFO ordering or eviction
+// guarantees, sync.Pool is an alternative, though its objects may be evicted at
+// GC time.
 func (p *Pool[T]) Get() *Pooled[T] {
 	p.mu.Lock()
 	if n := len(p.stack); n > 0 {
@@ -125,6 +136,14 @@ func ReleaseAll[T any](items []*Pooled[T]) {
 //
 // Downstream code must call [Pooled.Release] on each received item when done,
 // or use [ReleaseAll] for batches. Failing to release leaks objects from the pool.
+//
+// Concurrency note: [Pool.Get] acquires a sync.Mutex on every call. With
+// Concurrency(n) > 1, all n workers call Get in parallel and serialise on that
+// lock. At low concurrency (n ≤ 4) this is rarely a bottleneck. At high
+// concurrency (n ≥ 8), profile to confirm the pool lock is not capping
+// throughput. As a mitigation, use [Pool.Warmup] to pre-populate the pool
+// (reducing allocation jitter) and keep fn's work coarse enough that per-item
+// pool overhead is a small fraction of total processing cost.
 //
 //	pool := kitsune.NewPool(func() []byte { return make([]byte, 0, 4096) })
 //	encoded := kitsune.MapPooled(events, pool,

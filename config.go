@@ -232,7 +232,17 @@ const (
 	// DropNewest discards the incoming item when the buffer is full.
 	// The pipeline continues without blocking.
 	DropNewest OverflowStrategy = internal.OverflowDropNewest
-	// DropOldest evicts the oldest buffered item to make room for the new one.
+	// DropOldest evicts the oldest buffered item to make room for the incoming one.
+	// When the buffer has space the send is lock-free. When the buffer is full a
+	// sync.Mutex is held while the oldest item is drained and the new item is
+	// inserted, serialising all concurrent senders on the slow path.
+	//
+	// Under sustained backpressure — exactly the scenario DropOldest is designed
+	// for — the buffer is full most of the time, so the mutex slow path becomes
+	// the hot path. With Concurrency(n), all n workers serialise on that lock.
+	// Increase Buffer to keep the buffer from filling frequently and reduce time
+	// on the slow path. For drop semantics without a mutex, consider DropNewest.
+	// See "Overflow strategies" in doc/tuning.md for a full comparison.
 	DropOldest OverflowStrategy = internal.OverflowDropOldest
 )
 
@@ -243,6 +253,9 @@ const (
 //
 // When [Ordered] is also set, dropped items create gaps but remaining items stay
 // in their original relative order.
+//
+// For performance trade-offs between strategies under high concurrency, see the
+// "Overflow strategies" section of doc/tuning.md.
 func Overflow(s OverflowStrategy) StageOption {
 	return func(c *stageConfig) { c.overflow = s }
 }

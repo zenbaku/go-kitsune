@@ -49,6 +49,41 @@ Fusion is only possible for single-consumer chains. If two operators both consum
 
 Operators that support fusion: `Map`, `Filter`. `FlatMap` has a fast path but does not fuse. `Batch`, windowing operators, and multi-input operators never fuse.
 
+### Fusion boundaries
+
+Fusion propagates upstream as long as every operator in the chain sets a `fusionEntry`. Only `Map` and `Filter` do this. Every other operator is a **fusion boundary**: it resets the fusion chain, and any `Map`/`Filter` stages downstream of it start a fresh fusion group (if they are themselves eligible).
+
+| Operator | Breaks fusion? | Notes |
+|---|---|---|
+| `Map` | No — participates | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
+| `Filter` | No — participates | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
+| `ForEach` | Terminal — ends chain | Triggers fused execution when upstream is a single-consumer fusable chain |
+| `FlatMap` | **Yes** | Has its own fast path (drain + micro-batching) but never sets `fusionEntry` |
+| `Batch`, `Window`, `SlidingWindow`, `SessionWindow`, `BufferWith`, `ChunkBy`, `ChunkWhile` | **Yes** | Windowing and batching operators do not set `fusionEntry` |
+| `Throttle`, `Debounce`, `Sample`, `SampleWith` | **Yes** | Rate and timing operators do not set `fusionEntry` |
+| `Merge`, `Concat`, `Amb`, `Zip`, `CombineLatest`, `WithLatestFrom` | **Yes** | Multi-input operators do not set `fusionEntry` |
+| `Partition`, `Broadcast`, `BroadcastN`, `Balance`, `Share` | **Yes** | Fan-out operators do not set `fusionEntry` |
+| Sources (`FromSlice`, `Generate`, `FromChan`, `Ticker`, etc.) | **Yes** | Sources have no upstream to fuse with |
+| `Tap`, `TapError`, `Finally`, `IgnoreElements`, `ExpandMap` | **Yes** | Utility operators do not set `fusionEntry` |
+| `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey` | **Yes** | Stateful key-sharding operators do not set `fusionEntry` |
+| Any stage with `Concurrency(n > 1)`, `OnError`, `Overflow(DropOldest/DropNewest)`, `Timeout`, `Supervise`, `CacheBy`, or a run-time `WithHook` | **Yes** | Fast-path conditions not met; `fusionEntry` is not set or is discarded at run time |
+
+The practical rule: a fusion group starts at the first eligible `Map` or `Filter` after a boundary and ends at `ForEach` (or the next boundary). A `FlatMap` in the middle of an otherwise hot chain always introduces a channel hop and goroutine handoff. If you need to eliminate that hop, structure the pipeline so the `FlatMap` output feeds a fresh `Map → Filter → ForEach` sub-chain that is itself fusion-eligible.
+
+Use `IsOptimized()` to confirm which stages are fused:
+
+```go
+src      := kitsune.FromSlice(records)        // boundary (source)
+flat     := kitsune.FlatMap(src, expand)       // boundary (FlatMap has fast path, no fusion)
+mapped   := kitsune.Map(flat, transform)       // starts new fusion group
+filtered := kitsune.Filter(mapped, isValid)    // continues fusion group
+runner   := filtered.ForEach(store)            // ends fusion group — Map+Filter+ForEach fuse
+
+for _, r := range mapped.IsOptimized() {
+    fmt.Printf("%s: fused=%v fast=%v reasons=%v\n", r.Name, r.Fused, r.FastPath, r.Reasons)
+}
+```
+
 ### Exact eligibility conditions
 
 Both fast path and fusion require **all** of the following conditions to hold simultaneously:
@@ -163,6 +198,40 @@ pipe.Concurrency(20), pipe.Buffer(64)
 ```
 
 **Starting point:** 10–20 for HTTP enrichment, then profile. CPU-bound: start at `runtime.NumCPU()`.
+
+---
+
+## Overflow strategies
+
+By default, a stage's output channel applies backpressure: when the buffer is full, the sender blocks until space is available. The `Overflow` option changes this.
+
+| Strategy | Buffer full behaviour | Lock cost | Best for |
+|---|---|---|---|
+| `Block` (default) | Sender blocks until space is available | None | General-purpose; preserves backpressure |
+| `DropNewest` | Incoming item is discarded; sender never blocks | Atomic counter only | Bursty sources where the latest data is most important |
+| `DropOldest` | Oldest buffered item is evicted; sender never blocks | `sync.Mutex` on buffer-full path | Sources where recent data is most important and some loss is acceptable |
+
+### `DropOldest` under sustained load
+
+`Overflow(DropOldest)` is designed for pipelines where dropping stale data is preferable to blocking the producer. Its implementation has two send paths:
+
+- **Fast path (buffer has space):** a non-blocking `select` succeeds immediately — no lock acquired, effectively lock-free.
+- **Slow path (buffer is full):** a `sync.Mutex` is held while the oldest buffered item is drained and the new item is inserted. The lock prevents two concurrent goroutines from interleaving their drain and resend steps, which would corrupt buffer ordering.
+
+**The slow path is the hot path under sustained backpressure.** `DropOldest` is typically chosen precisely because downstream is consistently slower than upstream — meaning the buffer is full most of the time. In that scenario every `Send` call takes the slow path and acquires the mutex. With `Concurrency(n)`, all `n` workers serialise on a single lock per item.
+
+**Mitigation:** increase `Buffer(n)` alongside `DropOldest`. A larger buffer means more time on the fast path (no lock) and less time on the slow path. The trade-off is memory: each extra buffer slot holds one item.
+
+```go
+// Prefer a larger buffer to reduce slow-path frequency with high concurrency.
+kitsune.Map(src, fn,
+    kitsune.Concurrency(8),
+    kitsune.Buffer(256),
+    kitsune.Overflow(kitsune.DropOldest),
+)
+```
+
+**When to prefer `DropNewest` instead:** if you do not need the "keep the most recent item" guarantee, `DropNewest` achieves similar throughput with only an atomic counter — no mutex contention at any concurrency level. The difference is which item is discarded: `DropNewest` discards the incoming item (producer pays no extra cost), while `DropOldest` discards the oldest buffered item (consumer gets newer data, but at the cost of the mutex on the slow path).
 
 ---
 
