@@ -313,10 +313,12 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, signalD
 			// Phase 1: stop sources cleanly (closes rc.done; Generate watches it).
 			signalDone()
 			// Phase 2: wait for natural drain or hard-stop timeout.
+			timer := time.NewTimer(drainTimeout)
 			select {
-			case <-time.After(drainTimeout):
+			case <-timer.C:
 				drainCancel()
 			case <-drainCtx.Done():
+				timer.Stop()
 			}
 		case <-drainCtx.Done():
 		}

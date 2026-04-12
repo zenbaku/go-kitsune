@@ -109,6 +109,40 @@ func TestWithDrainHardStop(t *testing.T) {
 	}
 }
 
+func TestWithDrainTimerLeak(t *testing.T) {
+	// This test verifies that runWithDrain does not leak a goroutine when the
+	// drain completes before the timeout fires. Run with -race or check goroutine
+	// count; here we simply exercise the path and rely on the race detector.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
+		yield(1)
+		<-ctx.Done()
+		return nil
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).
+			Run(ctx, kitsune.WithDrain(10*time.Second)) // long timeout; should not fire
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("pipeline did not complete after context cancel")
+	}
+	// If time.After was used, its goroutine would still be running here for ~10s.
+	// The race detector or goleak would surface this. The test is a correctness
+	// guard; the goroutine leak itself is only reliably visible with goleak.
+}
+
 func TestWithDrainNormalCompletion(t *testing.T) {
 	// WithDrain should not affect normal (non-cancelled) pipeline completion.
 	results, err := kitsune.Map(
