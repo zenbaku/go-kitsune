@@ -321,6 +321,13 @@ func RestartAlways(maxRestarts int, b Backoff) SupervisionPolicy {
 // See [RestartOnError], [RestartOnPanic], [RestartAlways] for convenience constructors.
 // When combined with [OnError], the error handler runs first per item; Supervise
 // only triggers a restart when the error handler's final decision is Halt.
+//
+// Stateful stages and restarts: for [MapWith], [MapWithKey], [FlatMapWith], and
+// [FlatMapWithKey], per-key [Ref] state is preserved across supervised restarts
+// within the same [Run] call; the key map is allocated once per Run and captured
+// by the restarted loop. State is NOT preserved when the process itself restarts
+// (a new Run call) unless an external Store is configured via [WithStore]; the
+// default in-memory store is scoped to a single Run.
 func Supervise(policy SupervisionPolicy) StageOption {
 	return func(c *stageConfig) {
 		c.supervision = internal.SupervisionPolicy{
