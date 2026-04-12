@@ -18,3 +18,5 @@ require (
 )
 
 replace github.com/zenbaku/go-kitsune => ../..
+
+replace github.com/zenbaku/go-kitsune/hooks => ../../hooks
