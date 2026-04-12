@@ -14,7 +14,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **`kkafka.Consume` uncommitted last message on early exit**: When `yield(v)` returns false (downstream closed via `Take` or `TakeWhile`), the function exits without calling `CommitMessages` for the last fetched message. On reconnect, that message redelivers. This is correct at-least-once behaviour but is undocumented. Add an explicit note to the `Consume` godoc stating that the last message before a pipeline boundary will redeliver on reconnect.
 
-- [ ] **`Supervise` + `MapWithKey` silent state loss on restart**: When a supervised `MapWithKey` stage restarts after a panic or error, the in-memory key map is re-initialized and all accumulated `Ref` state is silently discarded. With `MemoryStore`, state is unrecoverable; with an external Store, state survives only if the Ref was flushed before the failure. Document this interaction prominently in the `Supervise` godoc and in `doc/operators.md`: supervised stateful stages require an external Store to survive restarts.
+- [x] **`Supervise` + `MapWithKey` silent state loss on restart**: When a supervised `MapWithKey` stage restarts after a panic or error, the in-memory key map is re-initialized and all accumulated `Ref` state is silently discarded. With `MemoryStore`, state is unrecoverable; with an external Store, state survives only if the Ref was flushed before the failure. Document this interaction prominently in the `Supervise` godoc and in `doc/operators.md`: supervised stateful stages require an external Store to survive restarts.
 
 - [ ] **`ExpandMap` has no depth or fanout bound**: `ExpandMap` performs BFS on an arbitrary graph with no limit on expansion depth or total items. A graph with high branching factor produces `fan^depth` items, exhausting memory silently. Add `MaxDepth(n int)` and `MaxItems(n int)` options that stop expansion when the limit is reached. At minimum add a prominent godoc warning and recommend pairing with `Take(n)` downstream.
 
@@ -50,7 +50,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
 
-- [ ] **Test `Supervise` + `MapWithKey` state contract on restart**: Add a test that panics a supervised `MapWithKey` stage mid-stream and verifies the exact post-restart state of per-key `Ref` values — zeroed with `MemoryStore`, preserved with an external Store. This test codifies the contract that is currently only implied by the documentation item above.
+- [x] **Test `Supervise` + `MapWithKey` state contract on restart**: Add a test that panics a supervised `MapWithKey` stage mid-stream and verifies the exact post-restart state of per-key `Ref` values — zeroed with `MemoryStore`, preserved with an external Store. This test codifies the contract that is currently only implied by the documentation item above.
 
 - [ ] **Verify `benchstat` regression baseline** *(re-open: marked done in roadmap but not confirmed)*: The roadmap marks the `benchstat` performance regression baseline as complete, but `testdata/bench/baseline.txt` and CI integration were not confirmed present. Verify the baseline file is committed and the CI diff step is active; if not, implement from scratch.
 
