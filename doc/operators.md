@@ -2829,6 +2829,8 @@ kitsune.OnError(kitsune.RetryThen(3,
 
 `OnError` and `Supervise` operate at different levels and can be used together on the same stage. `OnError` is evaluated per item; `Supervise` is evaluated when the stage loop itself crashes. The evaluation order is: `OnError` runs first; only when its final decision is `Halt` (including after retry exhaustion) does `Supervise` see the error and decide whether to restart the stage.
 
+**Stateful stages under Supervise:** For stateful stages (`MapWith`, `MapWithKey`, `FlatMapWith`, `FlatMapWithKey`), per-key `Ref` state is preserved across supervised restarts within a single `Run` call: the key map is allocated once per run and captured by the restarted loop. State is only lost when the surrounding process terminates and a new `Run` starts; for cross-run durability, configure an external Store via `WithStore`.
+
 See the [Error Handling guide](error-handling.md) for the full evaluation model, common combination patterns (retry-then-restart, skip-unless-fatal-then-restart), and observability.
 
 ---
