@@ -25,7 +25,7 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 	for _, p := range pipelines {
 		track(p)
 	}
-	inputs := make([]int, len(pipelines))
+	inputs := make([]int64, len(pipelines))
 	for i, p := range pipelines {
 		inputs[i] = p.id
 	}
@@ -115,14 +115,14 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 		kind:   "partition",
 		name:   orDefault(cfg.name, "partition"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	falseMeta := stageMeta{
 		id:     falseID,
 		kind:   "partition",
 		name:   orDefault(cfg.name, "partition") + "_false",
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 
 	// sharedBuild creates both channels and the stage on the first call.
@@ -204,7 +204,7 @@ func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T
 	cfg := buildStageConfig(opts)
 
 	// Allocate IDs for all outputs at construction time.
-	ids := make([]int, n)
+	ids := make([]int64, n)
 	for i := range ids {
 		ids[i] = nextPipelineID()
 	}
@@ -220,7 +220,7 @@ func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T
 			kind:   "broadcast",
 			name:   name,
 			buffer: cfg.buffer,
-			inputs: []int{p.id},
+			inputs: []int64{p.id},
 		}
 	}
 
@@ -300,7 +300,7 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 	cfg := buildStageConfig(opts)
 
 	// Allocate IDs for all outputs at construction time.
-	ids := make([]int, n)
+	ids := make([]int64, n)
 	for i := range ids {
 		ids[i] = nextPipelineID()
 	}
@@ -316,7 +316,7 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 			kind:   "balance",
 			name:   name,
 			buffer: cfg.buffer,
-			inputs: []int{p.id},
+			inputs: []int64{p.id},
 		}
 	}
 
@@ -403,7 +403,7 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 	cfg := buildStageConfig(opts)
 
 	// Allocate IDs for all outputs at construction time.
-	ids := make([]int, n)
+	ids := make([]int64, n)
 	for i := range ids {
 		ids[i] = nextPipelineID()
 	}
@@ -419,7 +419,7 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 			kind:   "keyed_balance",
 			name:   name,
 			buffer: cfg.buffer,
-			inputs: []int{p.id},
+			inputs: []int64{p.id},
 		}
 	}
 
@@ -545,7 +545,7 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 	track(p)
 
 	type branchInfo struct {
-		id             int
+		id             int64
 		meta           stageMeta
 		buffer         int
 		bufferExplicit bool
@@ -652,7 +652,7 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 				kind:   "share",
 				name:   name,
 				buffer: cfg.buffer,
-				inputs: []int{p.id},
+				inputs: []int64{p.id},
 			},
 		}
 		branches = append(branches, b)

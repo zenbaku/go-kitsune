@@ -314,7 +314,7 @@ func WindowByTime[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *
 		kind:   "window_by_time",
 		name:   orDefault(cfg.name, "window_by_time"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {

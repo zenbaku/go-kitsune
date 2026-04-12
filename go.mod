@@ -9,3 +9,5 @@ require (
 )
 
 require pgregory.net/rapid v1.2.0
+
+replace github.com/zenbaku/go-kitsune/hooks => ./hooks

@@ -22,7 +22,7 @@ func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOpt
 		kind:   "scan",
 		name:   orDefault(cfg.name, "scan"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan S {
 		if existing := rc.getChan(id); existing != nil {
@@ -79,7 +79,7 @@ func Reduce[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageO
 		kind:   "reduce",
 		name:   orDefault(cfg.name, "reduce"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan S {
 		if existing := rc.getChan(id); existing != nil {
@@ -138,7 +138,7 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 		kind:   "distinct_by",
 		name:   orDefault(cfg.name, "distinct_by"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -237,7 +237,7 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		kind:   "dedupe_by",
 		name:   orDefault(cfg.name, "dedupe_by"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -354,7 +354,7 @@ func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 		kind:   "group_by_stream",
 		name:   orDefault(cfg.name, "group_by_stream"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan Group[K, T] {
 		if existing := rc.getChan(id); existing != nil {
@@ -445,7 +445,7 @@ func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, o
 		kind:   "frequencies_by_stream",
 		name:   orDefault(cfg.name, "frequencies_by_stream"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan map[K]int64 {
 		if existing := rc.getChan(id); existing != nil {

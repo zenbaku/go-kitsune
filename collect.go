@@ -328,7 +328,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 	// Reading a then b sequentially per pair is correct because SequenceEqual
 	// requires positional equality; no parallelism is needed.
 	equal := true
-	inputs := []int{a.id, b.id}
+	inputs := []int64{a.id, b.id}
 
 	terminal := func(rc *runCtx) {
 		aCh := a.build(rc)

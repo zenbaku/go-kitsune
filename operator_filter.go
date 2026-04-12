@@ -26,7 +26,7 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 		overflow:         cfg.overflow,
 		timeout:          cfg.timeout,
 		hasSuperv:        cfg.supervision.HasSupervision(),
-		inputs:           []int{p.id},
+		inputs:           []int64{p.id},
 		supportsFastPath: true,
 		isFastPathCfg:    filterFastPathCfg,
 	}
@@ -232,7 +232,7 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 		kind:   "tap",
 		name:   orDefault(cfg.name, "tap"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

@@ -24,7 +24,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 		name:      orDefault(cfg.name, "batch"),
 		buffer:    cfg.buffer,
 		batchSize: size,
-		inputs:    []int{p.id},
+		inputs:    []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -140,7 +140,7 @@ func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...
 		kind:   "buffer_with",
 		name:   orDefault(cfg.name, "buffer_with"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id, closingSelector.id},
+		inputs: []int64{p.id, closingSelector.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -214,7 +214,7 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 		kind:   "unbatch",
 		name:   orDefault(cfg.name, "unbatch"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -275,7 +275,7 @@ func Window[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T]
 		name:      orDefault(cfg.name, "window"),
 		buffer:    cfg.buffer,
 		batchSize: size,
-		inputs:    []int{p.id},
+		inputs:    []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -346,7 +346,7 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 		name:      orDefault(cfg.name, "sliding_window"),
 		buffer:    cfg.buffer,
 		batchSize: size,
-		inputs:    []int{p.id},
+		inputs:    []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -414,7 +414,7 @@ func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption
 		kind:   "session_window",
 		name:   orDefault(cfg.name, "session_window"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -521,7 +521,7 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 		kind:   "chunk_by",
 		name:   orDefault(cfg.name, "chunk_by"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
@@ -598,7 +598,7 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 		kind:   "chunk_while",
 		name:   orDefault(cfg.name, "chunk_while"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {

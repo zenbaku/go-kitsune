@@ -112,7 +112,7 @@ func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *P
 		kind:   "default_if_empty",
 		name:   orDefault(cfg.name, "default_if_empty"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -178,7 +178,7 @@ func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped
 		kind:   "timestamp",
 		name:   orDefault(cfg.name, "timestamp"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan Timestamped[T] {
 		if existing := rc.getChan(id); existing != nil {
@@ -241,7 +241,7 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 		kind:   "time_interval",
 		name:   orDefault(cfg.name, "time_interval"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan TimedInterval[T] {
 		if existing := rc.getChan(id); existing != nil {
@@ -310,7 +310,7 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 		kind:   "sort",
 		name:   orDefault(cfg.name, "sort"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -385,14 +385,14 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 		kind:   "unzip",
 		name:   orDefault(cfg.name, "unzip"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	bMeta := stageMeta{
 		id:     bID,
 		kind:   "unzip",
 		name:   orDefault(cfg.name, "unzip") + "_b",
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 
 	// sharedBuild creates both channels and the stage on the first call.

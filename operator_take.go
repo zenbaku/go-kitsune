@@ -19,7 +19,7 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		kind:   "take",
 		name:   "take",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -77,7 +77,7 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		kind:   "drop",
 		name:   "drop",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -135,7 +135,7 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		kind:   "take_while",
 		name:   "take_while",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -189,7 +189,7 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		kind:   "drop_while",
 		name:   "drop_while",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -259,7 +259,7 @@ func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		kind:   "skip_last",
 		name:   "skip_last",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -336,7 +336,7 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		kind:   "take_until",
 		name:   orDefault(cfg.name, "take_until"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id, boundary.id},
+		inputs: []int64{p.id, boundary.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -408,7 +408,7 @@ func SkipUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		kind:   "skip_until",
 		name:   orDefault(cfg.name, "skip_until"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id, boundary.id},
+		inputs: []int64{p.id, boundary.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

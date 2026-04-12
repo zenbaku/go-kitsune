@@ -80,7 +80,7 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 		kind:   "rate_limit",
 		name:   name,
 		buffer: scfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

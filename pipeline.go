@@ -33,10 +33,10 @@ type stageFunc func(ctx context.Context) error
 // Static fields (id, name, kind, inputs, …) are set at construction time.
 // getChanLen / getChanCap are set during build() when the channel is created.
 type stageMeta struct {
-	id          int
+	id          int64
 	name        string
 	kind        string
-	inputs      []int
+	inputs      []int64
 	concurrency int
 	buffer      int
 	overflow    internal.Overflow
@@ -77,8 +77,13 @@ var globalIDSeq int64
 
 // nextPipelineID returns a process-unique ID for each constructed stage.
 // IDs are used for graph visualisation and runCtx memoisation.
-func nextPipelineID() int {
-	return int(atomic.AddInt64(&globalIDSeq, 1))
+//
+// The counter is int64 throughout to avoid truncation on 32-bit platforms:
+// casting the result to int would silently wrap at 2^31 on 32-bit targets,
+// causing channel-memoisation collisions in runCtx.chans and incorrect DAG
+// wiring. Keeping the full int64 eliminates the platform-specific bug.
+func nextPipelineID() int64 {
+	return atomic.AddInt64(&globalIDSeq, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +97,7 @@ func nextPipelineID() int {
 type runCtx struct {
 	stages              []stageFunc
 	metas               []stageMeta
-	chans               map[int]any // stage ID → chan T (type-erased for storage)
+	chans               map[int64]any // stage ID → chan T (type-erased for storage)
 	cache               internal.Cache
 	cacheTTL            time.Duration
 	codec               internal.Codec
@@ -142,7 +147,7 @@ func newRunCtx() *runCtx {
 	done := make(chan struct{})
 	var once sync.Once
 	return &runCtx{
-		chans:      make(map[int]any),
+		chans:      make(map[int64]any),
 		refs:       newRefRegistry(),
 		done:       done,
 		signalDone: func() { once.Do(func() { close(done) }) },
@@ -154,8 +159,8 @@ func (rc *runCtx) add(fn stageFunc, meta stageMeta) {
 	rc.metas = append(rc.metas, meta)
 }
 
-func (rc *runCtx) getChan(id int) any     { return rc.chans[id] }
-func (rc *runCtx) setChan(id int, ch any) { rc.chans[id] = ch }
+func (rc *runCtx) getChan(id int64) any     { return rc.chans[id] }
+func (rc *runCtx) setChan(id int64, ch any) { rc.chans[id] = ch }
 
 // ---------------------------------------------------------------------------
 // Pipeline[T]
@@ -170,7 +175,7 @@ func (rc *runCtx) setChan(id int, ch any) { rc.chans[id] = ch }
 // It is an immutable handle — every operator returns a new Pipeline.
 // No processing occurs until [Runner.Run] is called.
 type Pipeline[T any] struct {
-	id   int
+	id   int64
 	meta stageMeta // static description (name, kind, inputs, buffer size, …)
 
 	// build is called by Runner.Run to materialise this stage.
@@ -196,7 +201,7 @@ type Pipeline[T any] struct {
 	consumerCount atomic.Int32
 }
 
-func newPipeline[T any](id int, meta stageMeta, build func(*runCtx) chan T) *Pipeline[T] {
+func newPipeline[T any](id int64, meta stageMeta, build func(*runCtx) chan T) *Pipeline[T] {
 	return &Pipeline[T]{id: id, meta: meta, build: build}
 }
 

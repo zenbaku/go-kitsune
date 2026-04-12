@@ -38,7 +38,7 @@ func WithIndex[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Indexed[T]]
 		kind:   "with_index",
 		name:   orDefault(cfg.name, "with_index"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan Indexed[T] {
 		if existing := rc.getChan(id); existing != nil {
@@ -94,7 +94,7 @@ func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] 
 		kind:   "pairwise",
 		name:   orDefault(cfg.name, "pairwise"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan Pair[T, T] {
 		if existing := rc.getChan(id); existing != nil {
@@ -156,7 +156,7 @@ func TakeEvery[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		kind:   "take_every",
 		name:   "take_every",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -212,7 +212,7 @@ func DropEvery[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		kind:   "drop_every",
 		name:   "drop_every",
 		buffer: internal.DefaultBuffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -269,7 +269,7 @@ func MapEvery[T any](p *Pipeline[T], n int, fn func(context.Context, T) (T, erro
 		kind:   "map_every",
 		name:   orDefault(cfg.name, "map_every"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -334,7 +334,7 @@ func Intersperse[T any](p *Pipeline[T], sep T, opts ...StageOption) *Pipeline[T]
 		kind:   "intersperse",
 		name:   orDefault(cfg.name, "intersperse"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

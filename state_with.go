@@ -333,7 +333,7 @@ func MapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Context, *
 		concurrency: n,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 
@@ -704,7 +704,7 @@ func FlatMapWith[I, O, S any](p *Pipeline[I], key Key[S], fn func(context.Contex
 		concurrency: n,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 

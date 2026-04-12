@@ -74,10 +74,10 @@ type BufferHook interface {
 
 // GraphNode is a snapshot of one pipeline stage, passed to [GraphHook.OnGraph].
 type GraphNode struct {
-	ID             int           `json:"id"`
+	ID             int64         `json:"id"`
 	Name           string        `json:"name"`
 	Kind           string        `json:"kind"`
-	Inputs         []int         `json:"inputs"`
+	Inputs         []int64       `json:"inputs"`
 	Concurrency    int           `json:"concurrency,omitempty"`
 	Buffer         int           `json:"buffer,omitempty"`
 	Overflow       int           `json:"overflow,omitempty"`

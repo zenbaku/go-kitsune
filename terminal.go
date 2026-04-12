@@ -306,7 +306,7 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		kind:        "sink",
 		name:        orDefault(cfg.name, "for_each"),
 		concurrency: n,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 

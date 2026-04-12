@@ -8,6 +8,7 @@ import (
 	"time"
 
 	kitsune "github.com/zenbaku/go-kitsune"
+	kithooks "github.com/zenbaku/go-kitsune/hooks"
 	"github.com/zenbaku/go-kitsune/testkit"
 )
 
@@ -153,6 +154,49 @@ func TestDescribeMatchesGraphHook(t *testing.T) {
 			t.Errorf("node %d mismatch: GraphHook=%+v Describe=%+v", i, g, d)
 		}
 	}
+}
+
+// TestGraphNodeIDIsInt64 is a regression test for the globalIDSeq truncation
+// bug on 32-bit platforms. nextPipelineID() previously cast its int64 counter
+// to int, which wraps silently at 2^31 on 32-bit targets. It now returns int64
+// throughout, eliminating the cast. This test confirms that GraphNode.ID has
+// the correct type and that IDs are globally unique across multiple pipelines.
+func TestGraphNodeIDIsInt64(t *testing.T) {
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	mapped := kitsune.Map(src, func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	nodes := mapped.Describe()
+	if len(nodes) < 2 {
+		t.Fatalf("expected at least 2 nodes, got %d", len(nodes))
+	}
+
+	// Verify the static type: GraphNode.ID must be int64, not int.
+	// This is a compile-time assertion via the type-switch below.
+	var id any = nodes[0].ID
+	if _, ok := id.(int64); !ok {
+		t.Errorf("GraphNode.ID must be int64; got %T", nodes[0].ID)
+	}
+
+	// IDs must be distinct across the graph.
+	seen := make(map[int64]bool)
+	for _, n := range nodes {
+		if seen[n.ID] {
+			t.Errorf("duplicate GraphNode.ID %d", n.ID)
+		}
+		seen[n.ID] = true
+	}
+
+	// IDs must also be distinct across independently constructed pipelines.
+	src2 := kitsune.FromSlice([]int{4, 5, 6})
+	nodes2 := kitsune.Map(src2, func(_ context.Context, v int) (int, error) { return v, nil }).Describe()
+	for _, n := range nodes2 {
+		if seen[n.ID] {
+			t.Errorf("GraphNode.ID %d from second pipeline collides with first", n.ID)
+		}
+	}
+
+	// Compile-time: ensure kithooks.GraphNode.ID is int64, not int.
+	// This line fails to compile if the type ever regresses to int.
+	_ = kithooks.GraphNode{ID: int64(1), Inputs: []int64{int64(0)}}
 }
 
 func TestDescribeCapturesMetadata(t *testing.T) {

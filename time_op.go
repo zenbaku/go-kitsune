@@ -23,7 +23,7 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 		kind:   "throttle",
 		name:   orDefault(cfg.name, "throttle"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -103,7 +103,7 @@ func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 		kind:   "sample",
 		name:   orDefault(cfg.name, "sample"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
@@ -177,7 +177,7 @@ func Debounce[T any](p *Pipeline[T], silence time.Duration, opts ...StageOption)
 		kind:   "debounce",
 		name:   orDefault(cfg.name, "debounce"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

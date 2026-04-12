@@ -37,7 +37,7 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 		kind:   "zip",
 		name:   orDefault(cfg.name, "zip"),
 		buffer: cfg.buffer,
-		inputs: []int{a.id, b.id},
+		inputs: []int64{a.id, b.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -127,7 +127,7 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 		kind:   "combine_latest",
 		name:   orDefault(cfg.name, "combine_latest"),
 		buffer: cfg.buffer,
-		inputs: []int{a.id, b.id},
+		inputs: []int64{a.id, b.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -265,7 +265,7 @@ func WithLatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn f
 		kind:   "with_latest_from",
 		name:   orDefault(cfg.name, "with_latest_from"),
 		buffer: cfg.buffer,
-		inputs: []int{main.id, other.id},
+		inputs: []int64{main.id, other.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -376,7 +376,7 @@ func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOpt
 		kind:   "sample_with",
 		name:   orDefault(cfg.name, "sample_with"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id, sampler.id},
+		inputs: []int64{p.id, sampler.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

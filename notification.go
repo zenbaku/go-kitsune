@@ -126,7 +126,7 @@ func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pi
 		name:     orDefault(cfg.name, "dematerialize"),
 		buffer:   cfg.buffer,
 		overflow: cfg.overflow,
-		inputs:   []int{p.id},
+		inputs:   []int64{p.id},
 	}
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {

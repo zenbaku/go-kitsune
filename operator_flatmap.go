@@ -30,7 +30,7 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 		concurrency: cfg.concurrency,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {

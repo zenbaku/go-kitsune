@@ -34,7 +34,7 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 		overflow:    cfg.overflow,
 		timeout:     cfg.timeout,
 		hasSuperv:   cfg.supervision.HasSupervision(),
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -174,7 +174,7 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 		overflow:    cfg.overflow,
 		timeout:     cfg.timeout,
 		hasSuperv:   cfg.supervision.HasSupervision(),
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
@@ -300,14 +300,14 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 		kind:   "map_result",
 		name:   orDefault(cfg.name, "map_result"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	errMeta := stageMeta{
 		id:     errID,
 		kind:   "map_result_err",
 		name:   orDefault(cfg.name, "map_result") + "_err",
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 
 	sharedBuild := func(rc *runCtx) (chan O, chan ErrItem[I]) {
@@ -384,7 +384,7 @@ func MapRecover[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error)
 		kind:   "map_recover",
 		name:   orDefault(cfg.name, "map_recover"),
 		buffer: cfg.buffer,
-		inputs: []int{p.id},
+		inputs: []int64{p.id},
 	}
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {

@@ -431,7 +431,7 @@ func MapWithKey[I, O, S any](
 		concurrency: n,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 
@@ -856,7 +856,7 @@ func FlatMapWithKey[I, O, S any](
 		concurrency: n,
 		buffer:      cfg.buffer,
 		overflow:    cfg.overflow,
-		inputs:      []int{p.id},
+		inputs:      []int64{p.id},
 		hasSuperv:   cfg.supervision.HasSupervision(),
 	}
 
