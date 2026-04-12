@@ -1056,6 +1056,47 @@ func TestMapWithKey_Supervise_KeyedRefPreserved(t *testing.T) {
 	}
 }
 
+func TestMapWithKey_Supervise_KeyedRefPreservedOnPanic(t *testing.T) {
+	// Contract: per-key Ref state is preserved across supervised restarts
+	// within a single Run() call, regardless of whether the restart is
+	// triggered by an error or a panic. The keyedRefMap is constructed once
+	// in refRegistry.init() before any stage starts and is captured by the
+	// stage's inner loop closure; internal.Supervise re-invokes that closure
+	// on restart, so the map (and every Ref it holds) survives.
+	//
+	// State is NOT preserved across separate Run() calls with the default
+	// in-memory MemoryStore: a new Run() builds a fresh refRegistry. For
+	// cross-Run durability the caller must configure an external Store.
+	ctx := context.Background()
+	key := kitsune.NewKey[int]("mwk_ref_panic_preserved", 0)
+	calls := 0
+	p := kitsune.FromSlice([]string{"a", "a"}) // same key twice
+	got, err := kitsune.MapWithKey(p,
+		func(s string) string { return s },
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
+			calls++
+			if calls == 1 {
+				// Set "a"'s ref to 77, then panic: triggers supervised restart.
+				_ = ref.Set(ctx, 77)
+				panic("trigger restart via panic")
+			}
+			// After restart: the second "a" reads back the preserved ref.
+			return ref.Get(ctx)
+		},
+		kitsune.Supervise(kitsune.RestartAlways(1, nil)),
+	).Collect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %v (len %d), want 1 item", got, len(got))
+	}
+	if got[0] != 77 {
+		t.Errorf("ref value after panic restart: got %d, want 77", got[0])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // MapWithKey — concurrency (key-sharded workers)
 // ---------------------------------------------------------------------------
