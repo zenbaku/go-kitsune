@@ -582,8 +582,8 @@ func TestRateLimitWithName(t *testing.T) {
 // Pool — additional coverage
 // ---------------------------------------------------------------------------
 
-func TestPooledDoubleReleaseNoop(t *testing.T) {
-	// Calling Release() twice on a Pooled item must not panic.
+func TestPooledDoubleReleasePanics(t *testing.T) {
+	// Calling Release() twice on a Pooled item must panic (use-after-release guard).
 	pool := kitsune.NewPool(func() int { return 0 })
 	input := kitsune.FromSlice([]int{42})
 	out := kitsune.MapPooled(input, pool, func(_ context.Context, n int, w *kitsune.Pooled[int]) error {
@@ -595,7 +595,12 @@ func TestPooledDoubleReleaseNoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	results[0].Release()
-	results[0].Release() // second release: must not panic
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on double Release, got none")
+		}
+	}()
+	results[0].Release() // second release: must panic
 }
 
 func TestMapPooledConcurrency(t *testing.T) {
@@ -662,4 +667,34 @@ func TestPoolWarmupZeroNoop(t *testing.T) {
 	pool.Warmup(0)
 	pool.Warmup(-3)
 	// No panic is the assertion.
+}
+
+func TestPooledMustValuePanicsAfterRelease(t *testing.T) {
+	pool := kitsune.NewPool(func() int { return 42 })
+	item := pool.Get()
+	if got := item.MustValue(); got != 42 {
+		t.Fatalf("MustValue before release = %d, want 42", got)
+	}
+	item.Release()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic from MustValue after Release, got none")
+		}
+	}()
+	_ = item.MustValue()
+}
+
+func TestPooledReuseClearsReleasedFlag(t *testing.T) {
+	// After Release + Get, the same object must be usable again without panic.
+	pool := kitsune.NewPool(func() int { return 7 })
+	first := pool.Get()
+	ptr := first
+	first.Release()
+	second := pool.Get()
+	if second != ptr {
+		t.Skip("pool returned a different object; LIFO reuse assumption not met")
+	}
+	// MustValue must not panic on the reused item.
+	_ = second.MustValue()
+	second.Release()
 }

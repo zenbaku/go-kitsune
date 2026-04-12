@@ -567,6 +567,14 @@ build time (Run):    factory invoked → cache-wrapped fn
   run time. Each factory is called once, producing the concrete `*Ref[T]` that
   stages share.
 
+The registry uses a `sync.RWMutex`. `register` (build phase) and `init` (once,
+before any stage goroutine starts) take the write lock; `get`, called from stage
+goroutines during execution, takes only the read lock. This reflects the
+lifecycle invariant: `vals` is append-only during build and init, then strictly
+read-only for the remainder of the run. The write-lock release in `init`
+establishes the happens-before edge that lets all subsequent stage goroutines
+safely observe the fully-populated map without additional synchronisation.
+
 Stage functions that use `MapWith`/`FlatMapWith` close over `rc.refs.get(name)`:
 they receive the materialised ref from `vals`, not the factory. This means the
 same pipeline definition can be run against different store backends simply by

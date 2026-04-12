@@ -225,7 +225,7 @@ func (p *Pipeline[T]) Describe() []internal.GraphNode {
 // ---------------------------------------------------------------------------
 
 type refRegistry struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	inits map[string]func(internal.Store, internal.Codec) any
 	vals  map[string]any
 }
@@ -237,6 +237,9 @@ func newRefRegistry() *refRegistry {
 	}
 }
 
+// register records a factory for a state key. Called during the build phase
+// (before Run starts any stage goroutine); uses the write lock because build
+// closures for sibling stages may run on different goroutines in future.
 func (r *refRegistry) register(name string, factory func(internal.Store, internal.Codec) any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -245,6 +248,8 @@ func (r *refRegistry) register(name string, factory func(internal.Store, interna
 	}
 }
 
+// init materialises every registered factory exactly once. Called from Run
+// after the build phase completes and before any stage goroutine starts.
 func (r *refRegistry) init(store internal.Store, codec internal.Codec) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -255,8 +260,11 @@ func (r *refRegistry) init(store internal.Store, codec internal.Codec) {
 	}
 }
 
+// get returns the materialised value for a key. Safe for concurrent use by
+// stage goroutines: init has already populated vals before any stage starts,
+// so get is a pure read and only needs an RLock.
 func (r *refRegistry) get(name string) any {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.vals[name]
 }

@@ -2518,6 +2518,8 @@ Transforms each item using `fn`, acquiring a pre-allocated `*Pooled[O]` from `po
 
 If `fn` returns an error, the slot is automatically released back to the pool.
 
+**Use-after-release protection:** `Release()` panics on double-call, so misuse is caught early rather than causing silent data corruption. Use `buf.MustValue()` instead of `buf.Value` when you want a panic on access after release (zero-overhead `Value` remains available for hot paths where you control the lifecycle).
+
 **When to use:** High-throughput transforms where allocating a new output buffer per item is expensive: JSON encoding, protobuf marshalling, audio/video frame processing.
 
 **Options:** `Concurrency`, `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`.

@@ -3,6 +3,7 @@ package kitsune
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ func (p *Pool[T]) Get() *Pooled[T] {
 		item := p.stack[n-1]
 		p.stack = p.stack[:n-1]
 		p.mu.Unlock()
+		item.released.Store(false)
 		return item
 	}
 	p.mu.Unlock()
@@ -42,7 +44,7 @@ func (p *Pool[T]) Get() *Pooled[T] {
 // Put returns item to the pool. Equivalent to calling [Pooled.Release] on the
 // item directly. After Put, the item's Value field must not be accessed.
 func (p *Pool[T]) Put(item *Pooled[T]) {
-	p.put(item)
+	item.Release()
 }
 
 func (p *Pool[T]) put(item *Pooled[T]) {
@@ -53,8 +55,8 @@ func (p *Pool[T]) put(item *Pooled[T]) {
 
 // Warmup pre-populates the pool with n objects by calling the factory function
 // n times and immediately returning them. This reduces first-use latency for
-// latency-sensitive start-up paths. Warmup is best-effort: sync.Pool may evict
-// objects at any time (e.g. on GC). No-op for n <= 0.
+// latency-sensitive start-up paths. Pre-populated objects are never evicted; they
+// remain in the pool until retrieved by Get. No-op for n <= 0.
 func (p *Pool[T]) Warmup(n int) {
 	if n <= 0 {
 		return
@@ -64,23 +66,47 @@ func (p *Pool[T]) Warmup(n int) {
 		items[i] = p.Get()
 	}
 	for _, item := range items {
-		p.put(item)
+		p.put(item) // bypass Release: these items were never handed to a caller
 	}
 }
 
 // Pooled wraps a value obtained from a [Pool].
 // Always call [Release] when finished so the value returns to the pool.
+//
+// WARNING: do not read or write Value after calling Release. The pool may hand
+// the underlying object to another goroutine immediately, yielding silent data
+// corruption. Use [Pooled.MustValue] for a guarded read that panics on
+// use-after-release.
 type Pooled[T any] struct {
-	Value T
-	pool  *Pool[T]
+	// Value is the pooled object. It must not be read or written after Release
+	// is called. Use MustValue for a release-checked accessor.
+	Value    T
+	pool     *Pool[T]
+	released atomic.Bool
 }
 
 // Release returns the value to its originating pool. After Release, the
 // Value field must not be read or written by the caller.
+//
+// Calling Release more than once on the same item panics: double-release
+// indicates a use-after-release bug in the caller.
 func (w *Pooled[T]) Release() {
+	if !w.released.CompareAndSwap(false, true) {
+		panic("kitsune: double Release on *Pooled[T]; indicates a use-after-release bug")
+	}
 	if w.pool != nil {
 		w.pool.put(w)
 	}
+}
+
+// MustValue returns the pooled value, panicking if Release has already been
+// called. Use this instead of Value when use-after-release detection is
+// preferred over zero-overhead access.
+func (w *Pooled[T]) MustValue() T {
+	if w.released.Load() {
+		panic("kitsune: read of Pooled.Value after Release")
+	}
+	return w.Value
 }
 
 // ReleaseAll releases a slice of pooled items back to their respective pools.
