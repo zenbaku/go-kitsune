@@ -437,15 +437,28 @@ func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], 
 			defer close(ch)
 			outbox := internal.NewBlockingOutbox(ch)
 
-			queue := []*Pipeline[T]{p}
+			// expandEntry couples a pipeline with the BFS depth at which its
+			// items will be emitted. Root pipelines start at depth 0.
+			type expandEntry struct {
+				p     *Pipeline[T]
+				depth int
+			}
+
+			maxDepth := cfg.expandMaxDepth
+			maxDepthSet := cfg.expandMaxDepthExplicit
+			maxItems := cfg.expandMaxItems // 0 = unlimited
+			emitted := 0
+
+			queue := []expandEntry{{p: p, depth: 0}}
 			for len(queue) > 0 {
 				current := queue[0]
 				queue = queue[1:]
 
 				innerCtx, cancel := context.WithCancel(ctx)
 				var sendErr error
-				err := current.ForEach(func(_ context.Context, item T) error {
-					// Dedup check — skip item and its subtree if already visited.
+				var limitHit bool
+				err := current.p.ForEach(func(_ context.Context, item T) error {
+					// Dedup check: skip item and its subtree if already visited.
 					if set != nil {
 						key := keyFn(item)
 						dup, err := set.Contains(innerCtx, key)
@@ -459,15 +472,29 @@ func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], 
 							return err
 						}
 					}
+					// MaxItems: stop before emitting if we have hit the cap.
+					if maxItems > 0 && emitted >= maxItems {
+						limitHit = true
+						cancel()
+						return nil
+					}
 					// Emit item to downstream.
 					if err := outbox.Send(ctx, item); err != nil {
 						sendErr = err
 						cancel()
 						return nil
 					}
+					emitted++
+					// MaxDepth: only enqueue children if the next BFS level is
+					// within the cap. maxDepthSet distinguishes MaxDepth(0)
+					// (roots only) from the default unlimited state.
+					childDepth := current.depth + 1
+					if maxDepthSet && childDepth > maxDepth {
+						return nil
+					}
 					// Enqueue children for BFS expansion.
 					if child := fn(ctx, item); child != nil {
-						queue = append(queue, child)
+						queue = append(queue, expandEntry{p: child, depth: childDepth})
 					}
 					return nil
 				}).Run(innerCtx)
@@ -475,6 +502,10 @@ func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], 
 
 				if sendErr != nil {
 					return sendErr
+				}
+				if limitHit {
+					// MaxItems reached: stop BFS and close output normally.
+					return nil
 				}
 				if ctx.Err() != nil {
 					return ctx.Err()
