@@ -37,8 +37,9 @@ type stageConfig struct {
 	clock           internal.Clock
 	visitedKeyFn    any // func(T) string, type-erased; set by VisitedBy[T]
 	contextMapperFn any // func(T) context.Context, type-erased; set by WithContextMapper[T]
-	expandMaxDepth  int // MaxDepth: BFS depth cap for ExpandMap; 0 = unlimited
-	expandMaxItems  int // MaxItems: total emission cap for ExpandMap; 0 = unlimited
+	expandMaxDepth         int  // MaxDepth: BFS depth cap for ExpandMap; 0 = unlimited
+	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly
+	expandMaxItems         int  // MaxItems: total emission cap for ExpandMap; 0 = unlimited
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -177,6 +178,7 @@ func MaxDepth(n int) StageOption {
 	return func(c *stageConfig) {
 		if n >= 0 {
 			c.expandMaxDepth = n
+			c.expandMaxDepthExplicit = true
 		}
 	}
 }
