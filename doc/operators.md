@@ -1602,6 +1602,8 @@ kitsune.MapWithKey(events,
 
 The run-level `WithDefaultKeyTTL(d)` sets the default TTL for all `MapWithKey` and `FlatMapWithKey` stages that do not specify their own `WithKeyTTL`. Per-stage `WithKeyTTL(0)` explicitly disables eviction even when a run-level default is set.
 
+**Supervise and state lifetime:** When combined with `Supervise`, per-key `Ref` state IS preserved across supervised restarts within a single `Run` call: the keyed map is allocated once per run and captured by the stage's restarted loop, so a panic or error that triggers a restart does not zero the accumulated state. State is NOT preserved across separate `Run` calls with the default in-process store; callers that need cross-run durability must configure an external Store via `WithStore`.
+
 ---
 
 ### FlatMapWithKey
