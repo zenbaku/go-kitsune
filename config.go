@@ -37,6 +37,8 @@ type stageConfig struct {
 	clock           internal.Clock
 	visitedKeyFn    any // func(T) string, type-erased; set by VisitedBy[T]
 	contextMapperFn any // func(T) context.Context, type-erased; set by WithContextMapper[T]
+	expandMaxDepth  int // MaxDepth: BFS depth cap for ExpandMap; 0 = unlimited
+	expandMaxItems  int // MaxItems: total emission cap for ExpandMap; 0 = unlimited
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -158,6 +160,41 @@ func WithDedupSet(s DedupSet) StageOption {
 func VisitedBy[T any](keyFn func(T) string) StageOption {
 	return func(c *stageConfig) {
 		c.visitedKeyFn = keyFn
+	}
+}
+
+// MaxDepth limits BFS expansion in [ExpandMap] to at most n levels below the
+// roots. Depth 0 emits only the root items and performs no expansion.
+// Depth 1 emits roots and their immediate children. Default is unlimited.
+//
+// When the limit is reached the stage stops enqueueing children and closes
+// its output channel normally; no error is returned. If used together with
+// [MaxItems], whichever limit fires first wins.
+//
+// MaxDepth is only meaningful on [ExpandMap]. Silently ignored on all other
+// operators.
+func MaxDepth(n int) StageOption {
+	return func(c *stageConfig) {
+		if n >= 0 {
+			c.expandMaxDepth = n
+		}
+	}
+}
+
+// MaxItems limits the total number of items emitted by an [ExpandMap] stage
+// to n. When n items have been emitted the stage stops emitting, stops
+// enqueueing children, and closes its output channel normally; no error is
+// returned. Default is unlimited.
+//
+// If used together with [MaxDepth], whichever limit fires first wins.
+//
+// MaxItems is only meaningful on [ExpandMap]. Silently ignored on all other
+// operators.
+func MaxItems(n int) StageOption {
+	return func(c *stageConfig) {
+		if n > 0 {
+			c.expandMaxItems = n
+		}
 	}
 }
 

@@ -659,6 +659,101 @@ func TestExpandMap_VisitedBy_ExternalDedupSet(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ExpandMap — MaxDepth / MaxItems bounds
+// ---------------------------------------------------------------------------
+
+// depthTree is an infinite binary tree generator: every node v expands to
+// [2v, 2v+1].
+func depthTree(_ context.Context, v int) *kitsune.Pipeline[int] {
+	return kitsune.FromSlice([]int{2 * v, 2*v + 1})
+}
+
+func TestExpandMap_MaxDepth_Zero(t *testing.T) {
+	// MaxDepth(0): emit roots only; do not expand.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		depthTree,
+		kitsune.MaxDepth(0),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1}) {
+		t.Fatalf("got %v, want [1]", got)
+	}
+}
+
+func TestExpandMap_MaxDepth_One(t *testing.T) {
+	// MaxDepth(1): roots + one level of children.
+	// Root 1 expands to [2,3]. BFS order: 1, 2, 3.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		depthTree,
+		kitsune.MaxDepth(1),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("got %v, want [1 2 3]", got)
+	}
+}
+
+func TestExpandMap_MaxDepth_ExceedsTree(t *testing.T) {
+	// MaxDepth larger than actual tree height: full tree is emitted.
+	// expandTree (defined earlier): 1->[2,3], 2->[4,5], others leaves.
+	// Full BFS order: 1, 2, 3, 4, 5.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		expandTree,
+		kitsune.MaxDepth(10),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("got %v, want [1 2 3 4 5]", got)
+	}
+}
+
+func TestExpandMap_MaxItems(t *testing.T) {
+	// Infinite binary tree bounded to exactly 5 items.
+	// BFS order on binary tree rooted at 1: 1, 2, 3, 4, 5.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		depthTree,
+		kitsune.MaxItems(5),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("got %v, want [1 2 3 4 5]", got)
+	}
+}
+
+func TestExpandMap_MaxItems_ExceedsTotal(t *testing.T) {
+	// MaxItems larger than total tree: all items emitted.
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		expandTree,
+		kitsune.MaxItems(100),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("got %v, want [1 2 3 4 5]", got)
+	}
+}
+
+func TestExpandMap_MaxDepth_And_MaxItems(t *testing.T) {
+	// Both set. Binary tree rooted at 1, MaxDepth(3) would allow up to
+	// 1+2+4+8=15 items. MaxItems(4) fires first.
+	// BFS: 1, 2, 3, 4 (stop after 4 items).
+	p := kitsune.ExpandMap(
+		kitsune.FromSlice([]int{1}),
+		depthTree,
+		kitsune.MaxDepth(3),
+		kitsune.MaxItems(4),
+	)
+	got := collectAll(t, p)
+	if !sliceEqual(got, []int{1, 2, 3, 4}) {
+		t.Fatalf("got %v, want [1 2 3 4]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Take / Drop
 // ---------------------------------------------------------------------------
 
