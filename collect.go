@@ -448,7 +448,7 @@ func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (iter.S
 	)
 	errFn := func() error {
 		errOnce.Do(func() {
-			errVal = <-handle.Err()
+			errVal = handle.Wait()
 			if callerBroke.Load() && errors.Is(errVal, context.Canceled) {
 				errVal = nil
 			}

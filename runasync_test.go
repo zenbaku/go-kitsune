@@ -150,19 +150,80 @@ func TestRunAsync_Done_ClosesOnCompletion(t *testing.T) {
 	}
 }
 
-func TestRunAsync_Err_Channel(t *testing.T) {
+func TestRunAsync_Err_AfterDone(t *testing.T) {
 	boom := errors.New("boom")
 	p := kitsune.FromSlice([]int{1})
 	h := kitsune.Map(p, func(_ context.Context, _ int) (int, error) {
 		return 0, boom
 	}).ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(context.Background())
+
 	select {
-	case err := <-h.Err():
-		if !errors.Is(err, boom) {
+	case <-h.Done():
+		if err := h.Err(); !errors.Is(err, boom) {
 			t.Fatalf("expected boom, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Err() channel did not receive")
+		t.Fatal("Done() did not close")
+	}
+}
+
+func TestRunAsync_ConcurrentWait(t *testing.T) {
+	// Two concurrent Wait() callers must both receive the result without
+	// either blocking forever. This was impossible with the old errCh design.
+	boom := errors.New("boom")
+	p := kitsune.FromSlice([]int{1})
+	h := kitsune.Map(p, func(_ context.Context, _ int) (int, error) {
+		return 0, boom
+	}).ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(context.Background())
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range 2 {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = h.Wait()
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("one or both concurrent Wait() calls blocked forever")
+	}
+	for i, err := range errs {
+		if !errors.Is(err, boom) {
+			t.Fatalf("caller %d: expected boom, got %v", i, err)
+		}
+	}
+}
+
+func TestRunAsync_ErrNonBlocking(t *testing.T) {
+	// Err() before Done() closes must return nil (non-blocking).
+	// Err() after Done() closes must return the pipeline error.
+	boom := errors.New("boom")
+	p := kitsune.FromSlice([]int{1})
+	h := kitsune.Map(p, func(_ context.Context, _ int) (int, error) {
+		return 0, boom
+	}).ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(context.Background())
+
+	// Wait for completion.
+	select {
+	case <-h.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done() did not close")
+	}
+
+	// After completion: Err() returns the stored error.
+	if err := h.Err(); !errors.Is(err, boom) {
+		t.Fatalf("expected boom after Done(), got %v", err)
+	}
+	// Safe to call multiple times.
+	if err := h.Err(); !errors.Is(err, boom) {
+		t.Fatalf("second Err() call: expected boom, got %v", err)
 	}
 }
 

@@ -183,14 +183,16 @@ var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runne
 // RunHandle is returned by [Runner.RunAsync]. It provides multiple ways to
 // observe the pipeline's completion and to pause/resume source stages.
 type RunHandle struct {
-	errCh <-chan error
-	done  chan struct{}
-	gate  *Gate
+	done chan struct{}
+	err  error // written before done is closed; safe to read after <-done returns
+	gate *Gate
 }
 
 // Wait blocks until the pipeline completes and returns its error (or nil).
+// Safe to call from multiple goroutines concurrently.
 func (h *RunHandle) Wait() error {
-	return <-h.errCh
+	<-h.done
+	return h.err
 }
 
 // Done returns a channel that is closed when the pipeline completes.
@@ -199,10 +201,17 @@ func (h *RunHandle) Done() <-chan struct{} {
 	return h.done
 }
 
-// Err returns the underlying error channel for use in select statements.
-// The channel receives exactly one value: nil on success, or the first error.
-func (h *RunHandle) Err() <-chan error {
-	return h.errCh
+// Err returns the pipeline's terminal error. It is non-blocking: if the
+// pipeline has not yet completed it returns nil. Use Done() in a select and
+// then call Err() to retrieve the result, or use Wait() to block until done.
+// Safe to call from multiple goroutines concurrently.
+func (h *RunHandle) Err() error {
+	select {
+	case <-h.done:
+		return h.err
+	default:
+		return nil
+	}
 }
 
 // Pause stops sources from emitting new items. In-flight items continue
@@ -345,13 +354,12 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 		gate = internal.NewGate()
 		opts = append(opts, WithPauseGate(gate))
 	}
-	errCh := make(chan error, 1)
-	done := make(chan struct{})
+	h := &RunHandle{done: make(chan struct{}), gate: gate}
 	go func() {
-		errCh <- r.Run(ctx, opts...)
-		close(done)
+		h.err = r.Run(ctx, opts...)
+		close(h.done)
 	}()
-	return &RunHandle{errCh: errCh, done: done, gate: gate}
+	return h
 }
 
 // metasToGraphNodes converts the internal stageMeta slice collected during the
