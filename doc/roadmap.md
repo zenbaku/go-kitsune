@@ -4,6 +4,86 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ---
 
+## Upcoming
+
+### Correctness & safety
+
+- [ ] **`runWithDrain` timer goroutine leak**: `runWithDrain` creates a `time.After` inside a goroutine to enforce the drain timeout. If the pipeline finishes before the timeout fires, `drainCtx.Done()` exits the select — but the allocated `time.Timer` goroutine continues running until the duration elapses, creating a temporary goroutine leak per `Run` call that uses `WithDrainTimeout`. Replace `time.After(drainTimeout)` with `time.NewTimer(drainTimeout)` and call `timer.Stop()` when `drainCtx` is cancelled first.
+
+- [ ] **`RunHandle.errCh` single-consumer footgun**: `Wait()` consumes from the buffered(1) `errCh`; `Err()` returns the same channel. Concurrent callers of `Wait()` and `<-handle.Err()` will have one block forever after the other consumes the single value. Redesign `RunHandle` to store the result in an atomic field written once and signal completion by closing the existing `done` channel, so both `Wait()` and channel-select callers are safe to use concurrently.
+
+- [ ] **`kkafka.Consume` uncommitted last message on early exit**: When `yield(v)` returns false (downstream closed via `Take` or `TakeWhile`), the function exits without calling `CommitMessages` for the last fetched message. On reconnect, that message redelivers. This is correct at-least-once behaviour but is undocumented. Add an explicit note to the `Consume` godoc stating that the last message before a pipeline boundary will redeliver on reconnect.
+
+- [ ] **`Supervise` + `MapWithKey` silent state loss on restart**: When a supervised `MapWithKey` stage restarts after a panic or error, the in-memory key map is re-initialized and all accumulated `Ref` state is silently discarded. With `MemoryStore`, state is unrecoverable; with an external Store, state survives only if the Ref was flushed before the failure. Document this interaction prominently in the `Supervise` godoc and in `doc/operators.md`: supervised stateful stages require an external Store to survive restarts.
+
+- [ ] **`ExpandMap` has no depth or fanout bound**: `ExpandMap` performs BFS on an arbitrary graph with no limit on expansion depth or total items. A graph with high branching factor produces `fan^depth` items, exhausting memory silently. Add `MaxDepth(n int)` and `MaxItems(n int)` options that stop expansion when the limit is reached. At minimum add a prominent godoc warning and recommend pairing with `Take(n)` downstream.
+
+---
+
+### API and ergonomics
+
+- [ ] **`LookupBy` / `Enrich` batch timeout**: Under low throughput, items accumulate in the internal `MapBatch` buffer until the full batch size is reached, introducing unbounded latency before `Fetch` is called. Add a `BatchTimeout time.Duration` field to `LookupConfig` and `EnrichConfig`, using the same semantics as `Batch`'s `BatchTimeout` option: flush a partial batch when the duration elapses with no new item.
+
+- [ ] **Named result types to replace `Pair` proliferation**: `LookupBy` returns `Pair[T,V]`, `Zip` returns `Pair[A,B]`, `Timestamp` wraps items in `Pair[T,time.Time]`, `WithIndex` wraps in `Pair[T,int]`. Users read `.First` / `.Second` everywhere without type context. Replace with named, self-documenting types: `Timestamped[T]{Value T; Time time.Time}`, `Indexed[T]{Value T; Index int}`, `Enriched[T,V]{Item T; Value V}`. `Pair` can remain as a utility but named types should be the canonical output of their respective operators.
+
+- [ ] **`ConcatMap` should reject incompatible options at construction time**: `ConcatMap` appends `Concurrency(1)` last, silently overriding any user-supplied `Concurrency(n)`. A user who passes `Concurrency(4)` gets Concurrency(1) with no warning. Validate at construction time and panic (with a clear message) or return an error when a concurrency incompatible option is detected.
+
+- [ ] **Document `StageOption` last-write-wins semantics**: Passing `Buffer(16), Buffer(512)` produces buffer 512 — last option wins. This applies to every option and is not stated anywhere in `doc/options.md` or the `StageOption` type godoc. Add one sentence to both locations.
+
+- [ ] **`Generate` vs `Channel[T]` selection guide**: Both bridge external code into a pipeline — `Generate` is pull-based (callback yields values), `Channel[T]` is push-based (send from any goroutine). Neither godoc mentions the other, leaving users to discover the difference by trial and error. Add a "When to use each" note to both godocs and include a comparison in `doc/sources.md`.
+
+---
+
+### Performance
+
+- [ ] **Bypass codec serialization for `MemoryStore` Ref operations**: Every `ref.Get()` and `ref.Set()` in `MapWith` / `MapWithKey` marshals to/from `[]byte` via the Codec even when the backing Store is `MemoryStore` (in-process). For latency-sensitive inner loops this is wasted allocation. Add a fast path: if the Store implements an `InProcessStore` marker interface (or is type-asserted to be `*memoryStore`), store the value as `any` directly, bypassing codec.
+
+- [ ] **`DrainChan` goroutine burst on mass teardown**: Every transform stage does `defer func() { go internal.DrainChan(inCh) }()`. A `Take(1)` on a 20-stage pipeline launches 20 drain goroutines simultaneously at teardown. For pipelines that cycle frequently (via `Retry`), this creates sustained goroutine pressure. Investigate cooperative drain: pass a drain-ready signal down the topology so upstream stages can self-drain without spawning goroutines.
+
+- [ ] **Sharded `DropOldest` outbox**: `dropOldestOutbox` holds a single mutex protecting drain-and-resend when the buffer is full. Under sustained backpressure with `Concurrency(n)`, all n workers serialize on this mutex — exactly the scenario `DropOldest` is designed for becomes its hot path. Implement a sharded outbox (worker i uses shard i % n) to eliminate cross-worker contention when both `Overflow(DropOldest)` and `Concurrency(n > 1)` are active.
+
+---
+
+### Testing
+
+- [ ] **Property tests for windowing operators** *(re-open: marked done in roadmap but tests are absent)*: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
+
+- [ ] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
+
+- [ ] **Test `Supervise` + `MapWithKey` state contract on restart**: Add a test that panics a supervised `MapWithKey` stage mid-stream and verifies the exact post-restart state of per-key `Ref` values — zeroed with `MemoryStore`, preserved with an external Store. This test codifies the contract that is currently only implied by the documentation item above.
+
+- [ ] **Verify `benchstat` regression baseline** *(re-open: marked done in roadmap but not confirmed)*: The roadmap marks the `benchstat` performance regression baseline as complete, but `testdata/bench/baseline.txt` and CI integration were not confirmed present. Verify the baseline file is committed and the CI diff step is active; if not, implement from scratch.
+
+---
+
+### Developer experience
+
+- [ ] **Source selection guide (`doc/sources.md`)**: Fourteen source operators exist with overlapping use cases and no unified decision guide. Cover: `FromSlice` for in-memory data; `From` to wrap an existing channel; `Generate` for pull-based external sources; `Channel[T]` for push-based multi-sender bridging; `Ticker`/`Timer` for time-driven emission; `Unfold`/`Iterate` for mathematical sequences; `Concat` for sequential chaining; `Amb` for racing sources. Include the `Generate` vs `Channel[T]` comparison from the ergonomics item above.
+
+- [ ] **`ContextCarrier` vs `WithContextMapper` decision guide**: The two approaches for per-item trace propagation have meaningfully different trade-offs: `ContextCarrier` requires modifying the item type (impossible for third-party types); `WithContextMapper` is a stage option requiring no type changes. The comparison exists only as a one-line godoc mention. Add a section to `doc/operators.md` or a new `doc/tracing.md` with a comparison table and worked examples for both.
+
+- [ ] **Tail godoc quality baseline and template**: Godoc quality varies across the 20+ tail packages. Define a standard template: package-level working example, standard function names (`Consume`/`Produce` or `Source`/`Sink`), "caller owns the connection" lifecycle note, explicit at-least-once / at-most-once declaration. Audit all tails against the template and bring each up to standard.
+
+---
+
+### Ecosystem
+
+- [ ] **Shared tail interface contract (`doc/tails.md`)**: The 20+ tail packages expose inconsistent function names, parameter orders, and error semantics with no shared convention. Define a tail interface guide covering: standard naming (`Consume`/`Produce`), parameter order (connection first, transform function second), connection lifecycle ownership, error propagation behaviour, and at-least-once semantics declaration. Retrofit existing tails to conform and use this as the template for future tails.
+
+- [ ] **`kkafka` batched commit variant**: `kkafka.Consume` commits each Kafka message individually after `yield`, which serializes commit latency with processing latency. For high-throughput consumers, batched commits (flush N offsets at once, or on a timer) reduce broker round-trips significantly. Add a `ConsumeWithBatchCommit(reader, batchSize, batchTimeout, unmarshal)` variant that accumulates offsets and commits them at natural batch boundaries.
+
+---
+
+## Long-term
+
+- [ ] **Event-time / watermark support**: All time-based operators (`Debounce`, `SessionWindow`, `Throttle`, etc.) use processing time — the wall clock when the item arrives. For Kafka, event sourcing, and log-replay workloads, items carry their own timestamps and windowing correctness requires event time. Add a `WithEventTime[T](fn func(T) time.Time)` option to windowing operators and a watermark mechanism (advancing a per-pipeline event-time frontier) that drives window closure based on event timestamps rather than `time.Now()`. This is the most significant remaining gap relative to production streaming systems (Flink, Kafka Streams).
+
+- [ ] **Checkpointing and fault-tolerant restart**: Process restarts lose all `MapWithKey` state (unless an external Store is configured), all window accumulators, and all in-progress batch buffers. Add a `Checkpoint` mechanism: periodic serialization of operator state snapshots to the configured Store, with deterministic recovery on restart from the last checkpoint. Even a basic implementation for `MapWithKey` (flush key map on a signal or interval) would make fault-tolerant pipelines possible without external state management overhead.
+
+- [ ] **First-class composable segment type**: There is no way to define and name a reusable pipeline segment — a `*Pipeline[A] → *Pipeline[B]` transform that can be introspected, documented, and composed as a named unit. Users work around this with Go functions, which works but does not integrate with `Describe()`, `IsOptimized()`, or the inspector dashboard. A `Segment[A,B]` type wrapping a transform function with its own name and metadata would enable building reusable pipeline libraries on top of kitsune that remain observable.
+
+---
+
 ## Active / Near-term
 
 ### Operators
