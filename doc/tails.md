@@ -88,6 +88,12 @@ sink := kkafka.Produce(writer, func(r Result) (kafka.Message, error) {
 pipe.ForEach(sink).Run(ctx)
 ```
 
+**Delivery semantics**: `Consume` commits each message individually after it has been
+successfully yielded downstream (at-least-once). If the downstream closes early — for
+example because a `Take` or `TakeWhile` boundary is reached — the last fetched message
+is not committed. On reconnect the reader redelivers that message. Duplicate handling
+in the consumer is required for exactly-once processing.
+
 See [`examples/` in the kkafka module](../tails/kkafka/) for a complete example.
 
 ---
