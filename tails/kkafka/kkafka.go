@@ -28,7 +28,13 @@ import (
 
 // Consume creates a Pipeline that reads messages from a Kafka topic.
 // unmarshal converts each [kafka.Message] into a value of type T.
-// The reader is not closed when the pipeline ends — the caller owns it.
+// The reader is not closed when the pipeline ends: the caller owns it.
+//
+// Delivery semantics: each message is committed individually after it has
+// been successfully yielded downstream. If the downstream closes early
+// (for example, via [kitsune.Take] or [kitsune.TakeWhile]), the last
+// fetched message is not committed. On reconnect the reader will redeliver
+// that message. This is intentional at-least-once behaviour.
 func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		for {
