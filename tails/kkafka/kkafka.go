@@ -63,13 +63,67 @@ func BatchTimeout(d time.Duration) ConsumeOption {
 // (for example, via [kitsune.Take] or [kitsune.TakeWhile]), the last
 // fetched message is not committed. On reconnect the reader will redeliver
 // that message. This is intentional at-least-once behaviour.
-func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, error)) *kitsune.Pipeline[T] {
+//
+// Use [BatchSize] and [BatchTimeout] to reduce broker round-trips by
+// committing offsets in groups:
+//
+//	pipe := kkafka.Consume(reader, unmarshal,
+//	    kkafka.BatchSize(200),
+//	    kkafka.BatchTimeout(500*time.Millisecond),
+//	)
+//
+// With batching, more messages may be uncommitted at any moment. Messages
+// in the pending batch at the time of an early exit or context cancellation
+// are not committed; Kafka redelivers them on reconnect (at-least-once).
+func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, error), opts ...ConsumeOption) *kitsune.Pipeline[T] {
+	var cfg consumeConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
+		if !cfg.batching() {
+			// Original per-message commit path — unchanged.
+			for {
+				msg, err := reader.FetchMessage(ctx)
+				if err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+				v, err := unmarshal(msg)
+				if err != nil {
+					return err
+				}
+				if !yield(v) {
+					return nil
+				}
+				if err := reader.CommitMessages(ctx, msg); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
+				}
+			}
+		}
+
+		// Batching path: accumulate messages, commit in bulk.
+		var pending []kafka.Message
+		var batchStart time.Time
+
+		commit := func() error {
+			if err := reader.CommitMessages(ctx, pending...); err != nil {
+				return err
+			}
+			pending = pending[:0]
+			return nil
+		}
+
 		for {
 			msg, err := reader.FetchMessage(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
-					return nil // context cancelled — clean exit
+					return nil
 				}
 				return err
 			}
@@ -78,13 +132,24 @@ func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, erro
 				return err
 			}
 			if !yield(v) {
-				return nil
+				return nil // at-least-once: pending messages not committed
 			}
-			if err := reader.CommitMessages(ctx, msg); err != nil {
-				if ctx.Err() != nil {
-					return nil
+
+			if len(pending) == 0 {
+				batchStart = time.Now()
+			}
+			pending = append(pending, msg)
+
+			batchFull := cfg.batchSize > 1 && len(pending) >= cfg.batchSize
+			timedOut := cfg.batchTimeout > 0 && time.Since(batchStart) >= cfg.batchTimeout
+
+			if batchFull || timedOut {
+				if err := commit(); err != nil {
+					if ctx.Err() != nil {
+						return nil
+					}
+					return err
 				}
-				return err
 			}
 		}
 	})
