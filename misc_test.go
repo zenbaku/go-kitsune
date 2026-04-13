@@ -584,3 +584,46 @@ func TestLiftPure_TypeChange(t *testing.T) {
 	p := kitsune.Map(kitsune.FromSlice([]int{1, 2, 3}), toString)
 	testkit.CollectAndExpect(t, p, []string{"a", "b", "c"})
 }
+
+// ---------------------------------------------------------------------------
+// 3n. InProcessStore bypass
+// ---------------------------------------------------------------------------
+
+func TestMemoryStore_InProcessBypass(t *testing.T) {
+	// MemoryStore should store and retrieve typed values without codec
+	// when accessed via kitsune.MapWith — codec must NOT be called.
+	panicCodec := &panicOnCallCodec{}
+	key := kitsune.NewKey[int]("ips-bypass", 0)
+	p := kitsune.MapWith(
+		kitsune.FromSlice([]int{1, 2, 3}),
+		key,
+		func(ctx context.Context, ref *kitsune.Ref[int], n int) (int, error) {
+			return ref.UpdateAndGet(ctx, func(acc int) (int, error) { return acc + n, nil })
+		},
+	)
+	got, err := p.Collect(context.Background(),
+		kitsune.WithStore(kitsune.MemoryStore()),
+		kitsune.WithCodec(panicCodec),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 3, 6}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("item %d: got %d, want %d", i, got[i], w)
+		}
+	}
+}
+
+// panicOnCallCodec panics immediately if Marshal or Unmarshal is called.
+// Used to verify InProcessStore paths bypass codec entirely.
+type panicOnCallCodec struct{}
+
+func (panicOnCallCodec) Marshal(v any) ([]byte, error) {
+	panic("codec.Marshal called on InProcessStore path — bypass is broken")
+}
+
+func (panicOnCallCodec) Unmarshal(data []byte, v any) error {
+	panic("codec.Unmarshal called on InProcessStore path — bypass is broken")
+}

@@ -155,20 +155,30 @@ type Store interface {
 }
 
 // MemoryStore returns an in-process, mutex-protected state store.
+// Useful for testing or when pipeline state does not need to survive restarts.
 func MemoryStore() Store {
-	return &memoryStore{values: make(map[string][]byte)}
+	return &memoryStore{values: make(map[string]any)}
 }
 
 type memoryStore struct {
 	mu     sync.RWMutex
-	values map[string][]byte
+	values map[string]any
 }
 
 func (s *memoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	v, ok := s.values[key]
-	return v, ok, nil
+	if !ok {
+		return nil, false, nil
+	}
+	// Values written via Store.Set are stored as []byte; return directly.
+	if b, isByteSlice := v.([]byte); isByteSlice {
+		return b, true, nil
+	}
+	// Values written via SetAny are typed — marshal for external callers.
+	data, err := json.Marshal(v)
+	return data, true, err
 }
 
 func (s *memoryStore) Set(_ context.Context, key string, value []byte) error {
@@ -183,6 +193,36 @@ func (s *memoryStore) Delete(_ context.Context, key string) error {
 	defer s.mu.Unlock()
 	delete(s.values, key)
 	return nil
+}
+
+// InProcessStore is implemented by stores that live in the same process and
+// support direct any-typed access, bypassing codec serialization.
+// [MemoryStore] implements this interface.
+type InProcessStore interface {
+	GetAny(key string) (any, bool)
+	SetAny(key string, value any)
+	DeleteAny(key string)
+}
+
+// InProcessStore implementation — no error returns; in-process maps cannot fail.
+
+func (s *memoryStore) GetAny(key string) (any, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.values[key]
+	return v, ok
+}
+
+func (s *memoryStore) SetAny(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.values[key] = value
+}
+
+func (s *memoryStore) DeleteAny(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.values, key)
 }
 
 // ---------------------------------------------------------------------------
