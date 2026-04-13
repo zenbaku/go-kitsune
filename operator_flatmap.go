@@ -188,7 +188,17 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 			innerCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
 
-			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			// When DropOldest and Concurrency > 1 are both active, shard the
+			// outbox so workers do not contend on a single mutex under
+			// sustained backpressure. See mapConcurrent for the same pattern.
+			var boxes []internal.Outbox[O]
+			if cfg.overflow == internal.OverflowDropOldest && cfg.concurrency > 1 {
+				boxes = internal.NewShardedDropOldestOutbox(outCh, cfg.concurrency, hook, cfg.name)
+			} else {
+				boxes = []internal.Outbox[O]{internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)}
+			}
+			workerIdx := 0
+
 			sem := make(chan struct{}, cfg.concurrency)
 			errCh := make(chan error, 1)
 			var wg sync.WaitGroup
@@ -207,8 +217,10 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 						case <-innerCtx.Done():
 							return
 						}
+						outbox := boxes[workerIdx%len(boxes)]
+						workerIdx++
 						wg.Add(1)
-						go func(it I) {
+						go func(it I, outbox internal.Outbox[O]) {
 							defer wg.Done()
 							defer func() { <-sem }()
 
@@ -229,7 +241,7 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 								procCount.Add(1)
 								hook.OnItem(ctx, cfg.name, dur, nil)
 							}
-						}(item)
+						}(item, outbox)
 					case <-innerCtx.Done():
 						return
 					}
