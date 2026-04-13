@@ -210,3 +210,64 @@ func benchForEach(b *testing.B, concurrency int) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MemoryStore bypass benchmarks
+// ---------------------------------------------------------------------------
+//
+// These benchmarks use WithStore(MemoryStore()) explicitly to exercise the
+// InProcessStore fast path. Compare against BenchmarkMapWith_Serial and
+// BenchmarkMapWithKey_Serial_FewKeys to confirm zero codec overhead.
+
+func BenchmarkMapWith_MemoryStore(b *testing.B) {
+	b.Helper()
+	ctx := context.Background()
+	items := make([]int, benchItemCount)
+	for i := range items {
+		items[i] = i
+	}
+	counterKey := kitsune.NewKey[int]("bench_ms_counter", 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.MapWith(
+			kitsune.FromSlice(items),
+			counterKey,
+			func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
+				return ref.UpdateAndGet(ctx, func(acc int) (int, error) {
+					return acc + v, nil
+				})
+			},
+		)
+		if err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkMapWithKey_Serial_FewKeys_MemoryStore(b *testing.B) {
+	b.Helper()
+	ctx := context.Background()
+	items := make([]benchItem, benchItemCount)
+	for i := range items {
+		items[i] = benchItem{key: fmt.Sprintf("k%d", i%10), val: i}
+	}
+	totalKey := kitsune.NewKey[int]("bench_ms_total", 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		p := kitsune.MapWithKey(
+			kitsune.FromSlice(items),
+			func(it benchItem) string { return it.key },
+			totalKey,
+			func(ctx context.Context, ref *kitsune.Ref[int], it benchItem) (int, error) {
+				return ref.UpdateAndGet(ctx, func(t int) (int, error) {
+					return t + it.val, nil
+				})
+			},
+		)
+		if err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
