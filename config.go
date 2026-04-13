@@ -223,6 +223,8 @@ func MaxItems(n int) StageOption {
 //	        return otel.GetTextMapPropagator().Extract(ctx, kafkaHeaderCarrier(m.Headers))
 //	    }),
 //	)
+//
+// See doc/tracing.md for a comparison table and worked examples for both approaches.
 func WithContextMapper[T any](fn func(T) context.Context) StageOption {
 	return func(c *stageConfig) {
 		c.contextMapperFn = fn

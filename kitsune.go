@@ -69,6 +69,8 @@ type BufferStatus = internal.BufferStatus
 // For third-party types that cannot implement this interface (Kafka messages,
 // protobuf-generated types, stdlib types), use [WithContextMapper] instead.
 //
+// See doc/tracing.md for a comparison table and worked examples for both approaches.
+//
 // Example:
 //
 //	type Order struct {

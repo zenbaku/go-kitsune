@@ -36,7 +36,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### Performance
 
-- [ ] **Bypass codec serialization for `MemoryStore` Ref operations**: Every `ref.Get()` and `ref.Set()` in `MapWith` / `MapWithKey` marshals to/from `[]byte` via the Codec even when the backing Store is `MemoryStore` (in-process). For latency-sensitive inner loops this is wasted allocation. Add a fast path: if the Store implements an `InProcessStore` marker interface (or is type-asserted to be `*memoryStore`), store the value as `any` directly, bypassing codec.
+- [x] **Bypass codec serialization for `MemoryStore` Ref operations**: Every `ref.Get()` and `ref.Set()` in `MapWith` / `MapWithKey` marshals to/from `[]byte` via the Codec even when the backing Store is `MemoryStore` (in-process). For latency-sensitive inner loops this is wasted allocation. Add a fast path: if the Store implements an `InProcessStore` marker interface (or is type-asserted to be `*memoryStore`), store the value as `any` directly, bypassing codec.
 
 - [ ] **`DrainChan` goroutine burst on mass teardown**: Every transform stage does `defer func() { go internal.DrainChan(inCh) }()`. A `Take(1)` on a 20-stage pipeline launches 20 drain goroutines simultaneously at teardown. For pipelines that cycle frequently (via `Retry`), this creates sustained goroutine pressure. Investigate cooperative drain: pass a drain-ready signal down the topology so upstream stages can self-drain without spawning goroutines.
 
@@ -60,7 +60,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **Source selection guide (`doc/sources.md`)**: Fourteen source operators exist with overlapping use cases and no unified decision guide. Cover: `FromSlice` for in-memory data; `From` to wrap an existing channel; `Generate` for pull-based external sources; `Channel[T]` for push-based multi-sender bridging; `Ticker`/`Timer` for time-driven emission; `Unfold`/`Iterate` for mathematical sequences; `Concat` for sequential chaining; `Amb` for racing sources. Include the `Generate` vs `Channel[T]` comparison from the ergonomics item above.
 
-- [ ] **`ContextCarrier` vs `WithContextMapper` decision guide**: The two approaches for per-item trace propagation have meaningfully different trade-offs: `ContextCarrier` requires modifying the item type (impossible for third-party types); `WithContextMapper` is a stage option requiring no type changes. The comparison exists only as a one-line godoc mention. Add a section to `doc/operators.md` or a new `doc/tracing.md` with a comparison table and worked examples for both.
+- [x] **`ContextCarrier` vs `WithContextMapper` decision guide**: The two approaches for per-item trace propagation have meaningfully different trade-offs: `ContextCarrier` requires modifying the item type (impossible for third-party types); `WithContextMapper` is a stage option requiring no type changes. The comparison exists only as a one-line godoc mention. Add a section to `doc/operators.md` or a new `doc/tracing.md` with a comparison table and worked examples for both.
 
 - [ ] **Tail godoc quality baseline and template**: Godoc quality varies across the 20+ tail packages. Define a standard template: package-level working example, standard function names (`Consume`/`Produce` or `Source`/`Sink`), "caller owns the connection" lifecycle note, explicit at-least-once / at-most-once declaration. Audit all tails against the template and bring each up to standard.
 
