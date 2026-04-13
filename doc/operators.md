@@ -1098,7 +1098,9 @@ BFS graph expansion. For each item, `fn` returns a child pipeline (or `nil` for 
 
 **When to use:** Tree or DAG traversal where each node can produce more nodes of the same type: directory trees, dependency graphs, org charts.
 
-**Options:** `Buffer`, `WithName`, `VisitedBy` (for cycle detection), `WithDedupSet`.
+**Options:** `Buffer`, `WithName`, `MaxDepth`, `MaxItems`, `VisitedBy` (for cycle detection), `WithDedupSet`.
+
+> **Warning — unbounded by default.** Without `MaxDepth`, `MaxItems`, or a downstream `Take(n)`, `ExpandMap` will traverse the entire reachable graph. A graph with branching factor `fan` and depth `d` produces up to `fan^d` items, which can exhaust memory silently as the BFS queue grows. Always bound expansion on untrusted or potentially deep inputs.
 
 ```go
 // Crawl a directory tree.
@@ -1119,6 +1121,32 @@ files := kitsune.ExpandMap(
     },
 )
 ```
+
+Bounded expansion — cap both depth and total entries:
+
+```go
+// Walk at most 4 levels deep and at most 10 000 entries total.
+files := kitsune.ExpandMap(
+    kitsune.FromSlice([]string{"/root"}),
+    func(ctx context.Context, path string) *kitsune.Pipeline[string] {
+        entries, err := os.ReadDir(path)
+        if err != nil {
+            return nil
+        }
+        var children []string
+        for _, e := range entries {
+            if e.IsDir() {
+                children = append(children, filepath.Join(path, e.Name()))
+            }
+        }
+        return kitsune.FromSlice(children)
+    },
+    kitsune.MaxDepth(4),
+    kitsune.MaxItems(10_000),
+)
+```
+
+When either bound is reached the stage stops enqueueing children and closes its output channel normally — no error is returned, matching the semantics of `Take(n)`. If both options are set, whichever limit fires first wins.
 
 ---
 
@@ -2852,4 +2880,6 @@ See the [Error Handling guide](error-handling.md) for the full evaluation model,
 | `CacheBy(keyFn)` | `StageOption` | `Map` only | Enable TTL-based result caching. On a hit, `fn` is skipped. Requires `WithCache` at run time or `CacheBackend`. |
 | `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
 | `VisitedBy(keyFn)` | `StageOption` | `ExpandMap` | Enable cycle detection by key during graph walks. |
+| `MaxDepth(n int)` | `StageOption` | `ExpandMap` | Cap BFS depth to `n` levels below roots. `0` = roots only; default unlimited. |
+| `MaxItems(n int)` | `StageOption` | `ExpandMap` | Cap total items emitted to `n`. Stage closes normally when cap is hit. Default unlimited. |
 | `WithKeyTTL(d)` | `StageOption` | `MapWithKey`, `FlatMapWithKey` | Evict per-key `Ref` entries after `d` of inactivity. 0 disables (default). Overrides `WithDefaultKeyTTL`. |

@@ -302,6 +302,54 @@ Silently ignored on all operators other than `ExpandMap`.
 
 ---
 
+## `MaxDepth(n int)`
+
+**Applies to:** `ExpandMap`
+
+Limit BFS expansion to at most `n` levels below the root items.
+
+- `MaxDepth(0)` emits only the root items and performs no expansion.
+- `MaxDepth(1)` emits roots plus their immediate children.
+- Default is unlimited.
+
+When the depth cap is reached the stage stops enqueueing children but continues to drain items already in the BFS queue. The output channel closes normally — no error is returned.
+
+```go
+// Walk at most 3 levels below each root.
+nodes := kitsune.ExpandMap(roots, fetchChildren,
+    kitsune.MaxDepth(3),
+)
+```
+
+Combine with [`MaxItems`](#maxitemsn-int) to cap both depth and total output. Whichever limit fires first wins.
+
+Silently ignored on all operators other than `ExpandMap`.
+
+---
+
+## `MaxItems(n int)`
+
+**Applies to:** `ExpandMap`
+
+Limit total items emitted by an `ExpandMap` stage to `n`. When the stage has emitted `n` items it stops enqueueing children, cancels its currently-running inner pipeline, and closes its output channel normally — no error is returned, matching the semantics of `Take(n)` downstream.
+
+Unlike a downstream `Take(n)`, `MaxItems` stops the BFS queue from growing in memory after the cap is reached. Prefer `MaxItems` over `Take` for graphs with high fan-out.
+
+```go
+// Emit at most 1 000 items, regardless of tree shape.
+nodes := kitsune.ExpandMap(roots, fetchChildren,
+    kitsune.MaxItems(1_000),
+)
+```
+
+`MaxItems(0)` (or any non-positive value) is ignored; use `MaxDepth(0)` if you want roots-only behaviour.
+
+Combine with [`MaxDepth`](#maxdepthn-int) to cap both depth and total output. Whichever limit fires first wins.
+
+Silently ignored on all operators other than `ExpandMap`.
+
+---
+
 ## `WithKeyTTL(d time.Duration)`
 
 **Applies to:** `MapWithKey`, `FlatMapWithKey`
