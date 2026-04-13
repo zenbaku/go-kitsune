@@ -7,9 +7,9 @@ import (
 
 const defaultLookupBatchSize = 100
 
-// Enriched is the output of [LookupBy]: an item paired with the value fetched
-// for its key. Items whose key is absent from the [LookupConfig.Fetch] result
-// carry the zero value for V.
+// Enriched pairs a pipeline item with the value fetched for its key by [LookupBy].
+// Items whose key is absent from the [LookupConfig.Fetch] result carry the zero
+// value for V.
 type Enriched[T any, V any] struct {
 	Item  T
 	Value V
