@@ -175,7 +175,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `WithLatestFrom` | `WithLatestFrom[T,U](p, other)` → `*Pipeline[Pair[T,U]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `WithLatestFromWith` | `WithLatestFromWith[T,U,O](p, other, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Enrich` | `Enrich[T,K,V,O](p, keyFn, fetch, join, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
-| `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Pair[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
+| `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Enriched[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
 
 **Notes**
 - `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
@@ -236,7 +236,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` |
 | `Sum` | `Sum[T](ctx, p, opts...)` → `(T, error)` |
 | `Min` / `Max` | `Min[T](ctx, p, opts...)` → `(T, bool, error)` |
-| `MinMax` | `MinMax[T](ctx, p, opts...)` → `(Pair[T,T], bool, error)` |
+| `MinMax` | `MinMax[T](ctx, p, opts...)` → `(MinMaxResult[T], bool, error)` |
 | `MinBy` / `MaxBy` | `MinBy[T,K](ctx, p, keyFn, less, opts...)` → `(T, bool, error)` |
 | `Contains` | `Contains[T comparable](ctx, p, val, opts...)` → `(bool, error)` |
 | `ToMap` | `ToMap[T,K,V](ctx, p, keyFn, valFn, opts...)` → `(map[K]V, error)` |
@@ -280,7 +280,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WithIndex` | `WithIndex[T](p, opts...)` → `*Pipeline[Indexed[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Intersperse` | `Intersperse[T](p, sep, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Pair[T,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Consecutive[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `TakeUntil` | `TakeUntil[T,U](p, boundary *Pipeline[U], opts...)`: pass items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SkipUntil` | `SkipUntil[T,U](p, boundary *Pipeline[U], opts...)`: skip items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `StartWith` | `StartWith[T](p, items...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |

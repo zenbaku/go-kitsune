@@ -1153,7 +1153,7 @@ When either bound is reached the stage stops enqueueing children and closes its 
 ### Pairwise
 
 ```go
-func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]]
+func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Consecutive[T]]
 ```
 
 Emits overlapping consecutive pairs: `{item[0], item[1]}`, `{item[1], item[2]}`, `{item[2], item[3]}`, …. The first item is held internally; no pair is emitted until the second item arrives. A stream of `n` items produces `n-1` pairs.
@@ -1165,8 +1165,8 @@ Emits overlapping consecutive pairs: `{item[0], item[1]}`, `{item[1], item[2]}`,
 ```go
 deltas := kitsune.Map(
     kitsune.Pairwise(prices),
-    kitsune.LiftPure(func(p kitsune.Pair[float64, float64]) float64 {
-        return p.Second - p.First
+    kitsune.LiftPure(func(c kitsune.Consecutive[float64]) float64 {
+        return c.Curr - c.Prev
     }),
 )
 ```
@@ -2100,10 +2100,10 @@ func LookupBy[T any, K comparable, V any](
     p *Pipeline[T],
     cfg LookupConfig[T, K, V],
     opts ...StageOption,
-) *Pipeline[Pair[T, V]]
+) *Pipeline[Enriched[T, V]]
 ```
 
-Enriches each item with a value fetched in bulk, emitting `Pair[T, V]`. Items whose key is absent from the fetch result carry the zero value for `V`. `LookupConfig` carries:
+Enriches each item with a value fetched in bulk, emitting `Enriched[T, V]` (fields `Item` and `Value`). Items whose key is absent from the fetch result carry the zero value for `V`. `LookupConfig` carries:
 
 - `Key func(T) K`: extracts the lookup key from each item
 - `Fetch func(context.Context, []K) (map[K]V, error)`: bulk fetcher
@@ -2120,7 +2120,7 @@ cfg := kitsune.NewLookupConfig(
     },
 )
 withUsers := kitsune.LookupBy(events, cfg)
-// each item: Pair[Event, User]{First: event, Second: user}
+// each item: Enriched[Event, User]{Item: event, Value: user}
 ```
 
 ---
@@ -2204,10 +2204,10 @@ total := kitsune.Reduce(prices, 0.0, func(acc, p float64) float64 { return acc +
 func Sum[T Numeric](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, error)
 func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error)
 func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error)
-func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (Pair[T, T], bool, error)
+func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (MinMaxResult[T], bool, error)
 ```
 
-Terminal aggregators. `Sum` works on any `Numeric` type. `Min` and `Max` take a `less` comparator and return `(zero, false, nil)` if the pipeline is empty. `MinMax` computes both in a single pass.
+Terminal aggregators. `Sum` works on any `Numeric` type. `Min` and `Max` take a `less` comparator and return `(zero, false, nil)` if the pipeline is empty. `MinMax` computes both in a single pass and returns a `MinMaxResult[T]` with fields `Min` and `Max`.
 
 ```go
 total, err := kitsune.Sum(ctx, prices)
