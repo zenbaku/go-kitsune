@@ -79,13 +79,20 @@ func WithIndex[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Indexed[T]]
 	return newPipeline(id, meta, build)
 }
 
+// Consecutive holds two adjacent items from a stream in arrival order.
+// Prev is the earlier item and Curr is the later one.
+type Consecutive[T any] struct {
+	Prev T
+	Curr T
+}
+
 // ---------------------------------------------------------------------------
 // Pairwise
 // ---------------------------------------------------------------------------
 
 // Pairwise emits overlapping consecutive pairs: (item[0], item[1]), (item[1], item[2]), …
 // The first item is buffered silently; no pair is emitted until the second item arrives.
-func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] {
+func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Consecutive[T]] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
@@ -96,13 +103,13 @@ func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] 
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
-	build := func(rc *runCtx) chan Pair[T, T] {
+	build := func(rc *runCtx) chan Consecutive[T] {
 		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan Pair[T, T])
+			return existing.(chan Consecutive[T])
 		}
 		inCh := p.build(rc)
 		buf := rc.effectiveBufSize(cfg)
-		ch := make(chan Pair[T, T], buf)
+		ch := make(chan Consecutive[T], buf)
 		m := meta
 		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
@@ -122,7 +129,7 @@ func Pairwise[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Pair[T, T]] 
 						return nil
 					}
 					if !first {
-						if err := outbox.Send(ctx, Pair[T, T]{First: prev, Second: item}); err != nil {
+						if err := outbox.Send(ctx, Consecutive[T]{Prev: prev, Curr: item}); err != nil {
 							return err
 						}
 					}

@@ -290,7 +290,7 @@ func TestPairwise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []kitsune.Pair[int, int]{{1, 2}, {2, 3}, {3, 4}}
+	want := []kitsune.Consecutive[int]{{Prev: 1, Curr: 2}, {Prev: 2, Curr: 3}, {Prev: 3, Curr: 4}}
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
