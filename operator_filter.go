@@ -383,8 +383,17 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 // Emission order is BFS: all items at depth N are emitted before any item at
 // depth N+1. fn may return nil to signal that an item has no children.
 //
+// WARNING: ExpandMap performs unbounded BFS by default. A graph with a high
+// branching factor can produce fan^depth items, exhausting memory silently
+// as the BFS queue grows. Use [MaxDepth] or [MaxItems] to bound expansion,
+// or pair with [Take] downstream to limit total output. For cyclic graphs,
+// use [VisitedBy] to break loops.
+//
 // Options:
 //   - [WithName] labels the stage for metrics and traces.
+//   - [Buffer] sets the output channel buffer size.
+//   - [MaxDepth] caps BFS depth below the roots (0 = roots only, default unlimited).
+//   - [MaxItems] caps total items emitted (default unlimited).
 //   - [VisitedBy] prevents re-visiting items whose key was already seen,
 //     breaking infinite loops in cyclic graphs. Defaults to [MemoryDedupSet];
 //     override the backend with [WithDedupSet].
@@ -392,11 +401,14 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 // Typical uses: tree traversal, recursive API pagination, graph walks where
 // each node expands into its neighbours.
 //
-//	// Walk a directory tree
+//	// Walk a directory tree, bounded to 4 levels and 10 000 entries.
 //	kitsune.ExpandMap(kitsune.FromSlice(roots), func(ctx context.Context, dir Dir) *kitsune.Pipeline[Dir] {
 //	    children, _ := dir.ReadChildren(ctx)
 //	    return kitsune.FromSlice(children)
-//	})
+//	},
+//	    kitsune.MaxDepth(4),
+//	    kitsune.MaxItems(10_000),
+//	)
 func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], opts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := buildStageConfig(opts)
