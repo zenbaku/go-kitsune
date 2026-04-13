@@ -1810,3 +1810,67 @@ func TestPropPairwise(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// MinMax properties
+// ---------------------------------------------------------------------------
+
+// TestPropMinMax verifies four invariants for MinMax:
+//
+//  1. Empty law: ok is false for an empty input.
+//  2. Min bound: no item in the input is less than result.Min.
+//  3. Max bound: no item in the input is greater than result.Max.
+//  4. Membership: result.Min and result.Max both appear in the input.
+func TestPropMinMax(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
+		less := func(a, b int) bool { return a < b }
+
+		result, ok, err := kitsune.MinMax(context.Background(), kitsune.FromSlice(in), less)
+		if err != nil {
+			t.Fatalf("MinMax error: %v", err)
+		}
+
+		// Invariant 1: empty law.
+		if len(in) == 0 {
+			if ok {
+				t.Fatal("MinMax on empty input returned ok=true")
+			}
+			return
+		}
+		if !ok {
+			t.Fatal("MinMax on non-empty input returned ok=false")
+		}
+
+		// Invariant 2: Min bound — no item is less than result.Min.
+		for _, v := range in {
+			if less(v, result.Min) {
+				t.Fatalf("item %d < Min %d (input=%v)", v, result.Min, in)
+			}
+		}
+
+		// Invariant 3: Max bound — no item is greater than result.Max.
+		for _, v := range in {
+			if less(result.Max, v) {
+				t.Fatalf("item %d > Max %d (input=%v)", v, result.Max, in)
+			}
+		}
+
+		// Invariant 4: membership — Min and Max must appear in the input.
+		minFound, maxFound := false, false
+		for _, v := range in {
+			if v == result.Min {
+				minFound = true
+			}
+			if v == result.Max {
+				maxFound = true
+			}
+		}
+		if !minFound {
+			t.Fatalf("result.Min=%d not found in input %v", result.Min, in)
+		}
+		if !maxFound {
+			t.Fatalf("result.Max=%d not found in input %v", result.Max, in)
+		}
+	})
+}

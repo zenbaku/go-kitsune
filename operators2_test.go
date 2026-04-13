@@ -484,15 +484,15 @@ func TestMinMax(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{3, 1, 4, 1, 5, 9, 2, 6})
 	less := func(a, b int) bool { return a < b }
-	pair, ok, err := kitsune.MinMax(ctx, p, less)
+	result, ok, err := kitsune.MinMax(ctx, p, less)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
-	if pair.First != 1 || pair.Second != 9 {
-		t.Fatalf("min=%d max=%d, want 1 9", pair.First, pair.Second)
+	if result.Min != 1 || result.Max != 9 {
+		t.Fatalf("min=%d max=%d, want 1 9", result.Min, result.Max)
 	}
 }
 

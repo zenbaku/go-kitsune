@@ -204,28 +204,34 @@ func Max[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opt
 	return Min(ctx, p, func(a, b T) bool { return less(b, a) }, opts...)
 }
 
+// MinMaxResult holds the minimum and maximum items observed by [MinMax] in a single pass.
+type MinMaxResult[T any] struct {
+	Min T
+	Max T
+}
+
 // MinMax returns both the minimum and maximum items in a single pass.
 // Returns (zero, false, nil) if the pipeline emits no items.
-func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (Pair[T, T], bool, error) {
-	var result Pair[T, T]
+func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (MinMaxResult[T], bool, error) {
+	var result MinMaxResult[T]
 	found := false
 	err := p.ForEach(func(_ context.Context, v T) error {
 		if !found {
-			result.First = v
-			result.Second = v
+			result.Min = v
+			result.Max = v
 			found = true
 			return nil
 		}
-		if less(v, result.First) {
-			result.First = v
+		if less(v, result.Min) {
+			result.Min = v
 		}
-		if less(result.Second, v) {
-			result.Second = v
+		if less(result.Max, v) {
+			result.Max = v
 		}
 		return nil
 	}).Run(ctx, opts...)
 	if err != nil {
-		return Pair[T, T]{}, false, err
+		return MinMaxResult[T]{}, false, err
 	}
 	return result, found, nil
 }
