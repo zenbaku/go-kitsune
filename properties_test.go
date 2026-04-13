@@ -13,6 +13,7 @@ import (
 	"pgregory.net/rapid"
 
 	kitsune "github.com/zenbaku/go-kitsune"
+	"github.com/zenbaku/go-kitsune/testkit"
 )
 
 // TestMain reduces the rapid iteration count under -short (task test) to keep
@@ -1629,10 +1630,8 @@ func TestPropSlidingWindowContentAndOverlap(t *testing.T) {
 // TestPropSessionWindowLargeGapSingleSession verifies that when the gap is
 // much larger than any realistic inter-item delay, all items from a
 // synchronous source (FromSlice) land in exactly one session.
-//
-// Multi-session properties require precise timing control (a mock clock) and
-// are not suited to rapid property tests; they are covered by example-based
-// tests in window_test.go using testkit's controlled clock.
+// Multi-session splitting is covered by TestPropSessionWindowMultiSession and
+// TestPropSessionWindowEachItemAlone.
 func TestPropSessionWindowLargeGapSingleSession(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		src := rapid.SliceOf(rapid.IntRange(-100, 100)).Draw(t, "src")
@@ -1656,6 +1655,130 @@ func TestPropSessionWindowLargeGapSingleSession(t *testing.T) {
 		}
 		if !slices.Equal(got[0], src) {
 			t.Fatalf("SessionWindow session mismatch: got %v, want %v", got[0], src)
+		}
+	})
+}
+
+// TestPropSessionWindowMultiSession verifies the core multi-session splitting
+// law: items sent in distinct batches separated by a full gap advance each land
+// in their own session, in arrival order.
+//
+// Each property run draws 1-4 batches of 0-5 items. Empty batches are skipped
+// (SessionWindow never emits an empty session). The virtual clock is advanced
+// by exactly gap after each non-empty batch to trigger a flush.
+func TestPropSessionWindowMultiSession(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		numBatches := rapid.IntRange(1, 4).Draw(t, "numBatches")
+		batches := make([][]int, numBatches)
+		for i := range batches {
+			batches[i] = rapid.SliceOfN(rapid.IntRange(-100, 100), 0, 5).Draw(t, "batch")
+		}
+
+		const gap = time.Second
+		clock := testkit.NewTestClock()
+		ch := kitsune.NewChannel[int](32)
+
+		sessions := make(chan []int, 64)
+		done := make(chan error, 1)
+		go func() {
+			done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+				ForEach(func(_ context.Context, s []int) error {
+					sessions <- s
+					return nil
+				}).Run(context.Background())
+		}()
+		time.Sleep(pipelineStartup)
+
+		var expected [][]int
+		for _, batch := range batches {
+			if len(batch) == 0 {
+				continue
+			}
+			for _, v := range batch {
+				if err := ch.Send(context.Background(), v); err != nil {
+					t.Fatalf("Send error: %v", err)
+				}
+			}
+			time.Sleep(pipelineStartup) // let pipeline consume items before advancing
+			clock.Advance(gap)
+			time.Sleep(pipelineStartup) // let flush propagate to sessions channel
+			expected = append(expected, batch)
+		}
+
+		ch.Close()
+		if err := <-done; err != nil {
+			t.Fatalf("pipeline error: %v", err)
+		}
+
+		// Drain all sessions.
+		close(sessions)
+		var got [][]int
+		for s := range sessions {
+			got = append(got, s)
+		}
+
+		if len(got) != len(expected) {
+			t.Fatalf("session count: got %d, want %d\n  got:  %v\n  want: %v",
+				len(got), len(expected), got, expected)
+		}
+		for i, want := range expected {
+			if !slices.Equal(got[i], want) {
+				t.Fatalf("session[%d]: got %v, want %v", i, got[i], want)
+			}
+		}
+	})
+}
+
+// TestPropSessionWindowEachItemAlone verifies that each item sent in isolation
+// (with a full gap advance between each one) produces exactly one single-element
+// session. This is the strongest form of the splitting law.
+func TestPropSessionWindowEachItemAlone(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		src := rapid.SliceOfN(rapid.IntRange(-100, 100), 0, 6).Draw(t, "src")
+
+		const gap = time.Second
+		clock := testkit.NewTestClock()
+		ch := kitsune.NewChannel[int](32)
+
+		sessions := make(chan []int, 64)
+		done := make(chan error, 1)
+		go func() {
+			done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+				ForEach(func(_ context.Context, s []int) error {
+					sessions <- s
+					return nil
+				}).Run(context.Background())
+		}()
+		time.Sleep(pipelineStartup)
+
+		for _, v := range src {
+			if err := ch.Send(context.Background(), v); err != nil {
+				t.Fatalf("Send error: %v", err)
+			}
+			time.Sleep(pipelineStartup)
+			clock.Advance(gap)
+			time.Sleep(pipelineStartup)
+		}
+
+		ch.Close()
+		if err := <-done; err != nil {
+			t.Fatalf("pipeline error: %v", err)
+		}
+
+		close(sessions)
+		var got [][]int
+		for s := range sessions {
+			got = append(got, s)
+		}
+
+		if len(got) != len(src) {
+			t.Fatalf("session count: got %d, want %d (src=%v got=%v)",
+				len(got), len(src), src, got)
+		}
+		for i, v := range src {
+			if len(got[i]) != 1 || got[i][0] != v {
+				t.Fatalf("session[%d]: got %v, want [%d]", i, got[i], v)
+			}
 		}
 	})
 }

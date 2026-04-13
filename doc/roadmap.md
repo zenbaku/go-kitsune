@@ -46,7 +46,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### Testing
 
-- [x] **Property tests for windowing operators** *(re-open: marked done in roadmap but tests are absent)*: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
+- [x] **Property tests for windowing operators**: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
 
 - [x] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
 
