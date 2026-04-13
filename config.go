@@ -279,13 +279,17 @@ const (
 	// DropOldest evicts the oldest buffered item to make room for the incoming one.
 	// When the buffer has space the send is lock-free. When the buffer is full a
 	// sync.Mutex is held while the oldest item is drained and the new item is
-	// inserted, serialising all concurrent senders on the slow path.
+	// inserted, serialising concurrent senders on the slow path.
 	//
-	// Under sustained backpressure — exactly the scenario DropOldest is designed
-	// for — the buffer is full most of the time, so the mutex slow path becomes
-	// the hot path. With Concurrency(n), all n workers serialise on that lock.
-	// Increase Buffer to keep the buffer from filling frequently and reduce time
-	// on the slow path. For drop semantics without a mutex, consider DropNewest.
+	// With [Concurrency] > 1, the outbox is sharded: worker i uses shard i % n,
+	// and each shard owns its own mutex. Workers routed to different shards
+	// never contend on the slow path; each shard still serialises its own
+	// drain-and-resend pair so buffer ordering is preserved. All shards share
+	// the same underlying channel and a single atomic dropped counter, so drop
+	// totals reported by the overflow hook remain accurate.
+	//
+	// With [Concurrency] = 1 (the default), a single non-sharded outbox is
+	// used. For drop semantics without any mutex, consider [DropNewest].
 	// See "Overflow strategies" in doc/tuning.md for a full comparison.
 	DropOldest OverflowStrategy = internal.OverflowDropOldest
 )
