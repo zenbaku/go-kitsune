@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -750,6 +751,27 @@ func TestConcatMap(t *testing.T) {
 	if !sliceEqual(got, want) {
 		t.Fatalf("ConcatMap: got %v, want %v", got, want)
 	}
+}
+
+func TestConcatMapPanicsOnConcurrency(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected ConcatMap to panic when given Concurrency(n>1)")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected panic value to be string, got %T: %v", r, r)
+		}
+		want := "kitsune: ConcatMap is always serial"
+		if !strings.Contains(msg, want) {
+			t.Fatalf("panic message %q does not contain %q", msg, want)
+		}
+	}()
+	p := kitsune.FromSlice([]int{1, 2, 3})
+	_ = kitsune.ConcatMap(p, func(_ context.Context, v int, yield func(int) error) error {
+		return yield(v)
+	}, kitsune.Concurrency(4))
 }
 
 // ---------------------------------------------------------------------------

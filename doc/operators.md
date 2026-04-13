@@ -283,6 +283,27 @@ ch.Close()
 
 ---
 
+### Generate vs Channel[T]
+
+Both `Generate` and `Channel[T]` bridge external code into a pipeline, but they suit different producer shapes.
+
+| Aspect | `Generate` | `Channel[T]` |
+|---|---|---|
+| Producer shape | A loop you write inside `fn` | External goroutines that already exist |
+| Control flow | The pipeline drives the loop; `fn` runs on the pipeline goroutine | External code drives `Send`; the pipeline only consumes |
+| Backpressure | `yield` blocks when downstream is full | `Send` blocks when the buffer is full; `TrySend` returns `false` |
+| Cancellation | `ctx` passed to `fn` is cancelled when the pipeline shuts down, so blocking I/O is interrupted automatically | External producers must observe their own context; `Close()` signals the pipeline to drain |
+| Lifecycle | Returning from `fn` closes the source | `Close()` (idempotent) closes the source |
+| Concurrency | Single goroutine (the pipeline runs `fn` once) | Safe for concurrent `Send`/`TrySend` from many goroutines |
+
+**Choose `Generate` when** the producer is a loop you can express inline: paginated REST APIs, database cursors, polling a queue, walking a filesystem. The pipeline owns the loop and shuts it down cleanly via context cancellation.
+
+**Choose `Channel[T]` when** items arrive from goroutines the pipeline does not own: HTTP handlers, gRPC stream handlers, library callbacks, fan-in from multiple producer goroutines. Producers stay decoupled from kitsune internals and only need a `Send` call.
+
+If you find yourself starting a goroutine inside `Generate` just to call `yield`, use `Channel[T]` instead. If you find yourself wrapping `Channel[T]` in a single-goroutine loop, use `Generate` instead.
+
+---
+
 ### Ticker
 
 ```go
@@ -995,6 +1016,8 @@ Like [`FlatMap`](#flatmap) but always processes items sequentially; the next ite
 **When to use:** When you need strictly ordered output or when sub-streams have side effects that must not overlap.
 
 **Options:** `OnError`, `Buffer`, `Overflow`, `WithName`, `Timeout`, `Supervise`.
+
+`ConcatMap` is always serial. Passing `Concurrency(n)` with `n > 1` panics at pipeline construction time; use [`FlatMap`](#flatmap) with `Concurrency(n)` if you want parallel fan-out.
 
 ```go
 // Each file is processed completely before the next starts.

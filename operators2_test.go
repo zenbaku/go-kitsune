@@ -812,9 +812,9 @@ func TestPairwiseEmpty(t *testing.T) {
 // ConcatMap edge cases (6i)
 // ---------------------------------------------------------------------------
 
-func TestConcatMapIgnoresConcurrency(t *testing.T) {
-	// ConcatMap must enforce serial execution even when Concurrency(N) is passed.
-	// Verify by checking that output order is fully preserved.
+func TestConcatMapAcceptsConcurrencyOne(t *testing.T) {
+	// Concurrency(1) is compatible with ConcatMap's serial semantics and must
+	// not panic. Verify output order is fully preserved.
 	p := kitsune.FromSlice([]int{3, 1, 2})
 	got := collectAll(t, kitsune.ConcatMap(p,
 		func(_ context.Context, v int, yield func(int) error) error {
@@ -825,7 +825,7 @@ func TestConcatMapIgnoresConcurrency(t *testing.T) {
 			}
 			return nil
 		},
-		kitsune.Concurrency(5), // must be overridden to 1 by ConcatMap
+		kitsune.Concurrency(1), // explicitly serial: must be accepted without panic
 	))
 	want := []int{3, 3, 3, 1, 2, 2}
 	if !sliceEqual(got, want) {

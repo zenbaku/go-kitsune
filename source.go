@@ -154,7 +154,12 @@ func From[T any](src <-chan T) *Pipeline[T] {
 // Generate creates a Pipeline from a push-based source function.
 // Call yield for each item. yield returns false if the pipeline is done
 // (cancelled or downstream signalled completion). Generate handles
-// backpressure internally — yield blocks when downstream is full.
+// backpressure internally: yield blocks when downstream is full.
+//
+// When to use Generate vs [NewChannel]: prefer Generate when the producer
+// is a loop you can express inline (paginated APIs, cursors, polling).
+// Prefer [NewChannel] when items arrive from external goroutines that the
+// pipeline does not own (HTTP handlers, gRPC streams, callbacks).
 //
 //	kitsune.Generate(func(ctx context.Context, yield func(Record) bool) error {
 //	    for cursor := ""; ; {
@@ -299,8 +304,13 @@ var ErrChannelClosed = errors.New("kitsune: channel closed")
 // then push items with [Channel.Send] or [Channel.TrySend]. Call [Channel.Close]
 // when no more items will be sent so the pipeline can drain and exit cleanly.
 //
-// Channel is safe for concurrent use — multiple goroutines may call Send and
+// Channel is safe for concurrent use: multiple goroutines may call Send and
 // TrySend simultaneously. Close is idempotent and may be called from any goroutine.
+//
+// When to use Channel vs [Generate]: prefer Channel when items arrive from
+// external goroutines you do not control (HTTP handlers, gRPC streams,
+// callbacks). Prefer [Generate] when the producer is a loop you can express
+// inline (paginated APIs, cursors, polling).
 type Channel[T any] struct {
 	ch      chan T
 	once    sync.Once

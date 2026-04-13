@@ -14,6 +14,9 @@ import (
 // ---------------------------------------------------------------------------
 
 // StageOption configures the behavior of an individual pipeline stage.
+// When the same option is supplied more than once, the last value wins:
+// options are applied in order and each overwrites any previous setting
+// for the same field.
 type StageOption func(*stageConfig)
 
 // RunOption configures pipeline execution.

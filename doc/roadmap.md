@@ -26,11 +26,11 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **Named result types to replace `Pair` proliferation**: `LookupBy` returns `Pair[T,V]`, `Zip` returns `Pair[A,B]`, `Timestamp` wraps items in `Pair[T,time.Time]`, `WithIndex` wraps in `Pair[T,int]`. Users read `.First` / `.Second` everywhere without type context. Replace with named, self-documenting types: `Timestamped[T]{Value T; Time time.Time}`, `Indexed[T]{Value T; Index int}`, `Enriched[T,V]{Item T; Value V}`. `Pair` can remain as a utility but named types should be the canonical output of their respective operators.
 
-- [ ] **`ConcatMap` should reject incompatible options at construction time**: `ConcatMap` appends `Concurrency(1)` last, silently overriding any user-supplied `Concurrency(n)`. A user who passes `Concurrency(4)` gets Concurrency(1) with no warning. Validate at construction time and panic (with a clear message) or return an error when a concurrency incompatible option is detected.
+- [x] **`ConcatMap` should reject incompatible options at construction time**: `ConcatMap` appends `Concurrency(1)` last, silently overriding any user-supplied `Concurrency(n)`. A user who passes `Concurrency(4)` gets Concurrency(1) with no warning. Validate at construction time and panic (with a clear message) or return an error when a concurrency incompatible option is detected.
 
-- [ ] **Document `StageOption` last-write-wins semantics**: Passing `Buffer(16), Buffer(512)` produces buffer 512 — last option wins. This applies to every option and is not stated anywhere in `doc/options.md` or the `StageOption` type godoc. Add one sentence to both locations.
+- [x] **Document `StageOption` last-write-wins semantics**: Passing `Buffer(16), Buffer(512)` produces buffer 512 — last option wins. This applies to every option and is not stated anywhere in `doc/options.md` or the `StageOption` type godoc. Add one sentence to both locations.
 
-- [ ] **`Generate` vs `Channel[T]` selection guide**: Both bridge external code into a pipeline — `Generate` is pull-based (callback yields values), `Channel[T]` is push-based (send from any goroutine). Neither godoc mentions the other, leaving users to discover the difference by trial and error. Add a "When to use each" note to both godocs and include a comparison in `doc/sources.md`.
+- [x] **`Generate` vs `Channel[T]` selection guide**: Both bridge external code into a pipeline — `Generate` is pull-based (callback yields values), `Channel[T]` is push-based (send from any goroutine). Neither godoc mentions the other, leaving users to discover the difference by trial and error. Add a "When to use each" note to both godocs and include a comparison in `doc/operators.md`.
 
 ---
 
@@ -46,13 +46,13 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### Testing
 
-- [ ] **Property tests for windowing operators** *(re-open: marked done in roadmap but tests are absent)*: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
+- [x] **Property tests for windowing operators** *(re-open: marked done in roadmap but tests are absent)*: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
 
 - [ ] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
 
 - [x] **Test `Supervise` + `MapWithKey` state contract on restart**: Add a test that panics a supervised `MapWithKey` stage mid-stream and verifies the exact post-restart state of per-key `Ref` values — zeroed with `MemoryStore`, preserved with an external Store. This test codifies the contract that is currently only implied by the documentation item above.
 
-- [ ] **Verify `benchstat` regression baseline** *(re-open: marked done in roadmap but not confirmed)*: The roadmap marks the `benchstat` performance regression baseline as complete, but `testdata/bench/baseline.txt` and CI integration were not confirmed present. Verify the baseline file is committed and the CI diff step is active; if not, implement from scratch.
+- [x] **Verify `benchstat` regression baseline** *(re-open: marked done in roadmap but not confirmed)*: The roadmap marks the `benchstat` performance regression baseline as complete, but `testdata/bench/baseline.txt` and CI integration were not confirmed present. Verify the baseline file is committed and the CI diff step is active; if not, implement from scratch.
 
 ---
 

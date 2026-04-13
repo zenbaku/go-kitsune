@@ -2,6 +2,8 @@
 
 `StageOption` values tune individual stages. Pass any number of them as trailing arguments to operators like `Map`, `FlatMap`, `ForEach`, `Batch`, and so on.
 
+When the same option is passed more than once, the last value wins: options are applied in order and each call overwrites any previous setting for the same field. For example, `Buffer(8), Buffer(64)` is equivalent to `Buffer(64)`.
+
 ```go
 out := kitsune.Map(in, fn,
     kitsune.Concurrency(20),

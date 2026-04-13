@@ -270,9 +270,17 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 // sub-streams sequentially: the next item is only processed after the current
 // sub-stream has completed. Output order is fully preserved.
 // This is equivalent to FlatMap with Concurrency(1).
+//
+// ConcatMap rejects [Concurrency](n) for n > 1: passing it panics at pipeline
+// construction time. Use [FlatMap] with [Concurrency] when you want parallel
+// fan-out.
 func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error) error, opts ...StageOption) *Pipeline[O] {
-	// ConcatMap = serial FlatMap; enforce single concurrency.
-	// Append last so this overrides any caller-supplied Concurrency option.
+	// ConcatMap = serial FlatMap. Reject any user-supplied Concurrency(n>1)
+	// rather than silently overriding it, which would mask a usage bug.
+	if probe := buildStageConfig(opts); probe.concurrency != 1 {
+		panic("kitsune: ConcatMap is always serial; do not pass Concurrency(n) — use FlatMap with Concurrency(n) for parallel fan-out")
+	}
+	// Append last so the enforced single concurrency wins over anything else.
 	opts = append(opts, Concurrency(1))
 	return FlatMap(p, fn, opts...)
 }
