@@ -40,7 +40,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **`DrainChan` goroutine burst on mass teardown**: Every transform stage does `defer func() { go internal.DrainChan(inCh) }()`. A `Take(1)` on a 20-stage pipeline launches 20 drain goroutines simultaneously at teardown. For pipelines that cycle frequently (via `Retry`), this creates sustained goroutine pressure. Investigate cooperative drain: pass a drain-ready signal down the topology so upstream stages can self-drain without spawning goroutines.
 
-- [ ] **Sharded `DropOldest` outbox**: `dropOldestOutbox` holds a single mutex protecting drain-and-resend when the buffer is full. Under sustained backpressure with `Concurrency(n)`, all n workers serialize on this mutex — exactly the scenario `DropOldest` is designed for becomes its hot path. Implement a sharded outbox (worker i uses shard i % n) to eliminate cross-worker contention when both `Overflow(DropOldest)` and `Concurrency(n > 1)` are active.
+- [x] **Sharded `DropOldest` outbox**: `dropOldestOutbox` holds a single mutex protecting drain-and-resend when the buffer is full. Under sustained backpressure with `Concurrency(n)`, all n workers serialize on this mutex; exactly the scenario `DropOldest` is designed for becomes its hot path. Implemented a sharded outbox (worker i uses shard i % n) to eliminate cross-worker contention when both `Overflow(DropOldest)` and `Concurrency(n > 1)` are active.
 
 ---
 
