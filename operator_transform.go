@@ -79,8 +79,7 @@ func WithIndex[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Indexed[T]]
 	return newPipeline(id, meta, build)
 }
 
-// Consecutive holds two adjacent items from a stream in arrival order.
-// Prev is the earlier item and Curr is the later one.
+// Consecutive holds two adjacent stream items in arrival order (Prev then Curr).
 type Consecutive[T any] struct {
 	Prev T
 	Curr T
