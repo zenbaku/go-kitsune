@@ -34,6 +34,7 @@ func TestExamples(t *testing.T) {
 		"concurrency-guide/routing",
 		"concurrency-guide/useragg",
 		"deadletter",
+		"expandmap",
 		"fanout",
 		"hooks",
 		"isoptimized",
