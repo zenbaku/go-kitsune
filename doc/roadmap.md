@@ -48,7 +48,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **Property tests for windowing operators** *(re-open: marked done in roadmap but tests are absent)*: `Batch`, `BufferWith`, `SlidingWindow`, `SessionWindow`, `ChunkBy`, and `ChunkWhile` have no property-based tests. Laws to verify: `Batch(n)` completeness — every input item appears in exactly one batch; all batches except the last have exactly n items. `SlidingWindow(size, step)` — adjacent windows share exactly `size - step` elements. `SessionWindow(gap)` — items separated by more than gap appear in different sessions. `ChunkBy(keyFn)` — consecutive same-key items always cogroup; key boundaries produce new chunks. Use `testkit.NewTestClock()` for deterministic timing.
 
-- [ ] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
+- [x] **Property tests for `GroupByStream`**: `GroupByStream` routes items to per-key sub-pipelines and is structurally one of the most complex operators in the library, with no property tests. Key law: for any input stream, items with key K must appear in arrival order in exactly the sub-pipeline rooted at K, with no cross-key contamination.
 
 - [x] **Test `Supervise` + `MapWithKey` state contract on restart**: Add a test that panics a supervised `MapWithKey` stage mid-stream and verifies the exact post-restart state of per-key `Ref` values — zeroed with `MemoryStore`, preserved with an external Store. This test codifies the contract that is currently only implied by the documentation item above.
 
@@ -58,7 +58,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### Developer experience
 
-- [ ] **Source selection guide (`doc/sources.md`)**: Fourteen source operators exist with overlapping use cases and no unified decision guide. Cover: `FromSlice` for in-memory data; `From` to wrap an existing channel; `Generate` for pull-based external sources; `Channel[T]` for push-based multi-sender bridging; `Ticker`/`Timer` for time-driven emission; `Unfold`/`Iterate` for mathematical sequences; `Concat` for sequential chaining; `Amb` for racing sources. Include the `Generate` vs `Channel[T]` comparison from the ergonomics item above.
+- [x] **Source selection guide (`doc/sources.md`)**: Fourteen source operators exist with overlapping use cases and no unified decision guide. Cover: `FromSlice` for in-memory data; `From` to wrap an existing channel; `Generate` for pull-based external sources; `Channel[T]` for push-based multi-sender bridging; `Ticker`/`Timer` for time-driven emission; `Unfold`/`Iterate` for mathematical sequences; `Concat` for sequential chaining; `Amb` for racing sources. Include the `Generate` vs `Channel[T]` comparison from the ergonomics item above.
 
 - [ ] **`ContextCarrier` vs `WithContextMapper` decision guide**: The two approaches for per-item trace propagation have meaningfully different trade-offs: `ContextCarrier` requires modifying the item type (impossible for third-party types); `WithContextMapper` is a stage option requiring no type changes. The comparison exists only as a one-line godoc mention. Add a section to `doc/operators.md` or a new `doc/tracing.md` with a comparison table and worked examples for both.
 
