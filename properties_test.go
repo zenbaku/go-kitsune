@@ -1768,3 +1768,45 @@ func TestPropertyExpandMap_MaxDepth_SubsetOfUnbounded(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Pairwise properties
+// ---------------------------------------------------------------------------
+
+// TestPropPairwise verifies three invariants for Pairwise:
+//
+//  1. Length law: len(output) == max(0, len(input)-1).
+//  2. Boundary: a stream of length 0 or 1 always produces zero pairs.
+//  3. Overlap invariant: got[i].Curr == got[i+1].Prev for all adjacent pairs.
+func TestPropPairwise(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
+
+		got, err := kitsune.Pairwise(kitsune.FromSlice(in)).Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Pairwise error: %v", err)
+		}
+
+		// Invariant 1: length law.
+		wantLen := len(in) - 1
+		if wantLen < 0 {
+			wantLen = 0
+		}
+		if len(got) != wantLen {
+			t.Fatalf("Pairwise length: got %d, want %d (input len %d)", len(got), wantLen, len(in))
+		}
+
+		// Invariant 2: boundary — streams of length 0 or 1 produce no pairs.
+		if len(in) <= 1 && len(got) != 0 {
+			t.Fatalf("Pairwise on len=%d input produced %d pairs, want 0", len(in), len(got))
+		}
+
+		// Invariant 3: overlap — adjacent pairs share one element.
+		for i := 0; i+1 < len(got); i++ {
+			if got[i].Curr != got[i+1].Prev {
+				t.Fatalf("overlap violated at [%d→%d]: got[%d].Curr=%v != got[%d].Prev=%v (input=%v)",
+					i, i+1, i, got[i].Curr, i+1, got[i+1].Prev, in)
+			}
+		}
+	})
+}

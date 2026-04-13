@@ -294,9 +294,9 @@ func TestPairwise(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	for i, p := range want {
-		if got[i] != p {
-			t.Fatalf("got[%d]=%v, want %v", i, got[i], p)
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("got[%d]=%v, want %v", i, got[i], w)
 		}
 	}
 }

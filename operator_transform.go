@@ -79,15 +79,15 @@ func WithIndex[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Indexed[T]]
 	return newPipeline(id, meta, build)
 }
 
-// Consecutive holds two adjacent stream items in arrival order (Prev then Curr).
+// ---------------------------------------------------------------------------
+// Pairwise
+// ---------------------------------------------------------------------------
+
+// Consecutive holds two adjacent stream items emitted by [Pairwise], in arrival order (Prev then Curr).
 type Consecutive[T any] struct {
 	Prev T
 	Curr T
 }
-
-// ---------------------------------------------------------------------------
-// Pairwise
-// ---------------------------------------------------------------------------
 
 // Pairwise emits overlapping consecutive pairs: (item[0], item[1]), (item[1], item[2]), …
 // The first item is buffered silently; no pair is emitted until the second item arrives.
