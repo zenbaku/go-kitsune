@@ -20,23 +20,23 @@ type StageOption func(*stageConfig)
 type RunOption func(*runConfig)
 
 type stageConfig struct {
-	name            string
-	concurrency     int
-	ordered         bool
-	buffer          int
-	bufferExplicit  bool // true when Buffer(n) was called explicitly
-	overflow        internal.Overflow
-	errorHandler    internal.ErrorHandler
-	batchTimeout    time.Duration
-	supervision     internal.SupervisionPolicy
-	cacheConfig     *stageCacheConfig
-	timeout         time.Duration
-	keyTTL          time.Duration // WithKeyTTL: evict per-key Ref after this much inactivity
-	keyTTLExplicit  bool          // true when WithKeyTTL was called explicitly
-	dedupSet        DedupSet
-	clock           internal.Clock
-	visitedKeyFn    any // func(T) string, type-erased; set by VisitedBy[T]
-	contextMapperFn any // func(T) context.Context, type-erased; set by WithContextMapper[T]
+	name                   string
+	concurrency            int
+	ordered                bool
+	buffer                 int
+	bufferExplicit         bool // true when Buffer(n) was called explicitly
+	overflow               internal.Overflow
+	errorHandler           internal.ErrorHandler
+	batchTimeout           time.Duration
+	supervision            internal.SupervisionPolicy
+	cacheConfig            *stageCacheConfig
+	timeout                time.Duration
+	keyTTL                 time.Duration // WithKeyTTL: evict per-key Ref after this much inactivity
+	keyTTLExplicit         bool          // true when WithKeyTTL was called explicitly
+	dedupSet               DedupSet
+	clock                  internal.Clock
+	visitedKeyFn           any  // func(T) string, type-erased; set by VisitedBy[T]
+	contextMapperFn        any  // func(T) context.Context, type-erased; set by WithContextMapper[T]
 	expandMaxDepth         int  // MaxDepth: BFS depth cap for ExpandMap; unlimited unless expandMaxDepthExplicit
 	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly; distinguishes MaxDepth(0) from default
 	expandMaxItems         int  // MaxItems: total emission cap for ExpandMap; 0 = unlimited

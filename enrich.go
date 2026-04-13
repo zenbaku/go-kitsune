@@ -1,6 +1,9 @@
 package kitsune
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 const defaultLookupBatchSize = 100
 
@@ -16,10 +19,15 @@ const defaultLookupBatchSize = 100
 //     zero value for V.
 //   - BatchSize controls how many items are collected before a single Fetch
 //     call is made. Defaults to 100 when zero.
+//   - BatchTimeout, when non-zero, flushes a partial batch after the duration
+//     elapses with no new item. Without it, items sit in the internal buffer
+//     until BatchSize is reached or the source closes, which can introduce
+//     unbounded latency under low throughput.
 type LookupConfig[T any, K comparable, V any] struct {
-	Key       func(T) K
-	Fetch     func(context.Context, []K) (map[K]V, error)
-	BatchSize int
+	Key          func(T) K
+	Fetch        func(context.Context, []K) (map[K]V, error)
+	BatchSize    int
+	BatchTimeout time.Duration
 }
 
 // NewLookupConfig creates a LookupConfig with the given key extractor and fetch
@@ -54,6 +62,9 @@ func LookupBy[T any, K comparable, V any](p *Pipeline[T], cfg LookupConfig[T, K,
 	if size <= 0 {
 		size = defaultLookupBatchSize
 	}
+	if cfg.BatchTimeout > 0 {
+		opts = append([]StageOption{BatchTimeout(cfg.BatchTimeout)}, opts...)
+	}
 	return MapBatch(p, size, func(ctx context.Context, batch []T) ([]Pair[T, V], error) {
 		keys := uniqueKeys(batch, cfg.Key)
 		m, err := cfg.Fetch(ctx, keys)
@@ -80,11 +91,16 @@ func LookupBy[T any, K comparable, V any](p *Pipeline[T], cfg LookupConfig[T, K,
 //   - Join combines the original item with its fetched value into the output type.
 //   - BatchSize controls how many items are collected before a single Fetch
 //     call is made. Defaults to 100 when zero.
+//   - BatchTimeout, when non-zero, flushes a partial batch after the duration
+//     elapses with no new item. Without it, items sit in the internal buffer
+//     until BatchSize is reached or the source closes, which can introduce
+//     unbounded latency under low throughput.
 type EnrichConfig[T any, K comparable, V, O any] struct {
-	Key       func(T) K
-	Fetch     func(context.Context, []K) (map[K]V, error)
-	Join      func(T, V) O
-	BatchSize int
+	Key          func(T) K
+	Fetch        func(context.Context, []K) (map[K]V, error)
+	Join         func(T, V) O
+	BatchSize    int
+	BatchTimeout time.Duration
 }
 
 // NewEnrichConfig creates an EnrichConfig with the given key extractor, fetch
@@ -123,6 +139,9 @@ func Enrich[T any, K comparable, V, O any](p *Pipeline[T], cfg EnrichConfig[T, K
 	size := cfg.BatchSize
 	if size <= 0 {
 		size = defaultLookupBatchSize
+	}
+	if cfg.BatchTimeout > 0 {
+		opts = append([]StageOption{BatchTimeout(cfg.BatchTimeout)}, opts...)
 	}
 	return MapBatch(p, size, func(ctx context.Context, batch []T) ([]O, error) {
 		keys := uniqueKeys(batch, cfg.Key)

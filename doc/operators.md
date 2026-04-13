@@ -2108,6 +2108,7 @@ Enriches each item with a value fetched in bulk, emitting `Pair[T, V]`. Items wh
 - `Key func(T) K`: extracts the lookup key from each item
 - `Fetch func(context.Context, []K) (map[K]V, error)`: bulk fetcher
 - `BatchSize int`: how many items to collect before calling `Fetch` (default: 100)
+- `BatchTimeout time.Duration`: when non-zero, flushes a partial batch after the duration elapses with no new item. Without this, items sit in the internal buffer until `BatchSize` is reached or the source closes, which can introduce unbounded latency under low throughput.
 
 **Options:** `Buffer`, `WithName`, `BatchTimeout`.
 
@@ -2139,7 +2140,8 @@ Like [`LookupBy`](#lookupby) but calls a `Join` function to combine the item and
 - `Key func(T) K`
 - `Fetch func(context.Context, []K) (map[K]V, error)`
 - `Join func(T, V) O`
-- `BatchSize int`
+- `BatchSize int`: default 100
+- `BatchTimeout time.Duration`: when non-zero, flushes a partial batch after the duration elapses with no new item.
 
 **Options:** `Buffer`, `WithName`, `BatchTimeout`.
 

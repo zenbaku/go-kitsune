@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -246,6 +247,156 @@ func TestLookupByDeduplicatesKeys(t *testing.T) {
 	}
 	if fetchCalls != 1 {
 		t.Errorf("expected 1 fetch call, got %d", fetchCalls)
+	}
+}
+
+func TestLookupByBatchTimeoutFlushesPartialBatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var fetchMu sync.Mutex
+	var fetchCalls [][]int
+
+	ch := kitsune.NewChannel[int](10)
+	cfg := kitsune.LookupConfig[int, int, string]{
+		Key: func(id int) int { return id },
+		Fetch: func(_ context.Context, ids []int) (map[int]string, error) {
+			fetchMu.Lock()
+			cp := make([]int, len(ids))
+			copy(cp, ids)
+			fetchCalls = append(fetchCalls, cp)
+			fetchMu.Unlock()
+			result := make(map[int]string, len(ids))
+			for _, id := range ids {
+				result[id] = fmt.Sprintf("v%d", id)
+			}
+			return result, nil
+		},
+		BatchSize:    100,
+		BatchTimeout: 20 * time.Millisecond,
+	}
+
+	pairs := make(chan kitsune.Pair[int, string], 16)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.LookupBy(ch.Source(), cfg).
+			ForEach(func(_ context.Context, p kitsune.Pair[int, string]) error {
+				pairs <- p
+				return nil
+			}).Run(ctx)
+	}()
+
+	// Send two items; far below BatchSize. Without BatchTimeout these would
+	// sit in the Batch buffer indefinitely until the source closes.
+	if err := ch.Send(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.Send(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait past the timeout so the ticker fires and flushes the partial batch.
+	time.Sleep(50 * time.Millisecond)
+
+	// We must see the two pairs emitted *before* we close the channel, proving
+	// the flush came from the timeout rather than the source-closed path.
+	seen := make(map[int]string)
+	for i := 0; i < 2; i++ {
+		select {
+		case p := <-pairs:
+			seen[p.First] = p.Second
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timeout waiting for pair %d (seen so far: %v)", i, seen)
+		}
+	}
+	if seen[1] != "v1" || seen[2] != "v2" {
+		t.Fatalf("got %v, want map[1:v1 2:v2]", seen)
+	}
+
+	fetchMu.Lock()
+	if len(fetchCalls) != 1 {
+		fetchMu.Unlock()
+		t.Fatalf("expected exactly 1 fetch call before close, got %d: %v", len(fetchCalls), fetchCalls)
+	}
+	if len(fetchCalls[0]) != 2 {
+		fetchMu.Unlock()
+		t.Fatalf("expected fetch batch of size 2, got %d: %v", len(fetchCalls[0]), fetchCalls[0])
+	}
+	fetchMu.Unlock()
+
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("pipeline error: %v", err)
+	}
+}
+
+func TestEnrichBatchTimeoutFlushesPartialBatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var fetchMu sync.Mutex
+	fetchCalls := 0
+
+	ch := kitsune.NewChannel[string](10)
+	cfg := kitsune.EnrichConfig[string, string, int, string]{
+		Key: func(s string) string { return s },
+		Fetch: func(_ context.Context, keys []string) (map[string]int, error) {
+			fetchMu.Lock()
+			fetchCalls++
+			fetchMu.Unlock()
+			result := make(map[string]int, len(keys))
+			for i, k := range keys {
+				result[k] = i + 1
+			}
+			return result, nil
+		},
+		Join:         func(s string, n int) string { return fmt.Sprintf("%s=%d", s, n) },
+		BatchSize:    100,
+		BatchTimeout: 20 * time.Millisecond,
+	}
+
+	out := make(chan string, 16)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Enrich(ch.Source(), cfg).
+			ForEach(func(_ context.Context, s string) error {
+				out <- s
+				return nil
+			}).Run(ctx)
+	}()
+
+	if err := ch.Send(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.Send(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	got := make(map[string]bool)
+	for i := 0; i < 2; i++ {
+		select {
+		case s := <-out:
+			got[s] = true
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timeout waiting for enrich output %d (got %v)", i, got)
+		}
+	}
+	if !got["a=1"] || !got["b=2"] {
+		t.Fatalf("got %v, want a=1 and b=2", got)
+	}
+
+	fetchMu.Lock()
+	if fetchCalls != 1 {
+		fetchMu.Unlock()
+		t.Fatalf("expected 1 fetch call before close, got %d", fetchCalls)
+	}
+	fetchMu.Unlock()
+
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("pipeline error: %v", err)
 	}
 }
 

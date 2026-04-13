@@ -174,8 +174,8 @@ Documents every exported operator and which `StageOption` features each one actu
 | `CombineLatestWith` | `CombineLatestWith[A,B,O](a, b, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WithLatestFrom` | `WithLatestFrom[T,U](p, other)` → `*Pipeline[Pair[T,U]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `WithLatestFromWith` | `WithLatestFromWith[T,U,O](p, other, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `Enrich` | `Enrich[T,K,V,O](p, keyFn, fetch, join, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Pair[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Enrich` | `Enrich[T,K,V,O](p, keyFn, fetch, join, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
+| `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Pair[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
 
 **Notes**
 - `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
@@ -183,6 +183,7 @@ Documents every exported operator and which `StageOption` features each one actu
 - `BroadcastN` is an explicit N-way alias for `Broadcast` (identical semantics).
 - `Broadcast` requires `n ≥ 2`.
 - `Share` returns a factory; call the factory once per desired branch before building the runner. At least one subscribe call is required. `Buffer` and `WithName` can be set on each individual subscribe call (per-subscribe opts override factory opts). Calling the factory after `Run()` has started panics. Unlike `Broadcast`, `Share` allows a single subscriber.
+- `LookupBy` and `Enrich` also accept `BatchTimeout` as a first-class field on `LookupConfig` / `EnrichConfig`; the field is equivalent to passing the `BatchTimeout(d)` `StageOption` and is forwarded to the internal `Batch` stage.
 
 ---
 
