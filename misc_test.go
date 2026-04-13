@@ -624,11 +624,11 @@ func TestMemoryStore_InProcessBypass(t *testing.T) {
 type panicOnCallCodec struct{}
 
 func (panicOnCallCodec) Marshal(v any) ([]byte, error) {
-	panic("codec.Marshal called on InProcessStore path — bypass is broken")
+	panic("codec.Marshal called on InProcessStore path; bypass is broken")
 }
 
 func (panicOnCallCodec) Unmarshal(data []byte, v any) error {
-	panic("codec.Unmarshal called on InProcessStore path — bypass is broken")
+	panic("codec.Unmarshal called on InProcessStore path; bypass is broken")
 }
 
 // plainStore implements Store but not InProcessStore.
