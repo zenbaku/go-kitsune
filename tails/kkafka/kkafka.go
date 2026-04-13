@@ -20,11 +20,39 @@ package kkafka
 
 import (
 	"context"
+	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 
 	kitsune "github.com/zenbaku/go-kitsune"
 )
+
+// ConsumeOption configures the behaviour of [Consume].
+type ConsumeOption func(*consumeConfig)
+
+type consumeConfig struct {
+	batchSize    int           // 0 or 1 = per-message commits (default)
+	batchTimeout time.Duration // 0 = no timer
+}
+
+func (c *consumeConfig) batching() bool {
+	return c.batchSize > 1 || c.batchTimeout > 0
+}
+
+// BatchSize sets how many messages to accumulate before committing offsets to Kafka.
+// Default (0) commits each message individually, preserving existing behaviour.
+// BatchSize(1) is equivalent to the default.
+func BatchSize(n int) ConsumeOption {
+	return func(c *consumeConfig) { c.batchSize = n }
+}
+
+// BatchTimeout sets the maximum duration to hold uncommitted messages before flushing.
+// The clock starts when the first message of the current batch arrives.
+// Default (0) disables timer-based flushing.
+// BatchTimeout has no effect when no messages are pending.
+func BatchTimeout(d time.Duration) ConsumeOption {
+	return func(c *consumeConfig) { c.batchTimeout = d }
+}
 
 // Consume creates a Pipeline that reads messages from a Kafka topic.
 // unmarshal converts each [kafka.Message] into a value of type T.
