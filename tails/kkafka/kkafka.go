@@ -1,6 +1,6 @@
 // Package kkafka provides Kafka source and sink helpers for kitsune pipelines.
 //
-// Users own the [kafka.Reader] and [kafka.Writer] — configure brokers, topics,
+// Users own the [kafka.Reader] and [kafka.Writer]: configure brokers, topics,
 // group IDs, and TLS yourself. Kitsune will never create or close them.
 //
 // Minimal consumer pipeline:
@@ -13,9 +13,25 @@
 //	defer reader.Close()
 //
 //	pipe := kkafka.Consume(reader, func(m kafka.Message) (Event, error) {
-//	    return json.Unmarshal(m.Value, &Event{})...
+//	    var e Event
+//	    return e, json.Unmarshal(m.Value, &e)
 //	})
 //	pipe.ForEach(handle).Run(ctx)
+//
+// Batch commits (high-throughput consumers):
+//
+// By default Consume commits each message individually. Use [BatchSize] and
+// [BatchTimeout] to commit in groups and reduce broker round-trips:
+//
+//	pipe := kkafka.Consume(reader, unmarshal,
+//	    kkafka.BatchSize(200),
+//	    kkafka.BatchTimeout(500*time.Millisecond),
+//	)
+//
+// Messages are yielded immediately; commits are deferred until BatchSize
+// messages have been processed or BatchTimeout elapses since the first message
+// in the current batch. Uncommitted messages redeliver on reconnect
+// (at-least-once).
 package kkafka
 
 import (

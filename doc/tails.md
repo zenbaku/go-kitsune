@@ -94,6 +94,23 @@ example because a `Take` or `TakeWhile` boundary is reached — the last fetched
 is not committed. On reconnect the reader redelivers that message. Duplicate handling
 in the consumer is required for exactly-once processing.
 
+**Batch commits** (high-throughput consumers):
+
+Reduce broker round-trips by committing offsets in groups:
+
+```go
+pipe := kkafka.Consume(reader, unmarshal,
+    kkafka.BatchSize(200),
+    kkafka.BatchTimeout(500*time.Millisecond),
+)
+```
+
+Messages are still yielded one at a time. `BatchSize` controls how many are
+accumulated before a single `CommitMessages` call; `BatchTimeout` flushes any
+partial batch after the given duration. Both options can be combined; whichever
+fires first triggers the commit. Uncommitted messages at pipeline exit redeliver
+on reconnect (at-least-once).
+
 See [`examples/` in the kkafka module](../tails/kkafka/) for a complete example.
 
 ---
