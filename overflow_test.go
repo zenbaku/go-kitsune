@@ -152,6 +152,46 @@ func TestOverflowDropOldestConcurrent(t *testing.T) {
 	}
 }
 
+// TestOverflowDropOldestShardedStress exercises the sharded DropOldest outbox
+// under sustained backpressure with Concurrency(8) and a tiny Buffer(2), which
+// keeps the slow path hot. Run with -race to catch any regression in
+// cross-shard ordering: the sharded slow path is only safe because each shard
+// owns its own mutex, the underlying channel tolerates concurrent send + recv,
+// and the shared dropped counter is atomic.
+func TestOverflowDropOldestShardedStress(t *testing.T) {
+	const n = 20_000
+	items := make([]int, n)
+	for i := range items {
+		items[i] = i
+	}
+
+	h := &dropCountHook{Hook: kitsune.LogHook(slog.New(slog.NewTextHandler(io.Discard, nil)))}
+	var received atomic.Int64
+
+	err := kitsune.Map(
+		kitsune.FromSlice(items),
+		func(_ context.Context, v int) (int, error) { return v, nil },
+		kitsune.Concurrency(8),
+		kitsune.Buffer(2),
+		kitsune.Overflow(kitsune.DropOldest),
+	).ForEach(func(_ context.Context, _ int) error {
+		// No sleep: maximum throughput. The sharded outbox should still
+		// make forward progress without deadlock or races.
+		received.Add(1)
+		return nil
+	}).Run(context.Background(), kitsune.WithHook(h))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if received.Load() == 0 {
+		t.Fatal("expected some items to be received")
+	}
+	// Sanity: received + dropped must not exceed n (no phantom items).
+	if received.Load()+h.drops.Load() > int64(n) {
+		t.Fatalf("received(%d) + dropped(%d) > %d", received.Load(), h.drops.Load(), n)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Overflow hook
 // ---------------------------------------------------------------------------
