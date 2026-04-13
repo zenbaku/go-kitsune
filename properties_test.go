@@ -1659,3 +1659,112 @@ func TestPropSessionWindowLargeGapSingleSession(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// ExpandMap properties
+// ---------------------------------------------------------------------------
+
+// TestPropertyExpandMap_MaxItems_LengthBound verifies that MaxItems(k) on any
+// finite tree emits exactly min(k, totalItems) items.
+func TestPropertyExpandMap_MaxItems_LengthBound(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		// Generate a flat-tree: roots expand to children, children have no
+		// children of their own. This keeps the tree finite and deterministic.
+		roots := rapid.SliceOfN(rapid.IntRange(100, 199), 1, 5).Draw(t, "roots")
+		children := rapid.SliceOfN(rapid.IntRange(200, 299), 0, 8).Draw(t, "children")
+		k := rapid.IntRange(1, 20).Draw(t, "k")
+
+		fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
+			if v >= 200 {
+				return nil // children have no children
+			}
+			return kitsune.FromSlice(children)
+		}
+
+		ctx := context.Background()
+
+		// Unbounded: total = len(roots) + len(roots)*len(children)
+		allItems, err := kitsune.Collect(ctx, kitsune.ExpandMap(
+			kitsune.FromSlice(roots), fn,
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := len(allItems)
+
+		// Bounded: must get exactly min(k, total) items
+		bounded, err := kitsune.Collect(ctx, kitsune.ExpandMap(
+			kitsune.FromSlice(roots), fn,
+			kitsune.MaxItems(k),
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := k
+		if total < k {
+			want = total
+		}
+		if len(bounded) != want {
+			t.Fatalf("MaxItems(%d) on %d-item tree: got %d items, want %d",
+				k, total, len(bounded), want)
+		}
+	})
+}
+
+// TestPropertyExpandMap_MaxDepth_SubsetOfUnbounded verifies that MaxDepth(d)
+// never emits more items than an unbounded walk, and respects the structural
+// bounds of the two-level test tree.
+func TestPropertyExpandMap_MaxDepth_SubsetOfUnbounded(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		// Same flat-tree structure as above.
+		roots := rapid.SliceOfN(rapid.IntRange(100, 199), 1, 5).Draw(t, "roots")
+		children := rapid.SliceOfN(rapid.IntRange(200, 299), 0, 8).Draw(t, "children")
+		d := rapid.IntRange(0, 5).Draw(t, "d")
+
+		fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
+			if v >= 200 {
+				return nil
+			}
+			return kitsune.FromSlice(children)
+		}
+
+		ctx := context.Background()
+
+		// Unbounded.
+		allItems, err := kitsune.Collect(ctx, kitsune.ExpandMap(
+			kitsune.FromSlice(roots), fn,
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Bounded by depth.
+		bounded, err := kitsune.Collect(ctx, kitsune.ExpandMap(
+			kitsune.FromSlice(roots), fn,
+			kitsune.MaxDepth(d),
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Bounded must never exceed unbounded.
+		if len(bounded) > len(allItems) {
+			t.Fatalf("MaxDepth(%d) emitted %d items but unbounded only emitted %d",
+				d, len(bounded), len(allItems))
+		}
+
+		// At depth 0: only roots emitted, no expansion.
+		if d == 0 && len(bounded) != len(roots) {
+			t.Fatalf("MaxDepth(0) emitted %d items, want %d (roots only)",
+				len(bounded), len(roots))
+		}
+
+		// At depth >= 1 with children: all roots + children must be emitted
+		// (since this is a 2-level tree: roots at depth 0, children at depth 1).
+		if d >= 1 && len(bounded) != len(allItems) {
+			t.Fatalf("MaxDepth(%d) on 2-level tree: got %d items, want %d",
+				d, len(bounded), len(allItems))
+		}
+	})
+}
