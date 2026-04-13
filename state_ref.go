@@ -93,6 +93,14 @@ func (r *Ref[T]) Get(ctx context.Context) (T, error) {
 		r.mu.RUnlock()
 		return v, nil
 	}
+	if ips, ok := r.store.(internal.InProcessStore); ok {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		if v, found := ips.GetAny(r.key); found {
+			return v.(T), nil
+		}
+		return r.initialVal, nil
+	}
 	return r.storeGet(ctx)
 }
 
@@ -107,6 +115,12 @@ func (r *Ref[T]) Set(ctx context.Context, value T) error {
 		}
 		return nil
 	}
+	if ips, ok := r.store.(internal.InProcessStore); ok {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		ips.SetAny(r.key, value)
+		return nil
+	}
 	return r.storeSet(ctx, value)
 }
 
@@ -118,6 +132,20 @@ func (r *Ref[T]) GetOrSet(ctx context.Context, fn func() (T, error)) (T, error) 
 		r.mu.RLock()
 		defer r.mu.RUnlock()
 		return r.value, nil
+	}
+	if ips, ok := r.store.(internal.InProcessStore); ok {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if v, found := ips.GetAny(r.key); found {
+			return v.(T), nil
+		}
+		val, err := fn()
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		ips.SetAny(r.key, val)
+		return val, nil
 	}
 	return r.storeGetOrSet(ctx, fn)
 }
@@ -138,6 +166,23 @@ func (r *Ref[T]) UpdateAndGet(ctx context.Context, fn func(T) (T, error)) (T, er
 		}
 		return v, nil
 	}
+	if ips, ok := r.store.(internal.InProcessStore); ok {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		var current T
+		if v, found := ips.GetAny(r.key); found {
+			current = v.(T)
+		} else {
+			current = r.initialVal
+		}
+		newVal, err := fn(current)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		ips.SetAny(r.key, newVal)
+		return newVal, nil
+	}
 	return r.storeUpdateAndGet(ctx, fn)
 }
 
@@ -154,6 +199,22 @@ func (r *Ref[T]) Update(ctx context.Context, fn func(T) (T, error)) error {
 		if r.ttl > 0 {
 			r.lastWrite = time.Now()
 		}
+		return nil
+	}
+	if ips, ok := r.store.(internal.InProcessStore); ok {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		var current T
+		if v, found := ips.GetAny(r.key); found {
+			current = v.(T)
+		} else {
+			current = r.initialVal
+		}
+		newVal, err := fn(current)
+		if err != nil {
+			return err
+		}
+		ips.SetAny(r.key, newVal)
 		return nil
 	}
 	return r.storeUpdate(ctx, fn)
