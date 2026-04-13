@@ -70,7 +70,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [ ] **Shared tail interface contract (`doc/tails.md`)**: The 20+ tail packages expose inconsistent function names, parameter orders, and error semantics with no shared convention. Define a tail interface guide covering: standard naming (`Consume`/`Produce`), parameter order (connection first, transform function second), connection lifecycle ownership, error propagation behaviour, and at-least-once semantics declaration. Retrofit existing tails to conform and use this as the template for future tails.
 
-- [ ] **`kkafka` batched commit variant**: `kkafka.Consume` commits each Kafka message individually after `yield`, which serializes commit latency with processing latency. For high-throughput consumers, batched commits (flush N offsets at once, or on a timer) reduce broker round-trips significantly. Add a `ConsumeWithBatchCommit(reader, batchSize, batchTimeout, unmarshal)` variant that accumulates offsets and commits them at natural batch boundaries.
+- [x] **`kkafka` batched commit variant**: `kkafka.Consume` commits each Kafka message individually after `yield`, which serializes commit latency with processing latency. For high-throughput consumers, batched commits (flush N offsets at once, or on a timer) reduce broker round-trips significantly. Implemented as `BatchSize(n)` and `BatchTimeout(d)` options on `Consume` (variadic, backward-compatible) rather than a standalone function.
 
 ---
 
