@@ -97,6 +97,7 @@ func (r *Ref[T]) Get(ctx context.Context) (T, error) {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
 		if v, found := ips.GetAny(r.key); found {
+			// Safe: SetAny stores only T values for this key.
 			return v.(T), nil
 		}
 		return r.initialVal, nil
@@ -137,6 +138,7 @@ func (r *Ref[T]) GetOrSet(ctx context.Context, fn func() (T, error)) (T, error) 
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if v, found := ips.GetAny(r.key); found {
+			// Safe: SetAny stores only T values for this key.
 			return v.(T), nil
 		}
 		val, err := fn()
@@ -171,6 +173,7 @@ func (r *Ref[T]) UpdateAndGet(ctx context.Context, fn func(T) (T, error)) (T, er
 		defer r.mu.Unlock()
 		var current T
 		if v, found := ips.GetAny(r.key); found {
+			// Safe: SetAny stores only T values for this key.
 			current = v.(T)
 		} else {
 			current = r.initialVal
@@ -206,6 +209,7 @@ func (r *Ref[T]) Update(ctx context.Context, fn func(T) (T, error)) error {
 		defer r.mu.Unlock()
 		var current T
 		if v, found := ips.GetAny(r.key); found {
+			// Safe: SetAny stores only T values for this key.
 			current = v.(T)
 		} else {
 			current = r.initialVal

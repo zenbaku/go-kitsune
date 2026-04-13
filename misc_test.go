@@ -3,6 +3,7 @@ package kitsune_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -467,6 +468,8 @@ func TestCodecDefaultJSON(t *testing.T) {
 }
 
 func TestCodecCustom(t *testing.T) {
+	// Custom codec must be called when the store does NOT implement InProcessStore.
+	// MemoryStore bypasses codec via InProcessStore; use plainStore to test the codec path.
 	codec := &countingCodec{}
 	key := kitsune.NewKey("codec-custom", 0)
 	p := kitsune.MapWith(
@@ -477,7 +480,7 @@ func TestCodecCustom(t *testing.T) {
 		},
 	)
 	_, err := p.Collect(context.Background(),
-		kitsune.WithStore(kitsune.MemoryStore()),
+		kitsune.WithStore(newPlainStore()),
 		kitsune.WithCodec(codec),
 	)
 	if err != nil {
@@ -626,4 +629,36 @@ func (panicOnCallCodec) Marshal(v any) ([]byte, error) {
 
 func (panicOnCallCodec) Unmarshal(data []byte, v any) error {
 	panic("codec.Unmarshal called on InProcessStore path — bypass is broken")
+}
+
+// plainStore implements Store but not InProcessStore.
+// Used to test that the codec path is exercised for non-in-process stores.
+type plainStore struct {
+	mu     sync.RWMutex
+	values map[string][]byte
+}
+
+func newPlainStore() *plainStore {
+	return &plainStore{values: make(map[string][]byte)}
+}
+
+func (s *plainStore) Get(_ context.Context, key string) ([]byte, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.values[key]
+	return v, ok, nil
+}
+
+func (s *plainStore) Set(_ context.Context, key string, value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.values[key] = value
+	return nil
+}
+
+func (s *plainStore) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.values, key)
+	return nil
 }
