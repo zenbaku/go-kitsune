@@ -16,7 +16,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **`Supervise` + `MapWithKey` silent state loss on restart**: When a supervised `MapWithKey` stage restarts after a panic or error, the in-memory key map is re-initialized and all accumulated `Ref` state is silently discarded. With `MemoryStore`, state is unrecoverable; with an external Store, state survives only if the Ref was flushed before the failure. Document this interaction prominently in the `Supervise` godoc and in `doc/operators.md`: supervised stateful stages require an external Store to survive restarts.
 
-- [ ] **`ExpandMap` has no depth or fanout bound**: `ExpandMap` performs BFS on an arbitrary graph with no limit on expansion depth or total items. A graph with high branching factor produces `fan^depth` items, exhausting memory silently. Add `MaxDepth(n int)` and `MaxItems(n int)` options that stop expansion when the limit is reached. At minimum add a prominent godoc warning and recommend pairing with `Take(n)` downstream.
+- [x] **`ExpandMap` has no depth or fanout bound**: `ExpandMap` performs BFS on an arbitrary graph with no limit on expansion depth or total items. A graph with high branching factor produces `fan^depth` items, exhausting memory silently. Add `MaxDepth(n int)` and `MaxItems(n int)` options that stop expansion when the limit is reached. At minimum add a prominent godoc warning and recommend pairing with `Take(n)` downstream.
 
 ---
 
