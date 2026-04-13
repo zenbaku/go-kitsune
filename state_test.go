@@ -185,8 +185,8 @@ func TestLookupBy(t *testing.T) {
 		t.Fatalf("want 4 pairs, got %d", len(pairs))
 	}
 	for _, pair := range pairs {
-		if pair.Second != db[pair.First] {
-			t.Errorf("id %d: got %q, want %q", pair.First, pair.Second, db[pair.First])
+		if pair.Value != db[pair.Item] {
+			t.Errorf("id %d: got %q, want %q", pair.Item, pair.Value, db[pair.Item])
 		}
 	}
 }
@@ -276,11 +276,11 @@ func TestLookupByBatchTimeoutFlushesPartialBatch(t *testing.T) {
 		BatchTimeout: 20 * time.Millisecond,
 	}
 
-	pairs := make(chan kitsune.Pair[int, string], 16)
+	pairs := make(chan kitsune.Enriched[int, string], 16)
 	done := make(chan error, 1)
 	go func() {
 		done <- kitsune.LookupBy(ch.Source(), cfg).
-			ForEach(func(_ context.Context, p kitsune.Pair[int, string]) error {
+			ForEach(func(_ context.Context, p kitsune.Enriched[int, string]) error {
 				pairs <- p
 				return nil
 			}).Run(ctx)
@@ -304,7 +304,7 @@ func TestLookupByBatchTimeoutFlushesPartialBatch(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case p := <-pairs:
-			seen[p.First] = p.Second
+			seen[p.Item] = p.Value
 		case <-time.After(500 * time.Millisecond):
 			t.Fatalf("timeout waiting for pair %d (seen so far: %v)", i, seen)
 		}

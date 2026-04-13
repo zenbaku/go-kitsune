@@ -10,7 +10,7 @@
 // Demonstrates:
 //   - LookupConfig with BatchSize and BatchTimeout
 //   - A simulated user database fetched in bulk
-//   - Pair[T,V] output attaching the fetched value to the original item
+//   - Enriched[T,V] output attaching the fetched value to the original item
 package main
 
 import (
@@ -62,8 +62,8 @@ func main() {
 	done := make(chan error, 1)
 	go func() {
 		done <- kitsune.LookupBy(ch.Source(), cfg).
-			ForEach(func(_ context.Context, p kitsune.Pair[int, string]) error {
-				fmt.Printf("  id=%d  name=%q\n", p.First, p.Second)
+			ForEach(func(_ context.Context, p kitsune.Enriched[int, string]) error {
+				fmt.Printf("  id=%d  name=%q\n", p.Item, p.Value)
 				return nil
 			}).Run(ctx)
 	}()

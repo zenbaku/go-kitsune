@@ -7,6 +7,14 @@ import (
 
 const defaultLookupBatchSize = 100
 
+// Enriched is the output of [LookupBy]: an item paired with the value fetched
+// for its key. Items whose key is absent from the [LookupConfig.Fetch] result
+// carry the zero value for V.
+type Enriched[T any, V any] struct {
+	Item  T
+	Value V
+}
+
 // ---------------------------------------------------------------------------
 // LookupBy
 // ---------------------------------------------------------------------------
@@ -43,8 +51,8 @@ func NewLookupConfig[T any, K comparable, V any](
 	}
 }
 
-// LookupBy enriches each item with a value fetched in bulk, emitting a [Pair]
-// of the original item and its looked-up value.
+// LookupBy enriches each item with a value fetched in bulk, emitting an
+// [Enriched] value carrying the original item and its looked-up value.
 //
 // Items are batched internally; a single Fetch call is made per batch with
 // deduplicated keys. Items whose key is absent from the Fetch result carry
@@ -57,7 +65,7 @@ func NewLookupConfig[T any, K comparable, V any](
 //	    },
 //	)
 //	withUsers := kitsune.LookupBy(eventIDs, cfg)
-func LookupBy[T any, K comparable, V any](p *Pipeline[T], cfg LookupConfig[T, K, V], opts ...StageOption) *Pipeline[Pair[T, V]] {
+func LookupBy[T any, K comparable, V any](p *Pipeline[T], cfg LookupConfig[T, K, V], opts ...StageOption) *Pipeline[Enriched[T, V]] {
 	size := cfg.BatchSize
 	if size <= 0 {
 		size = defaultLookupBatchSize
@@ -65,15 +73,15 @@ func LookupBy[T any, K comparable, V any](p *Pipeline[T], cfg LookupConfig[T, K,
 	if cfg.BatchTimeout > 0 {
 		opts = append([]StageOption{BatchTimeout(cfg.BatchTimeout)}, opts...)
 	}
-	return MapBatch(p, size, func(ctx context.Context, batch []T) ([]Pair[T, V], error) {
+	return MapBatch(p, size, func(ctx context.Context, batch []T) ([]Enriched[T, V], error) {
 		keys := uniqueKeys(batch, cfg.Key)
 		m, err := cfg.Fetch(ctx, keys)
 		if err != nil {
 			return nil, err
 		}
-		result := make([]Pair[T, V], len(batch))
+		result := make([]Enriched[T, V], len(batch))
 		for i, item := range batch {
-			result[i] = Pair[T, V]{First: item, Second: m[cfg.Key(item)]}
+			result[i] = Enriched[T, V]{Item: item, Value: m[cfg.Key(item)]}
 		}
 		return result, nil
 	}, opts...)
