@@ -126,6 +126,74 @@ func (o *dropOldestOutbox[T]) Send(ctx context.Context, item T) error {
 func (o *dropOldestOutbox[T]) Dropped() int64 { return o.dropped.Load() }
 
 // ---------------------------------------------------------------------------
+// DropOldest — sharded variant for concurrent workers
+// ---------------------------------------------------------------------------
+
+// dropOldestShard is one shard of a sharded DropOldest outbox. Each shard owns
+// its own sync.Mutex so concurrent senders routed to different shards never
+// contend on the slow path. All shards share the same underlying channel and
+// a single atomic dropped counter, so Dropped() reports the aggregate across
+// shards regardless of which shard is queried.
+//
+// Send logic is identical to dropOldestOutbox: fast path is a lock-free
+// non-blocking send; slow path holds this shard's mutex while evicting the
+// oldest buffered item and enqueueing the new one.
+type dropOldestShard[T any] struct {
+	ch      chan T
+	mu      sync.Mutex
+	hook    Hook
+	name    string
+	dropped *atomic.Int64 // shared across all shards
+}
+
+func (o *dropOldestShard[T]) Send(ctx context.Context, item T) error {
+	// Fast path: buffer has space — no lock needed.
+	select {
+	case o.ch <- item:
+		return nil
+	default:
+	}
+
+	// Slow path: buffer is full — hold this shard's lock while we drain + resend.
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	select {
+	case o.ch <- item:
+		// A concurrent drain (by a downstream reader or a sibling shard) freed
+		// space between the fast-path check and us acquiring the lock.
+		return nil
+	default:
+	}
+
+	// Evict the oldest item.
+	select {
+	case old := <-o.ch:
+		o.dropped.Add(1)
+		if oh, ok := o.hook.(OverflowHook); ok {
+			oh.OnDrop(ctx, o.name, old)
+		}
+	default:
+		// Defensive: the channel appeared full but is now empty. A sibling
+		// shard or downstream reader drained it. Fall through to the send.
+	}
+
+	// Now there should be space. A sibling shard holding its own lock may
+	// race to fill the slot; if so, drop this item rather than block.
+	select {
+	case o.ch <- item:
+	default:
+		o.dropped.Add(1)
+		if oh, ok := o.hook.(OverflowHook); ok {
+			oh.OnDrop(ctx, o.name, item)
+		}
+	}
+	return nil
+}
+
+func (o *dropOldestShard[T]) Dropped() int64 { return o.dropped.Load() }
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -135,6 +203,8 @@ func NewBlockingOutbox[T any](ch chan T) Outbox[T] {
 }
 
 // NewOutbox creates the appropriate Outbox for the given overflow strategy.
+// For concurrent DropOldest stages, prefer NewShardedDropOldestOutbox which
+// eliminates cross-worker contention on the slow path.
 func NewOutbox[T any](ch chan T, overflow Overflow, hook Hook, name string) Outbox[T] {
 	switch overflow {
 	case OverflowDropNewest:
@@ -144,4 +214,28 @@ func NewOutbox[T any](ch chan T, overflow Overflow, hook Hook, name string) Outb
 	default:
 		return &blockingOutbox[T]{ch: ch}
 	}
+}
+
+// NewShardedDropOldestOutbox creates n DropOldest shards that share the same
+// underlying channel and a single atomic dropped counter. Each shard has its
+// own sync.Mutex, so workers routed to different shards never contend on the
+// slow path.
+//
+// Callers must route each worker to exactly one shard (typically by
+// worker-index modulo n). n must be >= 1; if n < 1 a single shard is returned.
+func NewShardedDropOldestOutbox[T any](ch chan T, n int, hook Hook, name string) []Outbox[T] {
+	if n < 1 {
+		n = 1
+	}
+	dropped := new(atomic.Int64)
+	boxes := make([]Outbox[T], n)
+	for i := 0; i < n; i++ {
+		boxes[i] = &dropOldestShard[T]{
+			ch:      ch,
+			hook:    hook,
+			name:    name,
+			dropped: dropped,
+		}
+	}
+	return boxes
 }
