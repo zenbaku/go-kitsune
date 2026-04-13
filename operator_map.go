@@ -308,7 +308,19 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 			innerCtx, cancel := context.WithCancel(ctx)
 			defer cancel()
 
-			outbox := internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)
+			// When DropOldest and Concurrency > 1 are both active, shard the
+			// outbox so workers do not contend on a single mutex under
+			// sustained backpressure. Each spawned goroutine captures its own
+			// shard at spawn time; the dispatcher is the sole writer of
+			// workerIdx so no locking is required here.
+			var boxes []internal.Outbox[O]
+			if cfg.overflow == internal.OverflowDropOldest && cfg.concurrency > 1 {
+				boxes = internal.NewShardedDropOldestOutbox(outCh, cfg.concurrency, hook, cfg.name)
+			} else {
+				boxes = []internal.Outbox[O]{internal.NewOutbox(outCh, cfg.overflow, hook, cfg.name)}
+			}
+			workerIdx := 0
+
 			sem := make(chan struct{}, cfg.concurrency)
 			errCh := make(chan error, 1)
 			var wg sync.WaitGroup
@@ -327,8 +339,10 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 						case <-innerCtx.Done():
 							return
 						}
+						outbox := boxes[workerIdx%len(boxes)]
+						workerIdx++
 						wg.Add(1)
-						go func(it I) {
+						go func(it I, outbox internal.Outbox[O]) {
 							defer wg.Done()
 							defer func() { <-sem }()
 
@@ -355,7 +369,7 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 								reportErr(errCh, sendErr)
 								cancel()
 							}
-						}(item)
+						}(item, outbox)
 					case <-innerCtx.Done():
 						return
 					}
