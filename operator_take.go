@@ -21,6 +21,7 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -33,10 +34,14 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer drainFn()
 			defer signalDone() // stop infinite sources when we exit early
 
 			count := 0
@@ -54,16 +59,21 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 						count++
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // Drop discards the first n items and emits the rest.
@@ -79,6 +89,7 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -91,9 +102,13 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer drainFn()
 
 			count := 0
 			for {
@@ -110,16 +125,21 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 					case ch <- item:
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +157,7 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -149,10 +170,14 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer drainFn()
 			defer signalDone() // stop infinite sources when predicate stops
 
 			for {
@@ -168,16 +193,21 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 					case ch <- item:
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // DropWhile discards items as long as pred returns true, then emits the rest.
@@ -191,6 +221,7 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -203,9 +234,13 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
+			defer drainFn()
 
 			dropping := true
 			for {
@@ -222,16 +257,21 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 					case ch <- item:
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------

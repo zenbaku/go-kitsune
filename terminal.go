@@ -14,6 +14,7 @@ import (
 // Skips hook calls, time.Now, and the per-item ctx.Done select.
 func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error, drainFn func()) stageFunc {
 	return func(ctx context.Context) error {
+		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
 		defer drainFn()
 
 		var buf [internal.ReceiveBatchSize]T
@@ -67,6 +68,7 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 		return struct{}{}, fn(ctx, item)
 	}
 	return func(ctx context.Context) error {
+		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
 		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
