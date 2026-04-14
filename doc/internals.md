@@ -295,6 +295,142 @@ context that happens to cancel when the pipeline no longer needs them.
 
 ---
 
+## Cooperative drain: unblocking producers on early exit
+
+When a downstream stage exits early (for example, `Take(1)` after reading one
+item), it stops reading from its input channel. The upstream stage may be
+blocked on a full-buffer send with no one left to drain it. Without
+intervention, that upstream stage goroutine would leak indefinitely.
+
+### The old approach: DrainChan goroutines
+
+The original fix was a deferred goroutine in every stage:
+
+```go
+defer func() { go internal.DrainChan(inCh) }()
+```
+
+`DrainChan` reads from `inCh` until it is closed, unblocking any producer that
+is stuck on a send. This is correct, but on a 20-stage pipeline with `Take(1)`,
+teardown spawns 20 simultaneous goroutines. In pipelines that cycle frequently
+(via `Retry`) this creates sustained goroutine pressure.
+
+### Why `ctx.Done()` does not help
+
+The errgroup context is cancelled only when a stage returns a **non-nil** error.
+`Take(1)` and `TakeWhile` return `nil` on success, so `ctx` is never cancelled
+in the happy-path case. Upstream stages cannot exit via `<-ctx.Done()` and must
+be unblocked some other way.
+
+### The cooperative drain protocol
+
+Each stage owns a *drain-notify entry*: a ref-counted channel that closes when
+all downstream consumers of that stage have exited. Instead of spawning a
+goroutine, a consumer signals its producer directly, and the producer exits
+through its existing select loop. The cascade propagates upstream without any
+additional goroutines.
+
+**Data structures** (in `pipeline.go`):
+
+```go
+type drainEntry struct {
+    ch   chan struct{}
+    refs atomic.Int32
+}
+
+// field on runCtx:
+drainNotify map[int64]*drainEntry  // producerID → entry
+```
+
+**Three methods on `runCtx`:**
+
+```go
+// initDrainNotify registers a drain entry for producerID.
+// consumerCount is clamped to at least 1; non-fusion stages always
+// have consumerCount == 0 at build time.
+func (rc *runCtx) initDrainNotify(producerID int64, consumerCount int32)
+
+// signalDrain decrements the ref count. When it reaches zero the
+// drainNotify channel is closed, unblocking the producer's select.
+func (rc *runCtx) signalDrain(producerID int64)
+
+// drainCh returns the closed-on-drain channel for the given stage ID.
+func (rc *runCtx) drainCh(id int64) <-chan struct{}
+```
+
+**Pattern in every converted intermediate stage:**
+
+```go
+// build phase:
+rc.initDrainNotify(id, out.consumerCount.Load())
+drainFn := func() { rc.signalDrain(p.id) }   // signal MY upstream
+drainCh := rc.drainCh(id)                     // listen for MY drain signal
+
+// stage goroutine:
+defer close(outCh)
+cooperativeDrain := false
+defer func() {
+    if !cooperativeDrain {
+        go internal.DrainChan(inCh) // fallback: unblock unconverted upstreams
+    }
+}()
+defer drainFn() // signal upstream first (LIFO — fires before DrainChan check)
+
+for {
+    select {
+    case item, ok := <-inCh:
+        // ... process ...
+        select {
+        case outCh <- result:
+        case <-drainCh: cooperativeDrain = true; return nil
+        }
+    case <-ctx.Done():  return ctx.Err()
+    case <-drainCh:     cooperativeDrain = true; return nil
+    }
+}
+```
+
+The `cooperativeDrain` flag suppresses the `DrainChan` goroutine when the stage
+exits via `drainCh` (all downstream consumers have gone; the producer's exit was
+already cooperative). When the stage exits via context cancellation or an error,
+`DrainChan` still fires as a fallback to unblock any unconverted upstream.
+
+**Terminal stages** (e.g. `ForEach`) always spawn `DrainChan` unconditionally as
+a fallback: they are leaf nodes with no drainCh of their own, and they may sit
+below sources that are not yet cooperative.
+
+### Cascade pattern
+
+```
+Repeatedly → Map → Map → Take(1) → ForEach
+
+Take exits (nil)
+  → defer drainFn() signals Map2's drainNotify
+  → Map2's drainCh fires → Map2 exits (cooperativeDrain=true)
+    → defer drainFn() signals Map1's drainNotify
+    → Map1's drainCh fires → Map1 exits (cooperativeDrain=true)
+      → defer drainFn() signals Repeatedly
+        (Repeatedly not yet converted: fallback DrainChan fires for inCh)
+```
+
+Zero extra goroutines on the converted path.
+
+### Conversion status
+
+The prototype converts the single-worker serial paths used in the common linear
+pipeline case. Operators that still use `go internal.DrainChan(inCh)` are listed
+in `doc/roadmap.md` under the full-rollout follow-on item.
+
+| Operator | Status |
+|---|---|
+| `Map` (serial and fast-path) | Cooperative drain |
+| `Take`, `TakeWhile`, `Drop`, `DropWhile` | Cooperative drain |
+| `ForEach` (serial and fast-path) | Dual-defer bridge (always DrainChan + drainFn) |
+| `Map` concurrent/ordered, fused fast path | Still DrainChan goroutine |
+| All other operators | Still DrainChan goroutine |
+
+---
+
 ## Concurrency patterns inside a stage
 
 ### Single worker (default)
