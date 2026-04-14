@@ -12,9 +12,9 @@ import (
 // forEachFastPath is the drain-protocol + micro-batching fast path for ForEach/Drain.
 // Conditions: Concurrency(1), DefaultHandler, OverflowBlock, no timeout, NoopHook.
 // Skips hook calls, time.Now, and the per-item ctx.Done select.
-func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error) stageFunc {
+func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error, drainFn func()) stageFunc {
 	return func(ctx context.Context) error {
-		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+		defer drainFn()
 
 		var buf [internal.ReceiveBatchSize]T
 		for {
@@ -58,7 +58,7 @@ func forEachFastPath[T any](inCh chan T, fn func(context.Context, T) error) stag
 }
 
 // forEachSerial is the full-featured serial path: OnError, Supervise, hooks.
-func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook, drainFn func()) stageFunc {
 	var ctxMapper func(T) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(T) context.Context)
@@ -67,7 +67,7 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 		return struct{}{}, fn(ctx, item)
 	}
 	return func(ctx context.Context) error {
-		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var processed, errs int64
@@ -345,6 +345,7 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		}
 
 		inCh := p.build(rc)
+		drainFn := func() { rc.signalDrain(p.id) }
 		var stage stageFunc
 		switch {
 		case n > 1 && cfg.ordered:
@@ -352,9 +353,9 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		case n > 1:
 			stage = forEachConcurrent(inCh, fn, cfg, hook)
 		case isFastPathEligible(cfg, hook):
-			stage = forEachFastPath(inCh, fn)
+			stage = forEachFastPath(inCh, fn, drainFn)
 		default:
-			stage = forEachSerial(inCh, fn, cfg, hook)
+			stage = forEachSerial(inCh, fn, cfg, hook, drainFn)
 		}
 		rc.add(stage, meta)
 	}
