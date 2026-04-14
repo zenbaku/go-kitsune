@@ -176,9 +176,17 @@ func (rc *runCtx) getChan(id int64) any     { return rc.chans[id] }
 func (rc *runCtx) setChan(id int64, ch any) { rc.chans[id] = ch }
 
 // initDrainNotify registers a drain entry for producerID with the given
-// consumer count. Call once per stage during build(). consumerCount must be
-// the value of Pipeline.consumerCount at Run time (after all track() calls).
-// Uses max(1, consumerCount) so a dead-end pipeline still has a well-formed entry.
+// consumer count. Call once per stage during build(). Pass
+// out.consumerCount.Load() where out is the pipeline returned by the
+// operator constructor; the count reflects all downstream track() calls
+// made before Run was invoked.
+//
+// Non-fusion stages always have consumerCount == 0 (only fusion-eligible
+// pipelines increment consumerCount via track). The clamp to max(1,
+// consumerCount) is intentional: a single converted consumer will always
+// fire signalDrain once, which is correct for the common single-consumer
+// linear case. Multi-consumer fan-out stages require explicit ref counting
+// and are tracked in the roadmap follow-on item.
 func (rc *runCtx) initDrainNotify(producerID int64, consumerCount int32) {
 	e := &drainEntry{ch: make(chan struct{})}
 	n := consumerCount
