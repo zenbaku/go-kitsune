@@ -41,6 +41,7 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		supportsFastPath: true,
 		isFastPathCfg:    fastPathCfg,
 	}
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -106,26 +107,32 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		case cfg.concurrency > 1:
 			stage = mapConcurrent(inCh, ch, actualFn, cfg, hook)
 		case isFastPathEligible(cfg, hook) && cfg.cacheConfig == nil:
-			stage = mapSerialFastPath(inCh, ch, actualFn, cfg.name)
+			rc.initDrainNotify(id, out.consumerCount.Load())
+			drainFn := func() { rc.signalDrain(p.id) }
+			drainCh := rc.drainCh(id)
+			stage = mapSerialFastPath(inCh, ch, actualFn, cfg.name, drainFn, drainCh)
 		default:
-			stage = mapSerial(inCh, ch, actualFn, cfg, hook)
+			rc.initDrainNotify(id, out.consumerCount.Load())
+			drainFn := func() { rc.signalDrain(p.id) }
+			drainCh := rc.drainCh(id)
+			stage = mapSerial(inCh, ch, actualFn, cfg, hook, drainFn, drainCh)
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	result := newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
 	// Set fusionEntry when cfg conditions hold (hook check deferred to run time).
 	if fastPathCfg {
 		// Update optimization metadata captured by the build closure.
 		// The build closure captures meta by reference (Go variable capture),
 		// so these updates are visible when build runs during IsOptimized or Run.
 		meta.hasFusionEntry = true
-		meta.getConsumerCount = func() int32 { return result.consumerCount.Load() }
+		meta.getConsumerCount = func() int32 { return out.consumerCount.Load() }
 
 		name0 := orDefault(cfg.name, "map")
 		fn0 := fn
 		p0 := p
-		result.fusionEntry = func(rc *runCtx, sink func(context.Context, O) error) stageFunc {
+		out.fusionEntry = func(rc *runCtx, sink func(context.Context, O) error) stageFunc {
 			// Compose with upstream if it is also fused and has a single consumer.
 			if p0.fusionEntry != nil && p0.consumerCount.Load() == 1 {
 				return p0.fusionEntry(rc, func(ctx context.Context, item I) error {
@@ -185,17 +192,23 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 			}
 		}
 	}
-	return result
+	return out
 }
 
-func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var processed, errs int64
@@ -227,11 +240,17 @@ func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I
 					}
 					processed++
 					hook.OnItem(ctx, cfg.name, dur, nil)
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					if err := outbox.Send(ctx, val); err != nil {
 						return err
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -242,16 +261,29 @@ func mapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I
 // mapSerialFastPath is the drain-protocol + micro-batching fast path for serial Map.
 // Conditions: Concurrency(1), DefaultHandler, OverflowBlock, no timeout, no cache, NoopHook.
 // Skips outbox, per-item select, time.Now, ProcessItem, and all hook calls.
-func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), name string) stageFunc {
+func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), name string, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		var buf [internal.ReceiveBatchSize]I
 		for {
 			// One blocking receive to avoid spinning.
-			item, ok := <-inCh
-			if !ok {
+			var item I
+			var ok bool
+			select {
+			case item, ok = <-inCh:
+				if !ok {
+					return nil
+				}
+			case <-drainCh:
+				cooperativeDrain = true
 				return nil
 			}
 			buf[0] = item
@@ -279,7 +311,12 @@ func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 				if err != nil {
 					return internal.WrapStageErr(name, err, 0)
 				}
-				outCh <- result // plain send — drain goroutine unblocks on exit
+				select {
+				case outCh <- result:
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
+				}
 			}
 			if closed {
 				return nil
