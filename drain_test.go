@@ -2,6 +2,7 @@ package kitsune_test
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -155,5 +156,43 @@ func TestWithDrainNormalCompletion(t *testing.T) {
 	}
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+}
+
+// TestCooperativeDrainGoroutineCount verifies that a linear Map->Take(1)->ForEach
+// pipeline tears down without spawning drain goroutines.
+// With the old DrainChan approach, each stage spawns one goroutine on teardown
+// (stages+1 goroutines above baseline). With cooperative drain, zero extra
+// goroutines should remain after Run returns.
+func TestCooperativeDrainGoroutineCount(t *testing.T) {
+	const stages = 10
+
+	// Allow any test-harness goroutines to settle before taking the baseline.
+	runtime.Gosched()
+	baseline := runtime.NumGoroutine()
+
+	p := kitsune.Repeatedly(func() int { return 1 })
+	for range stages {
+		p = kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+			return v, nil
+		})
+	}
+
+	err := kitsune.Take(p, 1).ForEach(func(_ context.Context, _ int) error {
+		return nil
+	}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Give any residual goroutines a scheduling window to exit.
+	runtime.Gosched()
+
+	after := runtime.NumGoroutine()
+	leaked := after - baseline
+	// Allow 1 for any test-framework background goroutine.
+	if leaked > 1 {
+		t.Errorf("goroutine burst: %d goroutines remain above baseline after teardown (baseline=%d after=%d); expected <=1",
+			leaked, baseline, after)
 	}
 }
