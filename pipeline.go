@@ -90,6 +90,14 @@ func nextPipelineID() int64 {
 // runCtx — per-Run execution context
 // ---------------------------------------------------------------------------
 
+// drainEntry coordinates the cooperative-drain protocol for one producer stage.
+// refs is decremented by each consumer that exits; when it reaches zero the
+// ch is closed, unblocking the producer's select loop.
+type drainEntry struct {
+	ch   chan struct{}
+	refs atomic.Int32
+}
+
 // runCtx is created fresh on every Runner.Run call.
 // As build functions are called recursively from the terminal back to sources,
 // each stage registers its stageFunc here and its output channel is memoised
@@ -113,6 +121,10 @@ type runCtx struct {
 	// which would disrupt downstream stages still draining.
 	done       chan struct{}
 	signalDone func()
+
+	// drainNotify maps a producer stage ID to its drain entry.
+	// Populated during build(); consumers call signalDrain when they exit.
+	drainNotify map[int64]*drainEntry
 }
 
 // defaultBufSize returns the run-level default buffer, falling back to
@@ -147,10 +159,11 @@ func newRunCtx() *runCtx {
 	done := make(chan struct{})
 	var once sync.Once
 	return &runCtx{
-		chans:      make(map[int64]any),
-		refs:       newRefRegistry(),
-		done:       done,
-		signalDone: func() { once.Do(func() { close(done) }) },
+		chans:       make(map[int64]any),
+		drainNotify: make(map[int64]*drainEntry),
+		refs:        newRefRegistry(),
+		done:        done,
+		signalDone:  func() { once.Do(func() { close(done) }) },
 	}
 }
 
@@ -161,6 +174,41 @@ func (rc *runCtx) add(fn stageFunc, meta stageMeta) {
 
 func (rc *runCtx) getChan(id int64) any     { return rc.chans[id] }
 func (rc *runCtx) setChan(id int64, ch any) { rc.chans[id] = ch }
+
+// initDrainNotify registers a drain entry for producerID with the given
+// consumer count. Call once per stage during build(). consumerCount must be
+// the value of Pipeline.consumerCount at Run time (after all track() calls).
+// Uses max(1, consumerCount) so a dead-end pipeline still has a well-formed entry.
+func (rc *runCtx) initDrainNotify(producerID int64, consumerCount int32) {
+	e := &drainEntry{ch: make(chan struct{})}
+	n := consumerCount
+	if n < 1 {
+		n = 1
+	}
+	e.refs.Store(n)
+	rc.drainNotify[producerID] = e
+}
+
+// signalDrain decrements the ref count for producerID. When the count
+// reaches zero the drain channel is closed, waking the producer's select.
+// Safe to call even if producerID has no registered entry (no-op).
+func (rc *runCtx) signalDrain(producerID int64) {
+	if e, ok := rc.drainNotify[producerID]; ok {
+		if e.refs.Add(-1) == 0 {
+			close(e.ch)
+		}
+	}
+}
+
+// drainCh returns the drain-notification channel for id.
+// Returns nil when id has no registered entry; a nil channel in a select
+// blocks forever, which is the correct fallback for unconverted stages.
+func (rc *runCtx) drainCh(id int64) <-chan struct{} {
+	if e, ok := rc.drainNotify[id]; ok {
+		return e.ch
+	}
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Pipeline[T]
