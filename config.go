@@ -43,6 +43,7 @@ type stageConfig struct {
 	expandMaxDepth         int  // MaxDepth: BFS depth cap for ExpandMap; unlimited unless expandMaxDepthExplicit
 	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly; distinguishes MaxDepth(0) from default
 	expandMaxItems         int  // MaxItems: total emission cap for ExpandMap; 0 = unlimited
+	dropPartial            bool // DropPartial: discard the final partial batch when source closes
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -141,7 +142,19 @@ func BatchTimeout(d time.Duration) StageOption {
 	return func(c *stageConfig) { c.batchTimeout = d }
 }
 
-// WithClock sets the time source for time-sensitive stages (Window, Batch, Throttle, Debounce)
+// DropPartial discards the final partial batch when the source closes without
+// filling the last batch to size. By default, Batch always emits a partial
+// trailing batch. Use DropPartial when only full batches are meaningful:
+//
+//	// Emit only complete batches of 10; drop any trailing items.
+//	kitsune.Batch(p, 10, kitsune.DropPartial())
+//
+// Only meaningful when used with [Batch].
+func DropPartial() StageOption {
+	return func(c *stageConfig) { c.dropPartial = true }
+}
+
+// WithClock sets the time source for time-sensitive stages (Batch, Throttle, Debounce)
 // and source operators (Ticker, Timer).
 // Use testkit.NewTestClock() for deterministic, sleep-free tests.
 func WithClock(c internal.Clock) StageOption {

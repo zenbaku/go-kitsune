@@ -20,19 +20,18 @@ const tickTimeout = 2 * time.Second
 // exists, and the first tick would be silently missed.
 const pipelineStartup = 10 * time.Millisecond
 
-// TestWindow_TestClock verifies that Window flushes on item count (no clock
-// needed). It uses a controllable Channel source so we can push items and close
-// at exactly the right moments.
-func TestWindow_TestClock(t *testing.T) {
+// TestBatch_CountFlush verifies that Batch flushes on item count and emits a
+// partial trailing batch when the source closes without filling the last batch.
+func TestBatch_CountFlush(t *testing.T) {
 	ctx := context.Background()
 	ch := kitsune.NewChannel[int](10)
 
-	windows := make(chan []int, 10)
+	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Window(ch.Source(), 3).
-			ForEach(func(_ context.Context, w []int) error {
-				windows <- w
+		done <- kitsune.Batch(ch.Source(), 3).
+			ForEach(func(_ context.Context, b []int) error {
+				batches <- b
 				return nil
 			}).Run(ctx)
 	}()
@@ -43,15 +42,15 @@ func TestWindow_TestClock(t *testing.T) {
 		}
 	}
 
-	// First full window should flush immediately.
-	var w1 []int
+	// First full batch should flush immediately.
+	var b1 []int
 	select {
-	case w1 = <-windows:
+	case b1 = <-batches:
 	case <-time.After(tickTimeout):
-		t.Fatal("timeout waiting for first window")
+		t.Fatal("timeout waiting for first batch")
 	}
-	if len(w1) != 3 {
-		t.Errorf("window 1: len=%d, want 3", len(w1))
+	if len(b1) != 3 {
+		t.Errorf("batch 1: len=%d, want 3", len(b1))
 	}
 
 	for _, v := range []int{4, 5} {
@@ -61,15 +60,15 @@ func TestWindow_TestClock(t *testing.T) {
 	}
 	ch.Close()
 
-	// Partial window should flush when source closes.
-	var w2 []int
+	// Partial batch should flush when source closes.
+	var b2 []int
 	select {
-	case w2 = <-windows:
+	case b2 = <-batches:
 	case <-time.After(tickTimeout):
-		t.Fatal("timeout waiting for second window")
+		t.Fatal("timeout waiting for second batch")
 	}
-	if len(w2) != 2 {
-		t.Errorf("window 2: len=%d, want 2", len(w2))
+	if len(b2) != 2 {
+		t.Errorf("batch 2: len=%d, want 2", len(b2))
 	}
 
 	if err := <-done; err != nil {

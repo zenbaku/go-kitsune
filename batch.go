@@ -55,13 +55,20 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 				return outbox.Send(ctx, batch)
 			}
 
+			flushOnClose := func() error {
+				if cfg.dropPartial {
+					return nil
+				}
+				return flush()
+			}
+
 			if cfg.batchTimeout == 0 {
 				// No timeout: collect exactly size items per batch.
 				for {
 					select {
 					case item, ok := <-inCh:
 						if !ok {
-							return flush()
+							return flushOnClose()
 						}
 						buf = append(buf, item)
 						if len(buf) >= size {
@@ -88,7 +95,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 				select {
 				case item, ok := <-inCh:
 					if !ok {
-						return flush()
+						return flushOnClose()
 					}
 					buf = append(buf, item)
 					if len(buf) >= size {
@@ -242,75 +249,6 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 					}
 					for _, item := range batch {
 						if err := outbox.Send(ctx, item); err != nil {
-							return err
-						}
-					}
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-		}
-		rc.add(stage, m)
-		return ch
-	}
-	return newPipeline(id, meta, build)
-}
-
-// ---------------------------------------------------------------------------
-// Window (count-based)
-// ---------------------------------------------------------------------------
-
-// Window emits non-overlapping slices of exactly size items. The last window
-// may be smaller if the source completes before size items are available.
-// An empty window is never emitted.
-//
-// For time-based windows use SessionWindow or SlidingWindow.
-func Window[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] {
-	track(p)
-	cfg := buildStageConfig(opts)
-	id := nextPipelineID()
-	meta := stageMeta{
-		id:        id,
-		kind:      "window",
-		name:      orDefault(cfg.name, "window"),
-		buffer:    cfg.buffer,
-		batchSize: size,
-		inputs:    []int64{p.id},
-	}
-	build := func(rc *runCtx) chan []T {
-		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan []T)
-		}
-		inCh := p.build(rc)
-		bufSize := rc.effectiveBufSize(cfg)
-		ch := make(chan []T, bufSize)
-		m := meta
-		m.buffer = bufSize
-		m.getChanLen = func() int { return len(ch) }
-		m.getChanCap = func() int { return cap(ch) }
-		rc.setChan(id, ch)
-		stage := func(ctx context.Context) error {
-			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
-
-			outbox := internal.NewBlockingOutbox(ch)
-			buf := make([]T, 0, size)
-
-			for {
-				select {
-				case item, ok := <-inCh:
-					if !ok {
-						if len(buf) > 0 {
-							return outbox.Send(ctx, buf)
-						}
-						return nil
-					}
-					buf = append(buf, item)
-					if len(buf) == size {
-						win := make([]T, size)
-						copy(win, buf)
-						buf = buf[:0]
-						if err := outbox.Send(ctx, win); err != nil {
 							return err
 						}
 					}

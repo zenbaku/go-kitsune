@@ -1723,11 +1723,16 @@ With `BatchTimeout(d)`, a partial batch is also flushed when the timeout elapses
 
 **When not to use:** When you need overlapping windows; use [`SlidingWindow`](#slidingwindow) or `SessionWindow`.
 
-**Options:** `BatchTimeout`, `WithClock`, `Buffer`, `WithName`.
+With `DropPartial()`, the final partial batch is discarded when the source closes; only full batches are emitted.
+
+**Options:** `BatchTimeout`, `DropPartial`, `WithClock`, `Buffer`, `WithName`.
 
 ```go
 // Flush up to 100 items at a time, or after 500ms.
 batches := kitsune.Batch(events, 100, kitsune.BatchTimeout(500*time.Millisecond))
+
+// Emit only full batches of 10; drop any trailing items.
+chunks := kitsune.Batch(items, 10, kitsune.DropPartial())
 ```
 
 ---
@@ -1759,30 +1764,13 @@ enriched := kitsune.MapBatch(userIDs, 200,
 
 ---
 
-### Window
-
-```go
-func Window[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T]
-```
-
-Emits non-overlapping slices of exactly `size` items. Unlike [`Batch`](#batch), each window is a fixed-size allocation. The last window may be smaller if the source completes mid-window.
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-// Process in non-overlapping chunks of 10.
-chunks := kitsune.Window(items, 10)
-```
-
----
-
 ### SlidingWindow
 
 ```go
 func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *Pipeline[[]T]
 ```
 
-Emits overlapping slices of exactly `size` items, advancing by `step` items each time. When `step == size`, this is equivalent to non-overlapping [`Window`](#window). When `step < size`, windows overlap. Partial windows at the end of the stream are dropped. Panics if `step <= 0` or `step > size`.
+Emits overlapping slices of exactly `size` items, advancing by `step` items each time. When `step == size`, this is a non-overlapping tumbling window. When `step < size`, windows overlap. Partial windows at the end of the stream are dropped. Panics if `step <= 0` or `step > size`.
 
 **When to use:** Rolling averages, sliding statistics, n-gram generation.
 

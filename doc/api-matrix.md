@@ -113,7 +113,6 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
 | `BufferWith` | `BufferWith[T,S](p, closingSelector, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `Window` | `Window[T](p, size int, opts...)`: count-based | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)`: time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `SlidingWindow` | `SlidingWindow[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SessionWindow` | `SessionWindow[T](p, gap, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
@@ -121,8 +120,8 @@ Documents every exported operator and which `StageOption` features each one actu
 | `ChunkWhile` | `ChunkWhile[T](p, pred func(prev,curr T)bool, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Window` groups by *count*. Use `WindowByTime` (compat alias) for time-bucketing.
 - `Batch` supports `WithClock` only when `BatchTimeout` is also set (the clock powers the flush ticker).
+- `DropPartial` discards the final partial batch when the source closes; only full batches are emitted. Use `WindowByTime` (compat alias) for time-bucketing.
 - `BufferWith` takes a second pipeline (`closingSelector`) as its flush trigger; each signal from that pipeline emits the current buffer. When the selector closes, any remaining items are flushed. Named `BufferWith` to avoid collision with the `Buffer(n)` stage option.
 - `ChunkBy` emits a group when the key changes. `ChunkWhile` emits a group when the predicate between adjacent items is false.
 

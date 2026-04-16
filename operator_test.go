@@ -816,7 +816,7 @@ func TestDropWhile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Batch / Unbatch / Window / SlidingWindow
+// Batch / Unbatch / SlidingWindow
 // ---------------------------------------------------------------------------
 
 func TestBatch(t *testing.T) {
@@ -845,20 +845,18 @@ func TestUnbatch(t *testing.T) {
 	}
 }
 
-func TestWindow(t *testing.T) {
+func TestBatch_DropPartial(t *testing.T) {
+	// 7 items, size 3: full batches are [1,2,3] and [4,5,6]; trailing [7] is dropped.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7})
-	got := collectAll(t, kitsune.Window(p, 3))
-	if len(got) != 3 {
-		t.Fatalf("expected 3 windows, got %d: %v", len(got), got)
+	got := collectAll(t, kitsune.Batch(p, 3, kitsune.DropPartial()))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 full batches, got %d: %v", len(got), got)
 	}
 	if !sliceEqual(got[0], []int{1, 2, 3}) {
-		t.Errorf("window 0: %v", got[0])
+		t.Errorf("batch 0: %v", got[0])
 	}
 	if !sliceEqual(got[1], []int{4, 5, 6}) {
-		t.Errorf("window 1: %v", got[1])
-	}
-	if !sliceEqual(got[2], []int{7}) {
-		t.Errorf("window 2 (partial): %v", got[2])
+		t.Errorf("batch 1: %v", got[1])
 	}
 }
 
