@@ -27,7 +27,7 @@ go get github.com/zenbaku/go-kitsune
 - **Fan-out & fan-in:** `Partition`, `Broadcast`, `Share`, `Balance`, `KeyedBalance`, `Merge`, `Zip`, `LatestFrom`
 - **Batching & windowing:** `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy`; by count, timeout, gap, or key
 - **Stateful processing:** `MapWith` / `MapWithKey` with typed `Ref` per run; key-sharded concurrency gives each entity its own goroutine (in-process actor model, lock-free)
-- **Error routing:** per-stage `Skip`, `Retry` (exponential backoff), `RetryThen`, `Return`, `DeadLetter`; errors are values, not panics
+- **Error routing:** per-stage `Skip`, `Retry` (exponential backoff), `RetryThen`, `Return`, `MapResult`; errors are values, not panics
 - **Circuit breaker:** configurable failure threshold, cooldown, and half-open probes; fast-fails when a dependency is unhealthy
 - **Rate limiting:** token-bucket `RateLimit` with wait or drop mode; `MapWithKey` enables per-entity limits with zero mutex contention
 - **Supervision & restart:** `Supervise` wraps any stage with restart-on-error or restart-on-panic, with configurable backoff
@@ -157,7 +157,6 @@ The [`examples/`](examples/) directory contains standalone programs. Run any wit
 | `batch` | Batch, Unbatch, BatchTimeout |
 | `concurrent` | Concurrency, Ordered, LogHook |
 | `errors` | Skip, Retry, RetryThen, StageError |
-| `deadletter` | DeadLetter, DeadLetterSink |
 | `fanout` | Partition, MergeRunners |
 | `broadcast` | Broadcast to multiple downstream runners |
 | `stages` | Stage[I,O], Then: composable, testable fragments |
@@ -166,7 +165,7 @@ The [`examples/`](examples/) directory contains standalone programs. Run any wit
 | `supervise` | Supervise, RestartOnError, RestartOnPanic |
 | `inspector` | Live web dashboard with full branching topology |
 | `streams` | Unfold, Iterate, Repeatedly, Cycle, Concat |
-| `transform` | Reject, WithIndex, Intersperse, TakeEvery, ConsecutiveDedup |
+| `transform` | Reject, WithIndex, Intersperse, TakeEvery |
 | `reshape` | ChunkBy, ChunkWhile, Sort, SortBy, Unzip |
 | `aggregate` | Sum, Min, Max, Frequencies, ReduceWhile, TakeRandom |
 | `enrich` | MapBatch, LookupBy, Enrich |

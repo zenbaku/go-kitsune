@@ -74,15 +74,13 @@ Documents every exported operator and which `StageOption` features each one actu
 | `MapBatch` *(compat)* | `MapBatch[I,O](p, size, fn, opts...)` | – | – | ✓ | ✓ | ✓ | – | – | – | – | – | – | ✓ | – |
 | `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `MapIntersperse` *(compat)* | `MapIntersperse[T,O](p, sep, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `DeadLetter` *(compat)* | `DeadLetter[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `DeadLetterSink` *(compat)* | `DeadLetterSink[I](p, fn, opts...)` → `(*Pipeline[ErrItem[I]], *Runner)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
 - `SwitchMap` cancels the active inner pipeline when a new upstream item arrives. `ExhaustMap` ignores new items while an inner pipeline is active.
 - `Timeout` on `SwitchMap`/`ExhaustMap` threads a per-item deadline into the inner fn context.
 - `MapBatch` (compat) delegates to `Batch` + `FlatMap`; it only threads `Buffer`, `Name`, `Err`, and `BatchTimeout` to the internal `Batch` stage.
 - `MapPooled`: fn receives `*Pooled[O]` (pointer). `ReleaseAll` takes `[]*Pooled[T]`. `Pooled[T].Release()` has a pointer receiver.
-- `MapResult` and `DeadLetter` both branches must be consumed before calling `Run`.
+- `MapResult` both branches must be consumed before calling `Run`.
 
 ---
 
@@ -113,7 +111,6 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
 | `BufferWith` | `BufferWith[T,S](p, closingSelector, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `WindowByTime` *(compat)* | `WindowByTime[T](p, d, opts...)`: time-based | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `SlidingWindow` | `SlidingWindow[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SessionWindow` | `SessionWindow[T](p, gap, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | – | – |
 | `ChunkBy` | `ChunkBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -121,7 +118,7 @@ Documents every exported operator and which `StageOption` features each one actu
 
 **Notes**
 - `Batch` supports `WithClock` only when `BatchTimeout` is also set (the clock powers the flush ticker).
-- `DropPartial` discards the final partial batch when the source closes; only full batches are emitted. Use `WindowByTime` (compat alias) for time-bucketing.
+- `DropPartial` discards the final partial batch when the source closes; only full batches are emitted. Use `BufferWith(p, Ticker(d))` for fixed-duration time bucketing.
 - `BufferWith` takes a second pipeline (`closingSelector`) as its flush trigger; each signal from that pipeline emits the current buffer. When the selector closes, any remaining items are flushed. Named `BufferWith` to avoid collision with the `Buffer(n)` stage option.
 - `ChunkBy` emits a group when the key changes. `ChunkWhile` emits a group when the predicate between adjacent items is false.
 
@@ -137,8 +134,6 @@ Documents every exported operator and which `StageOption` features each one actu
 | `DistinctBy` | `DistinctBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Dedupe` | `Dedupe[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
 | `DedupeBy` | `DedupeBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
-| `ConsecutiveDedup` *(compat)* | `ConsecutiveDedup[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `ConsecutiveDedupBy` *(compat)* | `ConsecutiveDedupBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)`: terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `GroupByStream` | `GroupByStream[T,K](p, keyFn, opts...)` → `*Pipeline[Group[K,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `CountBy` *(compat)* | `CountBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -342,8 +337,6 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Catch` | `Catch[T](p, fn func(error)*Pipeline[T])` | On pipeline error, switch to fallback pipeline returned by fn |
 | `MapResult` | `MapResult[I,O](p, fn, opts...)` → `(*Pipeline[O], *Pipeline[ErrItem[I]])` | Routes errors to a dead-letter branch |
 | `MapRecover` | `MapRecover[I,O](p, fn, recover, opts...)` | Inline recovery fn produces a fallback value |
-| `DeadLetter` *(compat)* | `DeadLetter[I,O](p, fn, opts...)` | `MapResult` with retry wrapping |
-| `DeadLetterSink` *(compat)* | `DeadLetterSink[I](p, fn, opts...)` | Sink variant; returns dead-letter pipeline + runner |
 
 ---
 
@@ -381,7 +374,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 | Option | Signature | Description |
 |--------|-----------|-------------|
-| `WithErrorStrategy` | `WithErrorStrategy(h ErrorHandler)` | Default error handler for all stages that do not set their own `OnError`. Priority: stage `OnError` > `WithErrorStrategy` > `Halt`. Does not apply to `DeadLetter` or `MapResult`. |
+| `WithErrorStrategy` | `WithErrorStrategy(h ErrorHandler)` | Default error handler for all stages that do not set their own `OnError`. Priority: stage `OnError` > `WithErrorStrategy` > `Halt`. Does not apply to `MapResult`. |
 | `WithStore` | `WithStore(s Store)` | State backend for `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey`. |
 | `WithHook` | `WithHook(h Hook)` | Observability hook for the run. |
 | `WithDrain` | `WithDrain(timeout time.Duration)` | Graceful shutdown: let in-flight items drain before stopping. |

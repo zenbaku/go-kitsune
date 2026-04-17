@@ -5,52 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"time"
-
-	"github.com/zenbaku/go-kitsune/internal"
 )
-
-// ---------------------------------------------------------------------------
-// ConsecutiveDedup / ConsecutiveDedupBy
-// ---------------------------------------------------------------------------
-
-// ConsecutiveDedup drops consecutive duplicate items. Two adjacent items are
-// considered duplicates when they are equal (==). Non-consecutive duplicates
-// are not affected; use [Dedupe] for global deduplication.
-//
-//	kitsune.ConsecutiveDedup(kitsune.FromSlice([]int{1, 1, 2, 2, 3}))
-//	// emits: 1, 2, 3
-func ConsecutiveDedup[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T] {
-	var prev T
-	hasPrev := false
-	return Filter(p, func(_ context.Context, item T) (bool, error) {
-		if hasPrev && item == prev {
-			return false, nil
-		}
-		prev = item
-		hasPrev = true
-		return true, nil
-	}, opts...)
-}
-
-// ConsecutiveDedupBy drops consecutive items that produce the same key under
-// keyFn. Use this when T is not comparable or deduplication should be based on
-// a derived field.
-//
-//	kitsune.ConsecutiveDedupBy(events, func(e Event) string { return e.Type })
-func ConsecutiveDedupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
-	var prevKey K
-	hasPrev := false
-	return Filter(p, func(_ context.Context, item T) (bool, error) {
-		k := keyFn(item)
-		if hasPrev && k == prevKey {
-			return false, nil
-		}
-		prevKey = k
-		hasPrev = true
-		return true, nil
-	}, opts...)
-}
 
 // ---------------------------------------------------------------------------
 // MapIntersperse
@@ -163,78 +118,6 @@ func batchCollectOpts(opts []StageOption) []StageOption {
 }
 
 // ---------------------------------------------------------------------------
-// DeadLetter / DeadLetterSink
-// ---------------------------------------------------------------------------
-
-// DeadLetter applies fn with optional retry and routes results by outcome:
-// successful outputs go to the first (ok) pipeline; items that exhaust all
-// retries go to the second (dlq) pipeline as [ErrItem] values.
-//
-// Unlike [MapResult] which never retries, DeadLetter respects [OnError] with
-// [Retry] in opts. Items that succeed on any attempt go to ok; items that
-// fail permanently go to dlq.
-//
-//	ok, dlq := kitsune.DeadLetter(p, fetchUser,
-//	    kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(10*time.Millisecond, time.Second))),
-//	)
-//
-// Both pipelines must be consumed (same rule as [Partition]).
-func DeadLetter[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) (*Pipeline[O], *Pipeline[ErrItem[I]]) {
-	cfg := buildStageConfig(opts)
-	handler := cfg.errorHandler
-
-	// retrying wraps fn with the retry loop from opts. On permanent failure
-	// the error propagates to MapResult, which routes it to the dlq port.
-	retrying := func(ctx context.Context, item I) (O, error) {
-		result, err, _ := internal.ProcessItem(ctx, fn, item, handler, nil)
-		return result, err
-	}
-
-	return MapResult(p, retrying, deadLetterPassOpts(opts)...)
-}
-
-// DeadLetterSink attaches a terminal sink with optional retry and routes
-// permanently-failed items to the returned dead-letter pipeline.
-// The second return value is a [Runner] that drives the whole graph.
-//
-//	dlq, runner := kitsune.DeadLetterSink(p, writeToDB,
-//	    kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(50*time.Millisecond))),
-//	)
-//	_ = dlq.ForEach(logFailure).Build()  // must consume dlq
-//	runner.Run(ctx)
-func DeadLetterSink[I any](p *Pipeline[I], fn func(context.Context, I) error, opts ...StageOption) (*Pipeline[ErrItem[I]], *Runner) {
-	cfg := buildStageConfig(opts)
-	handler := cfg.errorHandler
-
-	adapted := func(ctx context.Context, item I) (struct{}, error) {
-		voidFn := func(ctx context.Context, v I) (struct{}, error) {
-			return struct{}{}, fn(ctx, v)
-		}
-		result, err, _ := internal.ProcessItem(ctx, voidFn, item, handler, nil)
-		return result, err
-	}
-
-	ok, dlq := MapResult(p, adapted, deadLetterPassOpts(opts)...)
-	return dlq, ok.ForEach(func(_ context.Context, _ struct{}) error { return nil }).Build()
-}
-
-// deadLetterPassOpts strips OnError options before forwarding to MapResult,
-// since MapResult routes all errors to the dlq port and a retry handler there
-// would be ignored and misleading.
-func deadLetterPassOpts(opts []StageOption) []StageOption {
-	pass := make([]StageOption, 0, len(opts))
-	for _, o := range opts {
-		var c stageConfig
-		o(&c)
-		if c.errorHandler != nil {
-			continue
-		}
-		pass = append(pass, o)
-	}
-	return pass
-}
-
-// ---------------------------------------------------------------------------
 // Stage.Or
 // ---------------------------------------------------------------------------
 
@@ -274,10 +157,6 @@ func (s Stage[I, O]) Or(fallback Stage[I, O]) Stage[I, O] {
 }
 
 // ---------------------------------------------------------------------------
-// WindowByTime
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // EndWith
 // ---------------------------------------------------------------------------
 
@@ -298,77 +177,3 @@ func EndWith[T any](p *Pipeline[T], items ...T) *Pipeline[T] {
 	)
 }
 
-// ---------------------------------------------------------------------------
-// WindowByTime
-// ---------------------------------------------------------------------------
-
-// WindowByTime collects items into tumbling time windows of the given duration
-// and emits each window as a slice when the duration elapses. A partial window
-// is emitted when the source completes.
-//
-// Unlike [Batch] with [BatchTimeout], windows are fixed-duration time buckets:
-// a new window always starts at the same interval regardless of item arrival.
-//
-//	kitsune.WindowByTime(events, time.Second)
-//	// emits []Event every second, regardless of how many items arrived
-func WindowByTime[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeline[[]T] {
-	track(p)
-	cfg := buildStageConfig(opts)
-	id := nextPipelineID()
-	meta := stageMeta{
-		id:     id,
-		kind:   "window_by_time",
-		name:   orDefault(cfg.name, "window_by_time"),
-		buffer: cfg.buffer,
-		inputs: []int64{p.id},
-	}
-	build := func(rc *runCtx) chan []T {
-		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan []T)
-		}
-		inCh := p.build(rc)
-		buf := rc.effectiveBufSize(cfg)
-		ch := make(chan []T, buf)
-		m := meta
-		m.buffer = buf
-		m.getChanLen = func() int { return len(ch) }
-		m.getChanCap = func() int { return cap(ch) }
-		rc.setChan(id, ch)
-		stage := func(ctx context.Context) error {
-			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
-
-			outbox := internal.NewBlockingOutbox(ch)
-			ticker := time.NewTicker(d)
-			defer ticker.Stop()
-
-			var window []T
-
-			for {
-				select {
-				case item, ok := <-inCh:
-					if !ok {
-						// Source done — flush partial window.
-						if len(window) > 0 {
-							return outbox.Send(ctx, window)
-						}
-						return nil
-					}
-					window = append(window, item)
-				case <-ticker.C:
-					if len(window) > 0 {
-						if err := outbox.Send(ctx, window); err != nil {
-							return err
-						}
-						window = nil
-					}
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-		}
-		rc.add(stage, m)
-		return ch
-	}
-	return newPipeline(id, meta, build)
-}

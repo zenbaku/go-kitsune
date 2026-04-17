@@ -273,20 +273,13 @@ Every stage function returns `(O, error)`. By default, any error halts the entir
     )
     ```
 
-For more advanced routing: send failures to a dead-letter queue instead of discarding them. Use [`DeadLetter`](operators.md#deadletter):
+For more advanced routing: send failures to a dead-letter queue instead of discarding them. Use [`MapResult`](operators.md#mapresult), wrapping `transform` with your own retry loop if you need transient-failure handling first:
 
 ```go
-// DeadLetter embeds retry; exhausted items route to the second pipeline.
-ok, dlq := kitsune.DeadLetter(items, transform,
-    kitsune.OnError(kitsune.RetryMax(3, kitsune.ExponentialBackoff(time.Second, 30*time.Second))),
-)
+// MapResult routes errored items to a second pipeline as ErrItem[Input].
+ok, dlq := kitsune.MapResult(items, transform)
 // ok  is *Pipeline[Output]
-// dlq is *Pipeline[ErrItem[Input]] — items that exhausted all retries
-
-// For terminal operations use DeadLetterSink:
-dlq, runner := kitsune.DeadLetterSink(items, sinkFn,
-    kitsune.OnError(kitsune.RetryMax(2, kitsune.FixedBackoff(0))),
-)
+// dlq is *Pipeline[ErrItem[Input]]
 ```
 
 When `Runner.Run` returns an error, it is wrapped in a `kitsune.StageError` carrying the stage name, attempt count, and original cause:
@@ -300,7 +293,7 @@ if err := runner.Run(ctx); err != nil {
 }
 ```
 
-See the [`deadletter` example](examples.md#deadletter) and the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for more.
+See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for more.
 
 ---
 

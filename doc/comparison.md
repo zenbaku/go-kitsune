@@ -14,7 +14,7 @@ This guide compares Kitsune with common alternatives for building data pipelines
 | **DAG topology** | Built-in (Partition, Broadcast, Merge, Zip) | Manual | No | Linear only | Observable chains | Router + handler | YAML processor tree | No |
 | **Operator set** | 60+ (Map, FlatMap, Batch, Window, Dedupe, …) | None | ~10 (pool, stream, iter) | ~15 | ReactiveX full set | Router + middleware | 200+ processors | None |
 | **Concurrency control** | Per-stage `Concurrency(n)` | Manual | Pool-based | No | Scheduler-based | Per-handler | Per-processor | Worker count |
-| **Error handling** | Skip, Retry, RetryThen, DeadLetter, CircuitBreaker | Manual | Panics collected | No | `onError` operator | Retry middleware | Retry processor | Retry per task |
+| **Error handling** | Skip, Retry, RetryThen, MapResult, CircuitBreaker | Manual | Panics collected | No | `onError` operator | Retry middleware | Retry processor | Retry per task |
 | **Observability** | Inspector dashboard, Hook interface, OTel/Prometheus/Datadog tails | Manual | No | No | No | Middleware | Built-in metrics | Result backend |
 | **Distributed** | No | No | No | No | No | Yes | Yes | Yes |
 | **Maintained** | Active | N/A | Active | Low activity | Archived | Active | Active (Redpanda) | Low activity |

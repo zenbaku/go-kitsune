@@ -113,7 +113,7 @@ Each stage has an independent `OnError` policy. Errors never silently swallow da
 | [`Return(v)`](operators.md#return) | Emit a default value in place of the failed item |
 | [`RetryMax(n, backoff)`](operators.md#retrymax--retrythen) | Retry up to N times with configurable backoff |
 | [`RetryThen(n, backoff, h)`](operators.md#retrymax--retrythen) | Retry, then apply handler `h` if all attempts fail |
-| [`DeadLetter(fn, ...)`](operators.md#deadletter) | Route successes to one pipeline, exhausted failures to another |
+| [`MapResult(fn)`](operators.md#mapresult) | Route successes to one pipeline, errored items (with the original input) to another |
 
 Backoff helpers: [`FixedBackoff`, `ExponentialBackoff`, `JitteredBackoff`](operators.md#backoff-helpers).
 

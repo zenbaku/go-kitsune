@@ -54,7 +54,7 @@ go get github.com/zenbaku/go-kitsune
 
 - :material-shield-sync-outline: **[Error routing](features.md#error-routing)**
 
-    Per-stage `OnError`: `Skip`, `Retry` with exponential backoff, `RetryThen`, `Return`, or `DeadLetter`. Errors are values, not panics.
+    Per-stage `OnError`: `Skip`, `Retry` with exponential backoff, `RetryThen`, `Return`. Use `MapResult` to route errored items to a separate pipeline. Errors are values, not panics.
 
 - :material-chart-timeline-variant: **[Observability](features.md#observability)**
 

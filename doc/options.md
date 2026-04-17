@@ -94,7 +94,7 @@ sampled := kitsune.Map(events, recordMetric,
 
 ## `OnError(h ErrorHandler)`
 
-**Applies to:** `Map`, `FlatMap`, `MapWith`, `MapWithKey`, `ForEach`, `DeadLetter`, `CircuitBreaker`
+**Applies to:** `Map`, `FlatMap`, `MapWith`, `MapWithKey`, `ForEach`, `CircuitBreaker`
 
 Set the per-stage error handler. When a stage function returns a non-nil error, the handler decides what happens next.
 
@@ -108,7 +108,6 @@ Default: `Halt()` (stop the pipeline and return the error from `Run`).
 | `TypedReturn[O](v)` | Same as `Return`, but `O` is checked against the stage output type at compile time. Not composable in `RetryThen`. |
 | `RetryMax(n, backoff)` | Retry up to `n` times with the given backoff. |
 | `RetryThen(n, backoff, h)` | Retry, then apply handler `h` if all attempts fail. |
-| `DeadLetter(fn, ...)` | Route successes to one pipeline, exhausted failures to another. |
 
 ```go
 out := kitsune.Map(items, callAPI,

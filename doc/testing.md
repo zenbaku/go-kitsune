@@ -202,10 +202,10 @@ func TestStageHaltsOnError(t *testing.T) {
 
 ### Testing dead-letter branches
 
-Both branches of a `MapResult` (or `DeadLetter`) pipeline must be consumed before calling `Run`. Test them independently by collecting each branch:
+Both branches of a `MapResult` pipeline must be consumed before calling `Run`. Test them independently by collecting each branch:
 
 ```go
-func TestDeadLetterRouting(t *testing.T) {
+func TestMapResultRouting(t *testing.T) {
     boom := errors.New("bad")
     input := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
     ok, dlq := kitsune.MapResult(input,

@@ -526,8 +526,8 @@ func WithPauseGate(g *Gate) RunOption {
 // Without this option, the default is [Halt] — the first error stops the
 // pipeline. This option applies to [Map], [FlatMap], [ForEach], [MapWith],
 // [FlatMapWith], [MapWithKey], [FlatMapWithKey], [SwitchMap], and
-// [ExhaustMap]. It does not apply to [DeadLetter] or [MapResult], which
-// have their own explicit routing semantics.
+// [ExhaustMap]. It does not apply to [MapResult], which has its own
+// explicit error-routing semantics.
 func WithErrorStrategy(h ErrorHandler) RunOption {
 	return func(cfg *runConfig) { cfg.defaultErrorHandler = h.h }
 }

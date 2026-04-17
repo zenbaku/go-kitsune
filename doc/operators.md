@@ -31,8 +31,6 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Map`](#map) | Transform | 1:1 element transform |
 | [`MapRecover`](#maprecover) | Transform | Map with panic recovery |
 | [`MapResult`](#mapresult) | Transform | Map with error-branch output |
-| [`DeadLetter`](#deadletter) | Transform | Retry-embedded dead-letter routing |
-| [`DeadLetterSink`](#deadlettersink) | Transform | Route errored items to a sink |
 | [`Timestamp`](#timestamp) | Transform | Tag each item with wall-clock time |
 | [`TimeInterval`](#timeinterval) | Transform | Tag each item with elapsed duration |
 | [`StartWith`](#startwith) | Transform | Prepend fixed items |
@@ -701,7 +699,7 @@ type ErrItem[I any] struct {
 }
 ```
 
-Unlike [`DeadLetter`](#deadletter), `MapResult` does not retry; every failure routes to the error pipeline immediately. Unlike `OnError(Skip())`, failed items are not silently discarded; they are available for inspection, logging, or dead-letter storage.
+Unlike `OnError(Skip())`, failed items are not silently discarded; they are available for inspection, logging, or dead-letter storage. `MapResult` does not retry; wrap `fn` with your own retry loop if you need transient-failure handling before routing to the dead-letter branch.
 
 **When to use:** When you want to process failures separately without halting the pipeline: audit trails, error reporting pipelines, reprocessing queues.
 
@@ -723,68 +721,6 @@ logged := failed.ForEach(func(_ context.Context, e kitsune.ErrItem[Record]) erro
 }).Build()
 
 runner, _ := kitsune.MergeRunners(stored, logged)
-runner.Run(ctx)
-```
-
----
-
-### DeadLetter
-
-```go
-func DeadLetter[I, O any](
-    p *Pipeline[I],
-    fn func(context.Context, I) (O, error),
-    opts ...StageOption,
-) (*Pipeline[O], *Pipeline[ErrItem[I]])
-```
-
-Like [`MapResult`](#mapresult) but with retry embedded. Use `OnError(Retry(...))` in `opts` to configure the retry policy. Items that succeed on any attempt go to the `ok` pipeline; items that exhaust all retries go to the `dlq` pipeline as `ErrItem[I]`. Both pipelines must be consumed.
-
-**When to use:** External calls where transient errors should be retried, with permanent failures routed to a dead-letter queue for later inspection or reprocessing.
-
-**Options:** `OnError` (with `Retry` or `RetryThen`), `Buffer`, `Timeout`, `WithName`.
-
-```go
-ok, dlq := kitsune.DeadLetter(orders, func(ctx context.Context, o Order) (Receipt, error) {
-    return paymentAPI.Charge(ctx, o)
-}, kitsune.OnError(
-    kitsune.RetryMax(3, kitsune.ExponentialBackoff(100*time.Millisecond, 5*time.Second)),
-))
-
-receipts := ok.ForEach(saveReceipt).Build()
-failures := dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[Order]) error {
-    return dlqQueue.Publish(ctx, e)
-}).Build()
-
-runner, _ := kitsune.MergeRunners(receipts, failures)
-runner.Run(ctx)
-```
-
----
-
-### DeadLetterSink
-
-```go
-func DeadLetterSink[I any](
-    p *Pipeline[I],
-    fn func(context.Context, I) error,
-    opts ...StageOption,
-) (*Pipeline[ErrItem[I]], *Runner)
-```
-
-Like [`DeadLetter`](#deadletter) but for terminal sinks (where `fn` produces no output). Returns a dead-letter pipeline and a `Runner`. The dead-letter pipeline must be consumed before calling `runner.Run`.
-
-**Options:** `OnError` (with `Retry`), `Concurrency`, `Buffer`, `Timeout`, `WithName`.
-
-```go
-dlq, runner := kitsune.DeadLetterSink(events, func(ctx context.Context, e Event) error {
-    return db.Write(ctx, e)
-}, kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(50*time.Millisecond))))
-
-_ = dlq.ForEach(func(_ context.Context, e kitsune.ErrItem[Event]) error {
-    return failureLog.Append(ctx, e)
-}).Build()
-
 runner.Run(ctx)
 ```
 
@@ -2864,7 +2800,7 @@ See the [Error Handling guide](error-handling.md) for the full evaluation model,
 |---|---|---|---|
 | `Concurrency(n)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey`, `ForEach` | Run `n` goroutines in parallel. Default: 1. |
 | `Ordered()` | `StageOption` | `Map`, `FlatMap` | Emit results in input order when `Concurrency > 1`. |
-| `OnError(h)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `MapWithKey`, `ForEach`, `DeadLetter`, `CircuitBreaker` | Per-stage error handler. Default: `Halt()`. |
+| `OnError(h)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `MapWithKey`, `ForEach`, `CircuitBreaker` | Per-stage error handler. Default: `Halt()`. |
 | `Buffer(n)` | `StageOption` | All operators | Channel buffer size between this stage and the next. Default: 16. |
 | `Overflow(s)` | `StageOption` | `Map`, `FlatMap`, `Filter`, and most transforms | What to do when the output buffer is full: `Block` (default), `DropNewest`, `DropOldest`. |
 | `WithName(s)` | `StageOption` | All operators | Label the stage for metrics, traces, and `Pipeline.Describe()`. |
