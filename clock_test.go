@@ -146,6 +146,61 @@ func TestBatch_TestClock(t *testing.T) {
 	}
 }
 
+// TestBatch_MeasureTimeout verifies Batch with both BatchMeasure and
+// BatchTimeout: a partial measure-based batch is flushed when the ticker
+// fires before the measure threshold is reached.
+func TestBatch_MeasureTimeout(t *testing.T) {
+	ctx := context.Background()
+	clock := testkit.NewTestClock()
+	ch := kitsune.NewChannel[string](10)
+
+	batches := make(chan []string, 10)
+	done := make(chan error, 1)
+	go func() {
+		// measureFn = byte length; threshold = 100 (high enough to not trip on 3 small items)
+		// batchTimeout = 50ms.
+		done <- kitsune.Batch(ch.Source(),
+			kitsune.BatchMeasure(func(s string) int { return len(s) }, 100),
+			kitsune.BatchTimeout(50*time.Millisecond),
+			kitsune.WithClock(clock),
+		).ForEach(func(_ context.Context, b []string) error {
+			batches <- b
+			return nil
+		}).Run(ctx)
+	}()
+
+	// Give the stage goroutine time to create the ticker before sending items.
+	time.Sleep(pipelineStartup)
+
+	// Send three small items that together don't reach the measure threshold.
+	for _, s := range []string{"a", "bb", "ccc"} {
+		if err := ch.Send(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Let the goroutine consume all three items before firing the ticker.
+	time.Sleep(pipelineStartup)
+
+	// Advance the clock past the timeout; expect a partial batch to be flushed.
+	clock.Advance(60 * time.Millisecond)
+
+	// Wait for the batch to arrive.
+	select {
+	case got := <-batches:
+		if len(got) != 3 || got[0] != "a" || got[1] != "bb" || got[2] != "ccc" {
+			t.Fatalf("timeout batch: got %v", got)
+		}
+	case <-time.After(tickTimeout):
+		t.Fatal("timeout: no batch flushed")
+	}
+
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestThrottle_TestClock verifies that Throttle passes the first item, drops
 // within-window items, then passes again after the window elapses (via Advance).
 func TestThrottle_TestClock(t *testing.T) {

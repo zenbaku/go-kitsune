@@ -2172,3 +2172,113 @@ func TestPropSingle(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Dedupe properties
+// ---------------------------------------------------------------------------
+
+// TestPropDedupe_GlobalSuppressesAllRepeats verifies that Dedupe's default
+// (global, in-memory) path emits each key exactly once, in first-seen order.
+func TestPropDedupe_GlobalSuppressesAllRepeats(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(0, 9)).Draw(t, "in")
+
+		got, err := kitsune.Collect(context.Background(),
+			kitsune.Dedupe(kitsune.FromSlice(in)),
+		)
+		if err != nil {
+			t.Fatalf("Dedupe error: %v", err)
+		}
+
+		// Build expected first-seen order.
+		seen := make(map[int]bool)
+		var want []int
+		for _, v := range in {
+			if !seen[v] {
+				seen[v] = true
+				want = append(want, v)
+			}
+		}
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("global dedup: got %v, want %v (input %v)", got, want, in)
+		}
+	})
+}
+
+// TestPropDedupe_WindowReEmitsAfterLeave verifies that DedupeWindow(n) drops
+// items whose key is in the last n emitted items and re-emits items whose
+// key has left that window.
+func TestPropDedupe_WindowReEmitsAfterLeave(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		n := rapid.IntRange(1, 5).Draw(t, "n")
+		in := rapid.SliceOf(rapid.IntRange(0, 5)).Draw(t, "in")
+
+		got, err := kitsune.Collect(context.Background(),
+			kitsune.Dedupe(kitsune.FromSlice(in), kitsune.DedupeWindow(n)),
+		)
+		if err != nil {
+			t.Fatalf("Dedupe error: %v", err)
+		}
+
+		// Simulate the window semantics manually.
+		var want []int
+		window := make([]int, 0, n)
+		inWindow := func(v int) bool {
+			for _, w := range window {
+				if w == v {
+					return true
+				}
+			}
+			return false
+		}
+		for _, v := range in {
+			if inWindow(v) {
+				continue
+			}
+			if len(window) >= n {
+				window = window[1:]
+			}
+			window = append(window, v)
+			want = append(want, v)
+		}
+
+		if !slices.Equal(got, want) {
+			t.Fatalf("DedupeWindow(%d): got %v, want %v (input %v)", n, got, want, in)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// RandomSample properties
+// ---------------------------------------------------------------------------
+
+// TestPropRandomSample_Boundaries verifies that rate=0.0 emits nothing and
+// rate=1.0 emits the full input in order.
+func TestPropRandomSample_Boundaries(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.Int()).Draw(t, "in")
+
+		// rate=0.0 -> empty.
+		none, err := kitsune.Collect(context.Background(),
+			kitsune.RandomSample(kitsune.FromSlice(in), 0.0),
+		)
+		if err != nil {
+			t.Fatalf("rate=0 error: %v", err)
+		}
+		if len(none) != 0 {
+			t.Fatalf("rate=0.0: expected empty, got %v", none)
+		}
+
+		// rate=1.0 -> full input preserved in order.
+		all, err := kitsune.Collect(context.Background(),
+			kitsune.RandomSample(kitsune.FromSlice(in), 1.0),
+		)
+		if err != nil {
+			t.Fatalf("rate=1 error: %v", err)
+		}
+		if !slices.Equal(all, in) {
+			t.Fatalf("rate=1.0: got %v, want %v", all, in)
+		}
+	})
+}
