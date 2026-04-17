@@ -24,7 +24,7 @@ Every operator fits one of four behaviors:
 |---|---|---|
 | **Streaming** | Emits output for each input item; no barrier | `Map`, `Filter`, `FlatMap`, `Tap` |
 | **Running** | Maintains accumulating state; emits an updated snapshot on every item | `Scan`, `RunningFrequencies`, `CombineLatest` |
-| **Buffering** | Must consume all input before emitting; returns `*Pipeline[T]` | `Sort`, `TakeRandom`, `GroupByStream` |
+| **Buffering** | Must consume all input before emitting; returns `*Pipeline[T]` | `Sort`, `TakeRandom` (after §4.3), `GroupByStream` |
 | **Terminal** | Drains the pipeline; returns a plain Go value | `Collect`, `Single`, `Count`, `Sum`, `Any`, `All` |
 
 The key distinction users care about is: **does output appear as items arrive, or only after the source closes?** Documentation should use "buffers all input" as a callout on buffering operators rather than inventing a separate category.
@@ -55,7 +55,7 @@ Operators that maintain accumulating state and emit a snapshot per item use the 
 | `SkipLast` | `DropLast` |
 | `SkipUntil` | `DropUntil` |
 
-`Skip()` in `config.go` is an `ErrorHandler`, not an operator — leave it.
+`Skip()` in `config.go` is a deprecated alias for `ActionDrop` — remove it (see §7).
 
 ### 1.3 `LatestFrom` (remove `With` prefix)
 
@@ -131,7 +131,39 @@ kitsune.Batch(p, kitsune.BatchCount(100), kitsune.BatchTimeout(5*time.Second))
 
 ---
 
-## 4. Terminal API: `Collect` and `Single`
+## 4. Signature Changes to Existing Operators
+
+### 4.1 `RunningCountBy` / `RunningSumBy` — make key generic
+
+Currently `CountBy` and `SumBy` in `compat.go` hardcode the key type as `string`. When renamed and moved to `aggregate.go`, the key type becomes generic:
+
+```go
+func RunningCountBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
+func RunningSumBy[T any, K comparable, V Numeric](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V]
+```
+
+### 4.2 `TakeRandom` — terminal to buffering pipeline operator
+
+`TakeRandom` currently has a terminal signature (`ctx` first, returns `([]T, error)`). It is reclassified as a buffering pipeline operator — it buffers all input using reservoir sampling, then emits a single `[]T` value when the source closes. Users call `Single` to collect the result.
+
+```go
+// Before
+sample, err := kitsune.TakeRandom(ctx, p, 10)
+
+// After
+sample, err := kitsune.Single(ctx, kitsune.TakeRandom(p, 10))
+```
+
+New signature:
+```go
+func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T]
+```
+
+This aligns `TakeRandom` with the buffering model and makes it composable with further stages before collection.
+
+---
+
+## 5. Terminal API: `Collect` and `Single`
 
 ### `Collect` (already exists)
 
@@ -173,7 +205,7 @@ cfg, err   := Single(ctx, configs, OrDefault(defaultCfg))   // fallback if empty
 
 ---
 
-## 5. compat.go Dissolution
+## 6. compat.go Dissolution
 
 `compat.go` contains thin wrappers and renamed functions that were retained for backwards compatibility. All are removed or relocated in this audit.
 
@@ -182,16 +214,21 @@ cfg, err   := Single(ctx, configs, OrDefault(defaultCfg))   // fallback if empty
 | `ConsecutiveDedup` / `ConsecutiveDedupBy` | Remove. Use `Dedupe`/`DedupeBy` with `DedupeWindow(1)`. |
 | `DeadLetter` / `DeadLetterSink` | Remove. Use `MapResult` directly. |
 | `WindowByTime` | Remove. Has a bug: ignores `WithClock` and calls `time.NewTicker` directly. Replaced by `BufferWith(p, Ticker(d))`. |
+| `ConsecutiveDedup` / `ConsecutiveDedupBy` | Remove. Use `Dedupe`/`DedupeBy` with `DedupeWindow(1)`. |
+| `DeadLetter` / `DeadLetterSink` | Remove. Use `MapResult` directly. |
+| `WindowByTime` | Remove. Has a bug: ignores `WithClock` and calls `time.NewTicker` directly. Replaced by `BufferWith(p, Ticker(d))`. |
 | `MapBatch` | Move to `batch.go`. |
 | `MapIntersperse` | Move to `misc.go`. |
-| `CountBy` | Rename to `RunningCountBy`, move to `aggregate.go`. |
-| `SumBy` | Rename to `RunningSumBy`, move to `aggregate.go`. |
+| `EndWith` | Move to `misc.go` alongside `StartWith` (natural companions). |
+| `Stage.Or` | Move to `pipeline.go` alongside the `Stage[I,O]` type definition. |
+| `CountBy` | Rename to `RunningCountBy`, make key generic, move to `aggregate.go`. |
+| `SumBy` | Rename to `RunningSumBy`, make key generic, move to `aggregate.go`. |
 
 After these moves, `compat.go` is deleted.
 
 ---
 
-## 6. New Operators
+## 7. New Operators
 
 ### `RandomSample`
 
@@ -216,24 +253,26 @@ sampled := kitsune.RandomSample(arms[1], 0.10)
 
 ---
 
-## 7. Removals
+## 8. Removals
 
 | Symbol | Reason |
 |---|---|
 | `BroadcastN` | Identical to `Broadcast`; `Broadcast` becomes the canonical implementation. |
 | `Window` | Identical to `Batch`; already removed. |
 | `ElementAt` | Niche; composable from `Drop(p, n)` + a single `ForEach`. Removing keeps the surface honest. |
+| `Skip()` | Deprecated alias for `ActionDrop` in `config.go`; removes confusion with `DropUntil`/`DropLast` naming. |
+| `Lift` | Deprecated alias for `LiftFallible` in `misc.go`; `LiftPure`/`LiftFallible` are already self-explanatory. |
 
 ---
 
-## 8. Documentation Fixes
+## 9. Documentation Fixes
 
 ### Categorization corrections
 
 | Operator | Current category | Correct category | Note |
 |---|---|---|---|
 | `Sort` / `SortBy` | Terminal | Transformation | Returns `*Pipeline[T]`; add "buffers all input" callout |
-| `TakeRandom` | Filtering | Transformation | Returns `([]T, error)`; add "buffers all input" callout |
+| `TakeRandom` | Terminal | Buffering pipeline operator | Signature changes (see §4.2); add "buffers all input — emits single []T on close" callout |
 | `GroupByStream` | (unlabeled) | Transformation | Add "buffers all input — emits one Group per key on close" callout |
 | `ElementAt` | Filtering | — | Removed (see §7) |
 
@@ -277,12 +316,16 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 - `ConsecutiveDedup` / `ConsecutiveDedupBy`
 - `DeadLetter` / `DeadLetterSink`
 - `ElementAt`
+- `Skip()` (deprecated `ErrorHandler` alias)
+- `Lift` (deprecated `LiftFallible` alias)
 - `compat.go` (file deleted after moves)
 
 ### Signature changes
 - `Batch(p, size, opts...)` → `Batch(p, opts...)` with `BatchCount(n)` / `BatchMeasure(fn, max)`
+- `TakeRandom(ctx, p, n, ...RunOption) ([]T, error)` → `TakeRandom(p, n, ...StageOption) *Pipeline[[]T]`
 - `Distinct`/`DistinctBy`: remove `WithDedupSet` code path
 - `Dedupe`/`DedupeBy`: change default to global in-memory; add `DedupeWindow(n)`
+- `RunningCountBy` / `RunningSumBy`: key type generalized from `string` to `K comparable`
 
 ### Additions
 - `Single[T](ctx, p, ...SingleOption) (T, error)` with `OrDefault` / `OrZero` options
@@ -294,4 +337,6 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 ### File moves
 - `MapBatch` → `batch.go`
 - `MapIntersperse` → `misc.go`
+- `EndWith` → `misc.go`
+- `Stage.Or` → `pipeline.go`
 - `RunningCountBy` / `RunningSumBy` → `aggregate.go`
