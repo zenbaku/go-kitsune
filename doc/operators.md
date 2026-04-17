@@ -60,7 +60,6 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`Distinct`](#distinct) | Filter | Global dedup by value |
 | [`DistinctBy`](#distinctby) | Filter | Global dedup by key function |
 | [`Dedupe`](#dedupe--dedupeby) | Filter | Consecutive or set-backed dedup |
-| [`ElementAt`](#elementat) | Filter | Emit only the Nth item |
 | [`Key`](#key--newkey--ref) | Stateful | Typed state reference |
 | [`MapWith`](#mapwith) | Stateful | Map with run-scoped state |
 | [`FlatMapWith`](#flatmapwith) | Stateful | FlatMap with run-scoped state |
@@ -1488,22 +1487,6 @@ set := kitsune.TTLDedupSet(5 * time.Minute)
 unique := kitsune.DistinctBy(events, func(e Event) string { return e.ID },
     kitsune.WithDedupSet(set),
 )
-```
-
----
-
-### ElementAt
-
-```go
-func ElementAt[T any](ctx context.Context, p *Pipeline[T], index int, opts ...RunOption) (T, bool, error)
-```
-
-Returns the item at zero-based `index`. Returns `(zero, false, nil)` if the pipeline produces fewer than `index+1` items. Stops processing immediately after the target item is found.
-
-Also available as `p.ElementAt(ctx, index)`.
-
-```go
-third, ok, err := kitsune.ElementAt(ctx, p, 2)
 ```
 
 ---

@@ -46,7 +46,7 @@ func TestOrderedMapWithSkip(t *testing.T) {
 			return 0, fmt.Errorf("skip-me")
 		}
 		return v, nil
-	}, kitsune.Concurrency(4), kitsune.Ordered(), kitsune.OnError(kitsune.Skip())).
+	}, kitsune.Concurrency(4), kitsune.Ordered(), kitsune.OnError(kitsune.ActionDrop())).
 		Collect(context.Background())
 	if err != nil {
 		t.Fatal(err)

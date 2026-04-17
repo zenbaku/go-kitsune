@@ -42,7 +42,7 @@ func TestForEach_Serial_OnError_Skip(t *testing.T) {
 		}
 		got = append(got, v)
 		return nil
-	}, kitsune.OnError(kitsune.Skip())).Run(ctx)
+	}, kitsune.OnError(kitsune.ActionDrop())).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestForEach_Concurrent_OnError_Skip(t *testing.T) {
 		}
 		count.Add(1)
 		return nil
-	}, kitsune.Concurrency(3), kitsune.OnError(kitsune.Skip())).Run(ctx)
+	}, kitsune.Concurrency(3), kitsune.OnError(kitsune.ActionDrop())).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestForEach_Ordered_OnError_Skip(t *testing.T) {
 		got = append(got, v)
 		mu.Unlock()
 		return nil
-	}, kitsune.Concurrency(3), kitsune.Ordered(), kitsune.OnError(kitsune.Skip())).Run(ctx)
+	}, kitsune.Concurrency(3), kitsune.Ordered(), kitsune.OnError(kitsune.ActionDrop())).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

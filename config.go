@@ -582,11 +582,6 @@ func Halt() ErrorHandler { return ErrorHandler{h: internal.DefaultHandler{}} }
 //	kitsune.OnError(kitsune.ActionDrop())
 func ActionDrop() ErrorHandler { return ErrorHandler{h: &skipHandler{}} }
 
-// Skip returns an ErrorHandler that drops the failing item and continues.
-//
-// Deprecated: use [ActionDrop] instead. Skip will be removed in a future version.
-func Skip() ErrorHandler { return ActionDrop() }
-
 // Return returns an [ErrorHandler] that replaces the failed item with val and continues.
 // Use with [OnError] to substitute a default value on failure instead of dropping
 // the item ([Skip]) or halting the pipeline ([Halt]):

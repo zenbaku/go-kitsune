@@ -66,12 +66,6 @@ func (p *Pipeline[T]) Iter(ctx context.Context, opts ...RunOption) (iter.Seq[T],
 	return Iter(ctx, p, opts...)
 }
 
-// ElementAt returns the item at zero-based index, or (zero, false, nil) if
-// the pipeline produces fewer than index+1 items.
-func (p *Pipeline[T]) ElementAt(ctx context.Context, index int, opts ...RunOption) (T, bool, error) {
-	return ElementAt(ctx, p, index, opts...)
-}
-
 // ---------------------------------------------------------------------------
 // Operator methods on Pipeline[T]
 //

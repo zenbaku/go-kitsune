@@ -22,6 +22,8 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### API and ergonomics
 
+- [ ] **`MergeRunners` should accept a `Runnable` interface instead of `*Runner`**: `Build()` currently leaks into user-facing code solely because `MergeRunners` requires `*Runner` arguments. Introduce a `Runnable` interface implemented by both `*ForEachRunner[T]` and `*Runner`, change `MergeRunners` to accept `...Runnable`, and add `RunAsync` directly to `ForEachRunner[T]`. `Build()` is retained for backwards compatibility but nothing in the new design requires it and the docs should stop recommending it.
+
 - [x] **`LookupBy` / `Enrich` batch timeout**: Under low throughput, items accumulate in the internal `MapBatch` buffer until the full batch size is reached, introducing unbounded latency before `Fetch` is called. Add a `BatchTimeout time.Duration` field to `LookupConfig` and `EnrichConfig`, using the same semantics as `Batch`'s `BatchTimeout` option: flush a partial batch when the duration elapses with no new item.
 
 - [x] **Named result types to replace `Pair` proliferation**: `LookupBy` returns `Pair[T,V]`, `Zip` returns `Pair[A,B]`, `Timestamp` wraps items in `Pair[T,time.Time]`, `WithIndex` wraps in `Pair[T,int]`. Users read `.First` / `.Second` everywhere without type context. Replace with named, self-documenting types: `Timestamped[T]{Value T; Time time.Time}`, `Indexed[T]{Value T; Index int}`, `Enriched[T,V]{Item T; Value V}`. `Pair` can remain as a utility but named types should be the canonical output of their respective operators.

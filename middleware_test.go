@@ -167,7 +167,7 @@ func TestCircuitBreakerSkipsItemsWhenOpen(t *testing.T) {
 			kitsune.FailureThreshold(1),
 			kitsune.CooldownDuration(10 * time.Second),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestCircuitBreakerHalfOpenRecovery(t *testing.T) {
 			kitsune.CooldownDuration(cooldown),
 			kitsune.HalfOpenProbes(1),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 
 	handle := cb.ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(ctx)
@@ -315,7 +315,7 @@ func TestCircuitBreakerProbeFailureReopens(t *testing.T) {
 			kitsune.FailureThreshold(2),
 			kitsune.CooldownDuration(cooldown),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 	results, err := out.Collect(context.Background())
 	if err != nil {
@@ -363,7 +363,7 @@ func TestCircuitBreakerTripsAfterOne(t *testing.T) {
 			kitsune.FailureThreshold(1),
 			kitsune.CooldownDuration(10 * time.Second),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 	results, err := out.Collect(context.Background())
 	if err != nil {
@@ -409,7 +409,7 @@ func TestCircuitBreakerHalfOpenTimeoutExpires(t *testing.T) {
 			kitsune.HalfOpenProbes(10), // need 10 to close — won't happen
 			kitsune.HalfOpenTimeout(hoTimeout),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 
 	var got atomic.Int32
@@ -469,7 +469,7 @@ func TestCircuitBreakerHalfOpenTimeoutFast(t *testing.T) {
 			kitsune.HalfOpenProbes(1),
 			kitsune.HalfOpenTimeout(5 * time.Second),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 
 	var got atomic.Int32

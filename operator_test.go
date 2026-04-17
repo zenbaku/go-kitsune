@@ -76,7 +76,7 @@ func TestMapSkip(t *testing.T) {
 			return 0, errors.New("even")
 		}
 		return v, nil
-	}, kitsune.OnError(kitsune.Skip())))
+	}, kitsune.OnError(kitsune.ActionDrop())))
 	want := []int{1, 3, 5}
 	if !sliceEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)

@@ -44,7 +44,7 @@ func main() {
 	results, err := kitsune.Collect(ctx,
 		kitsune.Map(kitsune.FromSlice(delays), slow,
 			kitsune.Timeout(20*time.Millisecond),
-			kitsune.OnError(kitsune.Skip()),
+			kitsune.OnError(kitsune.ActionDrop()),
 			kitsune.WithName("slow-op"),
 		))
 	if err != nil {

@@ -290,7 +290,7 @@ func (cb *circuitBreaker) recordFailure(now time.Time) {
 //	breaker := kitsune.CircuitBreaker(p, callExternalAPI,
 //	    kitsune.FailureThreshold(3), kitsune.CooldownDuration(30*time.Second),
 //	    kitsune.HalfOpenProbes(2),
-//	    kitsune.OnError(kitsune.Skip()), // drop items while open
+//	    kitsune.OnError(kitsune.ActionDrop()), // drop items while open
 //	)
 func CircuitBreaker[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), cbOpts []CircuitBreakerOpt, stageOpts ...StageOption) *Pipeline[O] {
 	track(p)

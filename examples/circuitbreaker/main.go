@@ -35,7 +35,7 @@ func main() {
 			kitsune.CooldownDuration(0), // instant cooldown for the demo
 			kitsune.HalfOpenProbes(1),
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 		kitsune.WithName("backend"),
 	)
 

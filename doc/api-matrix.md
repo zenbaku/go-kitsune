@@ -227,7 +227,6 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Any` | `Any[T](ctx, p, fn, opts...)` → `(bool, error)`; also `(p).Any` |
 | `All` | `All[T](ctx, p, fn, opts...)` → `(bool, error)`; also `(p).All` |
 | `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)`; also `(p).Find` |
-| `ElementAt` | `ElementAt[T](ctx, p, i, opts...)` → `(T, bool, error)`; also `(p).ElementAt` |
 | `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)`; also `(p).Iter` |
 | `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)`; also `(p).ReduceWhile` (S=T) |
 | `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` |
@@ -243,7 +242,6 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `FrequenciesBy` | `FrequenciesBy[T,K comparable](ctx, p, keyFn, opts...)` → `(map[K]int, error)` |
 
 **Notes**
-- `ErrEmpty` is a sentinel returned by `First`, `Last`, `ElementAt`, and similar when the stream produces no items.
 - `Iter` exposes a pipeline as `iter.Seq[T]` for range-over-func (Go 1.23+). Breaking out of the loop early cancels the pipeline.
 
 ---
@@ -353,8 +351,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 | Function | Signature | Notes |
 |----------|-----------|-------|
-| `Lift` | `Lift[I,O](fn func(I)(O,error))` | Adapt error-returning fn to `func(ctx,I)(O,error)` |
-| `LiftFallible` | `LiftFallible[I,O](fn func(I)(O,error))` | Alias for `Lift` |
+| `LiftFallible` | `LiftFallible[I,O](fn func(I)(O,error))` | Adapt error-returning fn to `func(ctx,I)(O,error)` |
 | `LiftPure` | `LiftPure[I,O](fn func(I)O)` | Wrap infallible fn |
 | `FilterFunc` | `FilterFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Filter` |
 | `RejectFunc` | `RejectFunc[T](fn func(T)bool)` | Lift plain pred for use with free-fn `Reject` |

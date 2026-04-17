@@ -29,11 +29,6 @@ func LiftFallible[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, 
 	}
 }
 
-// Lift is an alias for [LiftFallible] for compatibility with v1.
-func Lift[I, O any](fn func(I) (O, error)) func(context.Context, I) (O, error) {
-	return LiftFallible[I, O](fn)
-}
-
 // FilterFunc wraps a simple predicate into the signature expected by [Filter].
 // Use this when migrating code from a context-free predicate:
 //
@@ -458,27 +453,4 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 // Processing stops early on the first match.
 func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error) {
 	return Any(ctx, p, func(v T) bool { return v == value }, opts...)
-}
-
-// ElementAt returns the item at the given 0-based index.
-// Returns (zero, false, nil) if the pipeline has fewer than index+1 items.
-func ElementAt[T any](ctx context.Context, p *Pipeline[T], index int, opts ...RunOption) (T, bool, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var result T
-	found := false
-	i := 0
-	_ = p.ForEach(func(_ context.Context, v T) error {
-		if i == index {
-			result = v
-			found = true
-			cancel()
-			return context.Canceled
-		}
-		i++
-		return nil
-	}).Run(ctx, opts...)
-
-	return result, found, nil
 }

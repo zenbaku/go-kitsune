@@ -671,7 +671,7 @@ func TestStage_IsolatedTesting(t *testing.T) {
 	ctx := context.Background()
 
 	parse := kitsune.Stage[string, int](func(p *kitsune.Pipeline[string]) *kitsune.Pipeline[int] {
-		return kitsune.Map(p, kitsune.Lift(strconv.Atoi))
+		return kitsune.Map(p, kitsune.LiftFallible(strconv.Atoi))
 	})
 	double := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
 		return kitsune.Map(p, func(_ context.Context, n int) (int, error) { return n * 2, nil })
@@ -1035,7 +1035,7 @@ func TestSwitchMapTimeoutSkip(t *testing.T) {
 		return yield(v * 10)
 	},
 		kitsune.Timeout(20*time.Millisecond),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(context.Background())
 
 	if err != nil {
@@ -1283,7 +1283,7 @@ func TestExhaustMapTimeoutSkip(t *testing.T) {
 		return yield("ok")
 	},
 		kitsune.Timeout(20*time.Millisecond),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(context.Background())
 
 	if err != nil {

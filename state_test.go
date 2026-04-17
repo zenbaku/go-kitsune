@@ -404,20 +404,6 @@ func TestEnrichBatchTimeoutFlushesPartialBatch(t *testing.T) {
 // Lift alias
 // ---------------------------------------------------------------------------
 
-func TestLiftAlias(t *testing.T) {
-	ctx := context.Background()
-	p := kitsune.FromSlice([]int{1, 2, 3})
-	got, err := kitsune.Collect(ctx, kitsune.Map(p, kitsune.Lift(func(n int) (int, error) {
-		return n * 2, nil
-	})))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 3 || got[0] != 2 || got[1] != 4 || got[2] != 6 {
-		t.Fatalf("got %v", got)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // StateTTL tests
 // ---------------------------------------------------------------------------
@@ -984,7 +970,7 @@ func TestMapWith_OnError_Skip(t *testing.T) {
 			return 0, boom
 		}
 		return v * 10, nil
-	}, kitsune.OnError(kitsune.Skip())).Collect(ctx)
+	}, kitsune.OnError(kitsune.ActionDrop())).Collect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1022,7 +1008,7 @@ func TestFlatMapWith_OnError_Skip(t *testing.T) {
 			return fmt.Errorf("skip me")
 		}
 		return yield(v * 10)
-	}, kitsune.OnError(kitsune.Skip())).Collect(ctx)
+	}, kitsune.OnError(kitsune.ActionDrop())).Collect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1045,7 +1031,7 @@ func TestMapWithKey_OnError_Skip(t *testing.T) {
 			n, _ := ref.UpdateAndGet(ctx, func(n int) (int, error) { return n + 1, nil })
 			return fmt.Sprintf("%s#%d", s, n), nil
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1069,7 +1055,7 @@ func TestFlatMapWithKey_OnError_Skip(t *testing.T) {
 			}
 			return yield(s + "!")
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1368,7 +1354,7 @@ func TestMapWithKey_Concurrency_OnError_Skip(t *testing.T) {
 			return fmt.Sprintf("a#%d", n), nil
 		},
 		kitsune.Concurrency(2),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(ctx)
 	if err != nil {
 		t.Fatal(err)

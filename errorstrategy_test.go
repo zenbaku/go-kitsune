@@ -57,7 +57,7 @@ func TestWithErrorStrategy_SkipMap(t *testing.T) {
 			return v, nil
 		},
 	)
-	got, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.Skip()))
+	got, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestWithErrorStrategy_SkipForEach(t *testing.T) {
 			seen = append(seen, v)
 			return nil
 		}).
-		Run(ctx, kitsune.WithErrorStrategy(kitsune.Skip()))
+		Run(ctx, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestWithErrorStrategy_StageOverridesHalt(t *testing.T) {
 		},
 		kitsune.OnError(kitsune.Halt()), // explicit override
 	)
-	_, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.Skip()))
+	_, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected stage-level Halt to override pipeline Skip; got %v", err)
 	}
@@ -117,7 +117,7 @@ func TestWithErrorStrategy_StageOverridesSkip(t *testing.T) {
 			}
 			return v, nil
 		},
-		kitsune.OnError(kitsune.Skip()), // explicit override on this stage
+		kitsune.OnError(kitsune.ActionDrop()), // explicit override on this stage
 	)
 	// No pipeline-level strategy; stage Skip should prevail.
 	got, err := runWith(t, p)
@@ -141,7 +141,7 @@ func TestWithErrorStrategy_SkipConcurrent(t *testing.T) {
 		},
 		kitsune.Concurrency(3),
 	)
-	got, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.Skip()))
+	got, err := runWith(t, p, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestWithErrorStrategy_MultiStage(t *testing.T) {
 			return v * 3, nil
 		},
 	)
-	got, err := runWith(t, triple, kitsune.WithErrorStrategy(kitsune.Skip()))
+	got, err := runWith(t, triple, kitsune.WithErrorStrategy(kitsune.ActionDrop()))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

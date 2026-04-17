@@ -83,8 +83,8 @@ func main() {
     input := kitsune.FromSlice([]string{"1", "2", "3", "4", "5"})
 
     // Transform: parse each string to int
-    // kitsune.Lift wraps a context-free func(I)(O,error) for use with Map
-    parsed := kitsune.Map(input, kitsune.Lift(strconv.Atoi))
+    // kitsune.LiftFallible wraps a context-free func(I)(O,error) for use with Map
+    parsed := kitsune.Map(input, kitsune.LiftFallible(strconv.Atoi))
 
     // Terminal: collect all results into a slice
     results, err := parsed.Filter(func(n int) bool { return n > 2 }).

@@ -50,55 +50,7 @@ func TestContains_Empty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3b. ElementAt
-// ---------------------------------------------------------------------------
-
-func TestElementAt_Zero(t *testing.T) {
-	p := kitsune.FromSlice([]string{"a", "b", "c"})
-	got, ok, err := kitsune.ElementAt(context.Background(), p, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || got != "a" {
-		t.Errorf("got (%q, %v), want (\"a\", true)", got, ok)
-	}
-}
-
-func TestElementAt_Valid(t *testing.T) {
-	p := kitsune.FromSlice([]string{"a", "b", "c"})
-	got, ok, err := kitsune.ElementAt(context.Background(), p, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || got != "c" {
-		t.Errorf("got (%q, %v), want (\"c\", true)", got, ok)
-	}
-}
-
-func TestElementAt_OutOfBounds(t *testing.T) {
-	p := kitsune.FromSlice([]int{10, 20})
-	got, ok, err := kitsune.ElementAt(context.Background(), p, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok || got != 0 {
-		t.Errorf("got (%d, %v), want (0, false)", got, ok)
-	}
-}
-
-func TestElementAt_Empty(t *testing.T) {
-	p := kitsune.FromSlice([]int{})
-	got, ok, err := kitsune.ElementAt(context.Background(), p, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok || got != 0 {
-		t.Errorf("got (%d, %v), want (0, false)", got, ok)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// 3c. DefaultIfEmpty
+// 3b. DefaultIfEmpty
 // ---------------------------------------------------------------------------
 
 func TestDefaultIfEmpty_NonEmpty(t *testing.T) {

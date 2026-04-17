@@ -951,7 +951,7 @@ func TestTimeoutMapSkip(t *testing.T) {
 		return v * 10, nil
 	},
 		kitsune.Timeout(20*time.Millisecond),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	).Collect(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error with Skip, got: %v", err)

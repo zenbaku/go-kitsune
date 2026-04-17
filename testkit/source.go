@@ -12,7 +12,7 @@ import (
 // concurrent [kitsune.Concurrency] stages.
 //
 //	fn := testkit.FailAt[int](boom, 1, 3) // fail 2nd and 4th items
-//	p := kitsune.Map(kitsune.FromSlice(items), fn, kitsune.OnError(kitsune.Skip()))
+//	p := kitsune.Map(kitsune.FromSlice(items), fn, kitsune.OnError(kitsune.ActionDrop()))
 func FailAt[T any](err error, positions ...int) func(context.Context, T) (T, error) {
 	set := make(map[int]struct{}, len(positions))
 	for _, p := range positions {
@@ -34,7 +34,7 @@ func FailAt[T any](err error, positions ...int) func(context.Context, T) (T, err
 // The counter uses an atomic so the function is safe for concurrent stages.
 //
 //	fn := testkit.FailEvery[int](boom, 3) // fail items 0, 3, 6, …
-//	p := kitsune.Map(kitsune.FromSlice(items), fn, kitsune.OnError(kitsune.Skip()))
+//	p := kitsune.Map(kitsune.FromSlice(items), fn, kitsune.OnError(kitsune.ActionDrop()))
 func FailEvery[T any](err error, n int) func(context.Context, T) (T, error) {
 	if n <= 0 {
 		panic("testkit.FailEvery: n must be > 0")

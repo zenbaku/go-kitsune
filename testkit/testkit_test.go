@@ -174,7 +174,7 @@ func TestRecordingHookErrors(t *testing.T) {
 			}
 			return v, nil
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestAssertErrorCount(t *testing.T) {
 			}
 			return v, nil
 		},
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 	_, hook := testkit.MustCollectWithHook(t, p)
 	testkit.AssertErrorCount(t, hook, 1)
@@ -309,7 +309,7 @@ func TestAssertStageErrors(t *testing.T) {
 			return v, nil
 		},
 		kitsune.WithName("errstage"),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 	hook := testkit.MustRunWithHook(t, p.Drain())
 	testkit.AssertStageErrors(t, hook, "errstage", 1)
@@ -319,7 +319,7 @@ func TestFailAt(t *testing.T) {
 	boom := errors.New("boom")
 	fn := testkit.FailAt[int](boom, 1, 3) // fail items at index 1 and 3
 	p := kitsune.Map(kitsune.FromSlice([]int{0, 1, 2, 3, 4}), fn,
-		kitsune.OnError(kitsune.Skip()))
+		kitsune.OnError(kitsune.ActionDrop()))
 	got := testkit.MustCollect(t, p)
 	// Items at positions 1 and 3 are dropped; remaining: 0, 2, 4.
 	if len(got) != 3 {
@@ -331,7 +331,7 @@ func TestFailEvery(t *testing.T) {
 	boom := errors.New("boom")
 	fn := testkit.FailEvery[int](boom, 2) // fail every 2nd item (positions 0, 2, 4)
 	p := kitsune.Map(kitsune.FromSlice([]int{0, 1, 2, 3, 4}), fn,
-		kitsune.OnError(kitsune.Skip()))
+		kitsune.OnError(kitsune.ActionDrop()))
 	got := testkit.MustCollect(t, p)
 	// Items at positions 0, 2, 4 dropped; remaining: 1, 3.
 	if len(got) != 2 {

@@ -11,8 +11,8 @@ Every pipeline is assembled lazily: no goroutines start until you call a termina
 ```go
 func TestParseStage(t *testing.T) {
     input  := kitsune.FromSlice([]string{"1", "2", "bad", "4"})
-    parsed := kitsune.Map(input, kitsune.Lift(strconv.Atoi),
-        kitsune.OnError(kitsune.Skip()))
+    parsed := kitsune.Map(input, kitsune.LiftFallible(strconv.Atoi),
+        kitsune.OnError(kitsune.ActionDrop()))
 
     testkit.CollectAndExpect(t, parsed, []int{1, 2, 4})
 }

@@ -74,7 +74,7 @@ func TestPrometheusHookErrors(t *testing.T) {
 	_ = kitsune.Map(
 		kitsune.FromSlice([]int{1, 2, 3}),
 		func(_ context.Context, v int) (int, error) { return 0, boom },
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 		kitsune.WithName("failing"),
 	).ForEach(func(_ context.Context, v int) error { return nil }).
 		Run(context.Background(), kitsune.WithHook(hook))

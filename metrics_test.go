@@ -45,7 +45,7 @@ func TestMetricsHookCountsErrors(t *testing.T) {
 		}
 		return v, nil
 	}, kitsune.WithName("stage"),
-		kitsune.OnError(kitsune.Skip()),
+		kitsune.OnError(kitsune.ActionDrop()),
 	)
 
 	_, err := kitsune.Collect(ctx, p2, kitsune.WithHook(m))
@@ -178,7 +178,7 @@ func TestMetricsHookSkipped(t *testing.T) {
 			return 0, boom // even items are skipped
 		}
 		return n, nil
-	}, kitsune.WithName("skipstage"), kitsune.OnError(kitsune.Skip()))
+	}, kitsune.WithName("skipstage"), kitsune.OnError(kitsune.ActionDrop()))
 
 	_, err := mapped.Collect(context.Background(), kitsune.WithHook(m))
 	if err != nil {

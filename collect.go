@@ -36,11 +36,6 @@ func Collect[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) ([]T
 // First / Last
 // ---------------------------------------------------------------------------
 
-// ErrEmpty is returned by [ElementAt] when the pipeline emits fewer items than
-// expected. [First] and [Last] return (zero, false, nil) for empty pipelines
-// rather than this error, matching v1 semantics.
-var ErrEmpty = errors.New("kitsune: pipeline produced no items")
-
 // First returns the first item emitted by the pipeline and cancels processing
 // immediately after. Returns (zero, false, nil) if the pipeline emits no items.
 func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error) {

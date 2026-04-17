@@ -103,7 +103,7 @@ Default: `Halt()` (stop the pipeline and return the error from `Run`).
 | Handler | Behaviour |
 |---|---|
 | `Halt()` | Stop the pipeline immediately. **Default.** |
-| `Skip()` | Drop the failed item and continue. |
+| `ActionDrop()` | Drop the failed item and continue. |
 | `Return(v)` | Emit `v` in place of the failed item and continue. Composable; see type safety note below. |
 | `TypedReturn[O](v)` | Same as `Return`, but `O` is checked against the stage output type at compile time. Not composable in `RetryThen`. |
 | `RetryMax(n, backoff)` | Retry up to `n` times with the given backoff. |
@@ -138,7 +138,7 @@ Panics at pipeline construction time if used on any other operator.
 ```go
 out := kitsune.Map(items, callSlowAPI,
     kitsune.Timeout(500*time.Millisecond),
-    kitsune.OnError(kitsune.Skip()),
+    kitsune.OnError(kitsune.ActionDrop()),
 )
 ```
 

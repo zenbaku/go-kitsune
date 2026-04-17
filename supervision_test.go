@@ -559,7 +559,7 @@ func TestRetryThenFallback(t *testing.T) {
 			calls.Add(1)
 			return 0, persistent
 		},
-		kitsune.OnError(kitsune.RetryThen(2, kitsune.FixedBackoff(0), kitsune.Skip())),
+		kitsune.OnError(kitsune.RetryThen(2, kitsune.FixedBackoff(0), kitsune.ActionDrop())),
 	).Collect(context.Background())
 	if err != nil {
 		t.Fatalf("expected nil error after skip fallback, got: %v", err)
