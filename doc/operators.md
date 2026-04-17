@@ -1337,7 +1337,7 @@ func Distinct[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T]
 
 Emits only items that have not been seen before in the entire stream, using `==` equality. Keeps an in-memory set of all seen values; memory usage grows with the number of unique items.
 
-**Options:** `WithDedupSet` (to use a Redis or Bloom filter backend), `Buffer`, `WithName`.
+**Options:** `Buffer`, `WithName`.
 
 ```go
 uniqueIDs := kitsune.Distinct(allIDs)
@@ -1353,7 +1353,7 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 
 Like [`Distinct`](#distinct) but uses `keyFn` to derive the comparison key, allowing deduplication of complex types by a single field.
 
-**Options:** `WithDedupSet`, `Buffer`, `WithName`.
+**Options:** `Buffer`, `WithName`.
 
 ```go
 // Deduplicate events by their ID field.
@@ -1386,7 +1386,7 @@ changes := kitsune.DedupeBy(statusUpdates, func(s Status) string { return s.Stat
 
 ### DedupSet backends
 
-`Distinct`, `DistinctBy`, `Dedupe`, `DedupeBy`, and `ExpandMap` all accept a `WithDedupSet(backend)` option to override their default in-process deduplication store. Three built-in backends are provided:
+`Dedupe`, `DedupeBy`, and `ExpandMap` all accept a `WithDedupSet(backend)` option to override their default in-process deduplication store. Three built-in backends are provided:
 
 #### MemoryDedupSet
 
@@ -1419,7 +1419,7 @@ In-process deduplication set that forgets keys `ttl` after they were last added.
 ```go
 // Suppress duplicate webhook deliveries within a 5-minute window.
 set := kitsune.TTLDedupSet(5 * time.Minute)
-unique := kitsune.DistinctBy(events, func(e Event) string { return e.ID },
+unique := kitsune.DedupeBy(events, func(e Event) string { return e.ID },
     kitsune.WithDedupSet(set),
 )
 ```
@@ -2815,7 +2815,7 @@ See the [Error Handling guide](error-handling.md) for the full evaluation model,
 | `BatchTimeout(d)` | `StageOption` | `Batch`, `MapBatch` | Flush a partial batch after `d` even if it is not full. |
 | `WithClock(c)` | `StageOption` | `Ticker`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval` | Substitute a deterministic clock for testing. |
 | `CacheBy(keyFn)` | `StageOption` | `Map` only | Enable TTL-based result caching. On a hit, `fn` is skipped. Requires `WithCache` at run time or `CacheBackend`. |
-| `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
+| `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
 | `VisitedBy(keyFn)` | `StageOption` | `ExpandMap` | Enable cycle detection by key during graph walks. |
 | `MaxDepth(n int)` | `StageOption` | `ExpandMap` | Cap BFS depth to `n` levels below roots. `0` = roots only; default unlimited. |
 | `MaxItems(n int)` | `StageOption` | `ExpandMap` | Cap total items emitted to `n`. Stage closes normally when cap is hit. Default unlimited. |

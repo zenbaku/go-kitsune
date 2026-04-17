@@ -423,7 +423,7 @@ All hooks are wired into every stage runner automatically when provided via `Wit
 | `TTLDedupSet` | `TTLDedupSet(ttl)` | Yes (bounded by active window) | No | Yes (lazy, per-key TTL) |
 
 **Notes**
-- `MemoryDedupSet` is the default for `Distinct`, `DistinctBy`, `Dedupe`, `DedupeBy`, and `ExpandMap`.
+- `MemoryDedupSet` is the default for `Dedupe`, `DedupeBy`, and `ExpandMap`.
 - `BloomDedupSet` panics if `expectedItems <= 0` or `falsePositiveRate` is not in `(0, 1)`.
 - `TTLDedupSet` panics if `ttl <= 0`. Re-adding an existing key refreshes its expiry. Eviction is lazy (on next `Contains` or `Add`); no background goroutine is started.
 - External backends (Redis, etc.) are available in `tails/kredis` via `kredis.NewDedupSet`.

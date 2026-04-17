@@ -1,6 +1,6 @@
 // Example: ttldedup — time-bounded deduplication with TTLDedupSet.
 //
-// Demonstrates: TTLDedupSet, WithDedupSet, Dedupe.
+// Demonstrates: TTLDedupSet, WithDedupSet, DedupeBy.
 //
 // TTLDedupSet forgets keys after a configured TTL. Unlike MemoryDedupSet
 // (unbounded memory) and BloomDedupSet (bounded but lossy), it bounds memory

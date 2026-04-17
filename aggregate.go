@@ -128,7 +128,9 @@ func Distinct[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T] {
 }
 
 // DistinctBy emits only items whose key (returned by keyFn) has not been seen
-// before. Items with duplicate keys are silently dropped.
+// before. Items with duplicate keys are silently dropped. An in-memory map
+// is used as the dedup backend; external backends (WithDedupSet) are not
+// supported here: use Dedupe or DedupeBy if you need a custom backend.
 func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := buildStageConfig(opts)
