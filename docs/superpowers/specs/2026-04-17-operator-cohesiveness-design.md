@@ -249,20 +249,20 @@ kitsune.Map(kitsune.GroupBy(orders, byRegion), summariseRegions)
 
 ---
 
-### `InWindow`
+### `Within`
 
 ```go
-func InWindow[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O]
+func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O]
 ```
 
-Applies a pipeline transformation to the contents of each window. The `stage` parameter is a `Stage[T,O]` — it receives a mini-pipeline of the window's items and returns a transformed pipeline. All existing operators (`Sort`, `Filter`, `Map`, etc.) work inside `InWindow` without modification.
+Applies a pipeline stage to the contents of each slice element. The `stage` parameter receives a mini-pipeline of the slice's items and returns a transformed pipeline. All existing operators (`Sort`, `Filter`, `Map`, etc.) work inside `Within` without modification — no new operator variants needed.
 
-Use `Unbatch` to flatten the output back to `*Pipeline[O]` when the windowed structure is no longer needed.
+Works with any `*Pipeline[[]T]` regardless of how the slices were produced (`Batch`, `ChunkBy`, `SessionWindow`, etc.). Use `Unbatch` to flatten the output back to `*Pipeline[O]` when the slice structure is no longer needed.
 
 ```go
 // Sort items within each chunk, then flatten back to a stream
 result := kitsune.Unbatch(
-    kitsune.InWindow(
+    kitsune.Within(
         kitsune.Batch(p, kitsune.BatchCount(100)),
         func(w *Pipeline[int]) *Pipeline[int] {
             return kitsune.Sort(w, func(a, b int) bool { return a < b })
@@ -271,12 +271,17 @@ result := kitsune.Unbatch(
 )
 
 // Filter within each session window
-kitsune.InWindow(sessions, func(w *Pipeline[Event]) *Pipeline[Event] {
+kitsune.Within(sessions, func(w *Pipeline[Event]) *Pipeline[Event] {
     return kitsune.Filter(w, isRelevant)
+})
+
+// Multi-step transformation within each chunk
+kitsune.Within(chunks, func(w *Pipeline[Event]) *Pipeline[Summary] {
+    return kitsune.Map(kitsune.Filter(w, isRelevant), summarise)
 })
 ```
 
-**Category:** Windowing (operates on `*Pipeline[[]T]`).
+**Category:** Slice operations (operates on `*Pipeline[[]T]`).
 
 ---
 
@@ -383,7 +388,7 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 
 ### Additions
 - `GroupBy[T, K](p, keyFn, ...StageOption) *Pipeline[map[K][]T]` (buffering pipeline operator)
-- `InWindow[T, O](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], ...StageOption) *Pipeline[[]O]`
+- `Within[T, O](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], ...StageOption) *Pipeline[[]O]`
 - `Single[T](ctx, p, ...SingleOption) (T, error)` with `OrDefault` / `OrZero` options
 - `RandomSample[T](p, rate float64) *Pipeline[T]`
 - `BatchCount(n int) StageOption`
