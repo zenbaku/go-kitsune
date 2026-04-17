@@ -314,24 +314,58 @@ func MaxBy[T any, K any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, l
 // ---------------------------------------------------------------------------
 
 // ReduceWhile folds items into a single value using fn until fn signals stop.
-// fn returns (newState, continueReducing). When continueReducing is false,
-// the current state is returned immediately without consuming further items.
-// If the source emits no items, initial is returned.
-func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...RunOption) (S, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	state := initial
-	_ = p.ForEach(func(_ context.Context, v T) error {
-		next, cont := fn(state, v)
-		state = next
-		if !cont {
-			cancel()
-			return context.Canceled
+// fn returns (newState, continueReducing). When continueReducing is false, the
+// current state is emitted immediately and no further items are consumed. If
+// the source emits no items, initial is emitted. Exactly one value is emitted.
+// Use [Single] to extract the result.
+func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...StageOption) *Pipeline[S] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "reduce_while",
+		name:   orDefault(cfg.name, "reduce_while"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan S {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan S)
 		}
-		return nil
-	}).Run(ctx, opts...)
-	return state, nil
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan S, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			state := initial
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return outbox.Send(ctx, state)
+					}
+					next, cont := fn(state, item)
+					state = next
+					if !cont {
+						return outbox.Send(ctx, state)
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -409,15 +443,53 @@ func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T
 // ToMap
 // ---------------------------------------------------------------------------
 
-// ToMap collects items into a map using keyFn and valueFn.
-// If two items produce the same key, the last one wins.
-func ToMap[T any, K comparable, V any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...RunOption) (map[K]V, error) {
-	m := make(map[K]V)
-	err := p.ForEach(func(_ context.Context, v T) error {
-		m[keyFn(v)] = valueFn(v)
-		return nil
-	}).Run(ctx, opts...)
-	return m, err
+// ToMap buffers all items and emits a single map[K]V built using keyFn and
+// valueFn. If two items produce the same key, the last one wins.
+// Empty input emits one empty map. Use [Single] to extract the result.
+func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "to_map",
+		name:   orDefault(cfg.name, "to_map"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan map[K]V {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan map[K]V)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan map[K]V, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			result := make(map[K]V)
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return outbox.Send(ctx, result)
+					}
+					result[keyFn(item)] = valueFn(item)
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------

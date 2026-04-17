@@ -2221,21 +2221,21 @@ cheapest, ok, err := kitsune.MinBy(ctx, products,
 ### ReduceWhile
 
 ```go
-func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...RunOption) (S, error)
+func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...StageOption) *Pipeline[S]
 ```
 
-Folds items until `fn` signals stop by returning `(state, false)`. The current state is returned immediately without consuming further items.
+Folds items until `fn` signals stop by returning `(state, false)`. The current state is emitted exactly once and no further items are consumed. If the source closes without `fn` returning false, the accumulated state is emitted on close. Empty input emits `initial` once.
 
-Also available as `p.ReduceWhile(ctx, initial, fn)`.
+This is a buffering pipeline operator. Use [Single] to extract the result.
 
 ```go
 // Sum until we exceed 1000.
-partial, _ := kitsune.ReduceWhile(ctx, prices, 0.0,
+partial, _ := kitsune.Single(ctx, kitsune.ReduceWhile(prices, 0.0,
     func(acc float64, p float64) (float64, bool) {
         next := acc + p
         return next, next <= 1000.0
     },
-)
+))
 ```
 
 ---
@@ -2316,18 +2316,22 @@ found, err  := kitsune.Any(ctx, p, func(v int) bool { return v > 0 })
 ### ToMap / Frequencies / FrequenciesBy
 
 ```go
-func ToMap[T any, K comparable, V any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...RunOption) (map[K]V, error)
-func Frequencies[T comparable](ctx context.Context, p *Pipeline[T], opts ...RunOption) (map[T]int, error)
-func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K]int, error)
+func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V]
+func Frequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int]
+func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int]
 ```
 
-Terminal aggregators that return maps. `ToMap` uses last-writer-wins for duplicate keys. `Frequencies` and `FrequenciesBy` count occurrences.
+Buffering pipeline operators that emit a single map on close. `ToMap` uses last-writer-wins for duplicate keys. `Frequencies` and `FrequenciesBy` count occurrences. Empty input emits one empty map.
 
-For grouping into `map[K][]T`, use the pipeline operator [`GroupBy`](#groupby) combined with [`Single`](#single).
+These are pipeline operators: use [`Single`](#single) to extract the result, or pipe the map into further stages.
+
+For grouping into `map[K][]T`, use [`GroupBy`](#groupby).
+
+**Options:** `Buffer`, `WithName`.
 
 ```go
-byID, err   := kitsune.ToMap(ctx, users, func(u User) int { return u.ID }, func(u User) User { return u })
-counts, err := kitsune.Frequencies(ctx, kitsune.Map(events, extractType))
+byID, err   := kitsune.Single(ctx, kitsune.ToMap(users, func(u User) int { return u.ID }, func(u User) User { return u }))
+counts, err := kitsune.Single(ctx, kitsune.Frequencies(kitsune.Map(events, extractType)))
 ```
 
 ---
@@ -2339,7 +2343,7 @@ func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipe
 func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
 ```
 
-Like [`Frequencies`](#tomap--frequencies--frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single terminal map use [`Frequencies`](#tomap--frequencies--frequenciesby).
+Like [`Frequencies`](#tomap--frequencies--frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single buffered map use [`Frequencies`](#tomap--frequencies--frequenciesby) with `Single`.
 
 **Options:** `Buffer`, `WithName`.
 

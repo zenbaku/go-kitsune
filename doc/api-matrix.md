@@ -138,6 +138,10 @@ Documents every exported operator and which `StageOption` features each one actu
 | `DedupeBy` | `DedupeBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
 | `GroupBy` | `GroupBy[T,K](p, keyFn, opts...)` → `*Pipeline[map[K][]T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `TakeRandom` | `TakeRandom[T](p, n, opts...)` → `*Pipeline[[]T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `ReduceWhile` | `ReduceWhile[T,S](p, seed, fn, opts...)` → `*Pipeline[S]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `ToMap` | `ToMap[T,K,V](p, keyFn, valFn, opts...)` → `*Pipeline[map[K]V]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `Frequencies` | `Frequencies[T comparable](p, opts...)` → `*Pipeline[map[T]int]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `FrequenciesBy` | `FrequenciesBy[T,K comparable](p, keyFn, opts...)` → `*Pipeline[map[K]int]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningCountBy` | `RunningCountBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningSumBy` | `RunningSumBy[T,K comparable,V Numeric](p, keyFn, valFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningFrequencies` | `RunningFrequencies[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -145,8 +149,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `RandomSample` | `RandomSample[T](p, rate float64, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `GroupBy` is a buffering pipeline operator; it emits a single `map[K][]T` when the source closes. Combine with `Single` to collect the result.
-- `TakeRandom` is a buffering pipeline operator; it buffers all input and emits one `[]T` slice. Combine with `Single` to collect the result.
+- `GroupBy`, `TakeRandom`, `ReduceWhile`, `ToMap`, `Frequencies`, `FrequenciesBy` are all buffering pipeline operators: they buffer the full source and emit exactly one result when the source closes. Combine with `Single` to extract the value.
 - `Dedupe` is identity-based (`T comparable`). `DedupeBy` is key-based. Default behaviour is global (all-seen) deduplication. Use `DedupeWindow(1)` for consecutive-only deduplication.
 - `RandomSample` passes each item downstream with independent probability `rate`; it is stateless and streaming (no buffering).
 - `RunningFrequencies` / `RunningFrequenciesBy` emit a fresh count-map snapshot after each item.
@@ -228,16 +231,12 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `All` | `All[T](ctx, p, fn, opts...)` → `(bool, error)`; also `(p).All` |
 | `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)`; also `(p).Find` |
 | `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)`; also `(p).Iter` |
-| `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)`; also `(p).ReduceWhile` (S=T) |
 | `Sum` | `Sum[T](ctx, p, opts...)` → `(T, error)` |
 | `Min` / `Max` | `Min[T](ctx, p, opts...)` → `(T, bool, error)` |
 | `MinMax` | `MinMax[T](ctx, p, opts...)` → `(MinMaxResult[T], bool, error)` |
 | `MinBy` / `MaxBy` | `MinBy[T,K](ctx, p, keyFn, less, opts...)` → `(T, bool, error)` |
 | `Contains` | `Contains[T comparable](ctx, p, val, opts...)` → `(bool, error)` |
-| `ToMap` | `ToMap[T,K,V](ctx, p, keyFn, valFn, opts...)` → `(map[K]V, error)` |
 | `SequenceEqual` | `SequenceEqual[T comparable](ctx, a, b, opts...)` → `(bool, error)` |
-| `Frequencies` | `Frequencies[T comparable](ctx, p, opts...)` → `(map[T]int, error)` |
-| `FrequenciesBy` | `FrequenciesBy[T,K comparable](ctx, p, keyFn, opts...)` → `(map[K]int, error)` |
 
 **Notes**
 - `Iter` exposes a pipeline as `iter.Seq[T]` for range-over-func (Go 1.23+). Breaking out of the loop early cancels the pipeline.

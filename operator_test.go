@@ -1171,12 +1171,37 @@ func TestGroupBy_WithName(t *testing.T) {
 func TestFrequencies(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	freq, err := kitsune.Frequencies(ctx, p)
+	freq, err := kitsune.Single(ctx, kitsune.Frequencies(p))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if freq["a"] != 3 || freq["b"] != 2 || freq["c"] != 1 {
 		t.Fatalf("unexpected frequencies: %v", freq)
+	}
+}
+
+func TestFrequencies_EmptySource(t *testing.T) {
+	ctx := context.Background()
+	freq, err := kitsune.Single(ctx, kitsune.Frequencies(kitsune.Empty[string]()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(freq) != 0 {
+		t.Errorf("expected empty map, got %v", freq)
+	}
+}
+
+func TestFrequencies_WithName(t *testing.T) {
+	ctx := context.Background()
+	freq, err := kitsune.Single(ctx, kitsune.Frequencies(
+		kitsune.FromSlice([]int{1, 2, 1}),
+		kitsune.WithName("my_frequencies"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freq[1] != 2 || freq[2] != 1 {
+		t.Errorf("unexpected: %v", freq)
 	}
 }
 
