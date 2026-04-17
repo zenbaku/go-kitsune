@@ -188,14 +188,17 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 // Dedupe
 // ---------------------------------------------------------------------------
 
-// Dedupe drops consecutive duplicate items using == equality.
-// Unlike [Distinct], it only suppresses adjacent duplicates.
+// Dedupe drops duplicate items using == equality. By default, duplicates
+// are suppressed globally for the lifetime of the pipeline. Use
+// [DedupeWindow] to restrict suppression to a sliding window, or
+// [WithDedupSet] to plug in an external backend with expiry or
+// probabilistic semantics.
 func Dedupe[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T] {
 	return DedupeBy(p, func(v T) T { return v }, opts...)
 }
 
-// DedupeBy drops consecutive items whose key (returned by keyFn) equals the
-// previous item's key. Non-consecutive duplicates are NOT suppressed.
+// DedupeBy drops items whose key (returned by keyFn) duplicates a
+// previously seen key. See [Dedupe] for the default and option behaviour.
 func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := buildStageConfig(opts)
@@ -220,9 +223,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
 		var stage stageFunc
-		if cfg.dedupSet != nil {
-			// When an external DedupSet is provided, switch to global dedup:
-			// drop any item whose key was seen at any point, not just the last.
+		switch {
+		case cfg.dedupSet != nil:
+			// External backend: global semantics with a custom set (e.g. TTL, Bloom, Redis).
 			set := cfg.dedupSet
 			stage = func(ctx context.Context) error {
 				defer close(ch)
@@ -253,7 +256,36 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 					}
 				}
 			}
-		} else {
+
+		case cfg.dedupeWindow == 0:
+			// Global in-memory: never re-emit a seen key (new default).
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				defer func() { go internal.DrainChan(inCh) }()
+				outbox := internal.NewBlockingOutbox(ch)
+				seen := make(map[K]struct{})
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						k := keyFn(item)
+						if _, dup := seen[k]; dup {
+							continue
+						}
+						seen[k] = struct{}{}
+						if err := outbox.Send(ctx, item); err != nil {
+							return err
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+
+		case cfg.dedupeWindow == 1:
+			// Consecutive: suppress only adjacent duplicates.
 			stage = func(ctx context.Context) error {
 				defer close(ch)
 				defer func() { go internal.DrainChan(inCh) }()
@@ -272,6 +304,45 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 						}
 						first = false
 						lastKey = k
+						if err := outbox.Send(ctx, item); err != nil {
+							return err
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+
+		default:
+			// Sliding window of size cfg.dedupeWindow (n > 1).
+			n := cfg.dedupeWindow
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				defer func() { go internal.DrainChan(inCh) }()
+				outbox := internal.NewBlockingOutbox(ch)
+				window := make([]K, 0, n)
+				inWindow := func(k K) bool {
+					for _, w := range window {
+						if w == k {
+							return true
+						}
+					}
+					return false
+				}
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						k := keyFn(item)
+						if inWindow(k) {
+							continue
+						}
+						if len(window) >= n {
+							window = window[1:]
+						}
+						window = append(window, k)
 						if err := outbox.Send(ctx, item); err != nil {
 							return err
 						}

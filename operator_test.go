@@ -999,11 +999,61 @@ func TestDistinct(t *testing.T) {
 }
 
 func TestDedupe(t *testing.T) {
+	// DedupeWindow(1) = consecutive dedup only; preserves non-adjacent duplicates.
 	p := kitsune.FromSlice([]int{1, 1, 2, 2, 3, 1, 1})
-	got := collectAll(t, kitsune.Dedupe(p))
+	got := collectAll(t, kitsune.Dedupe(p, kitsune.DedupeWindow(1)))
 	want := []int{1, 2, 3, 1}
 	if !sliceEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestDedupe_GlobalDefault(t *testing.T) {
+	// Default (no options) must suppress all duplicates globally, not just consecutive.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 2, 1, 3, 2, 1})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
+	}
+}
+
+func TestDedupe_Consecutive(t *testing.T) {
+	// DedupeWindow(1) = consecutive dedup only.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 1, 2, 1, 2}),
+			kitsune.DedupeWindow(1)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 1, 2} // only adjacent dups removed
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
+	}
+}
+
+func TestDedupe_Window(t *testing.T) {
+	// DedupeWindow(3): remember last 3 items; drop if in window, advance window on emit.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 2, 3, 1, 4}),
+			kitsune.DedupeWindow(3)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1 -> emit [1]; 2 -> emit [1,2]; 3 -> emit [1,2,3];
+	// 1 -> in window, drop; 4 -> not in window, emit (window evicts oldest: [2,3,4]).
+	want := []int{1, 2, 3, 4}
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
 	}
 }
 

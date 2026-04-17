@@ -189,7 +189,11 @@ func BatchMeasure[T any](measureFn func(T) int, n int) StageOption {
 // n=1 means consecutive dedup: only adjacent duplicates are suppressed.
 // n>1 means the last n items are remembered; an item is re-emitted once it
 // leaves the window.
+// Panics if n < 0.
 func DedupeWindow(n int) StageOption {
+	if n < 0 {
+		panic("kitsune: DedupeWindow requires n >= 0")
+	}
 	return func(cfg *stageConfig) {
 		cfg.dedupeWindow = n
 	}
