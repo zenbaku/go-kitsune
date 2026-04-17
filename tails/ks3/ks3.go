@@ -1,8 +1,9 @@
 // Package ks3 provides S3-compatible object storage source helpers for kitsune pipelines.
 //
-// Users own the S3 client — configure credentials, region, and endpoint yourself.
-// Kitsune will never create or close clients. The same client works with AWS S3,
-// Google Cloud Storage (via the S3-interop API), MinIO, and other S3-compatible stores.
+// The caller owns the S3 client: configure credentials, region, and endpoint
+// yourself. Kitsune will never create or close clients. The same client works
+// with AWS S3, Google Cloud Storage (via the S3-interop API), MinIO, and other
+// S3-compatible stores.
 //
 // List and parse all objects under a prefix:
 //
@@ -18,6 +19,11 @@
 //
 //	pipe := ks3.Lines(client, "my-bucket", "data/large-file.txt")
 //	pipe.ForEach(processLine).Run(ctx)
+//
+// Delivery semantics: read-only sources only (at-most-once; no ack
+// mechanism). Object bodies are downloaded on demand and closed after each
+// parse call. There is no upload sink in this package; for writes, use the
+// AWS SDK directly or kgcs for GCS.
 package ks3
 
 import (

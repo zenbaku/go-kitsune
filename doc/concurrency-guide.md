@@ -140,10 +140,10 @@ valid, invalid := kitsune.Partition(src, func(o Order) bool { return o.Valid })
 
 // Each branch can have its own stage chain, Concurrency, Buffer, and OnError.
 enriched := kitsune.Map(valid, callAPI, kitsune.Concurrency(10))
-validRunner := enriched.ForEach(store).Build()
-invalidRunner := invalid.ForEach(deadLetter).Build()
-
-merged, _ := kitsune.MergeRunners(validRunner, invalidRunner)
+merged, _ := kitsune.MergeRunners(
+    enriched.ForEach(store),
+    invalid.ForEach(deadLetter),
+)
 merged.Run(ctx)
 ```
 
@@ -258,12 +258,11 @@ valid, invalid := kitsune.Partition(src, func(o Order) bool { return o.Valid })
 
 // Valid branch: parallel enrichment + store.
 enriched := kitsune.Map(valid, callAPI, kitsune.Concurrency(4))
-validRunner := enriched.ForEach(store).Build()
 
-// Invalid branch: no enrichment, direct dead-letter.
-invalidRunner := invalid.ForEach(deadLetter).Build()
-
-merged, _ := kitsune.MergeRunners(validRunner, invalidRunner)
+merged, _ := kitsune.MergeRunners(
+    enriched.ForEach(store),
+    invalid.ForEach(deadLetter),
+)
 if err := merged.Run(ctx); err != nil { ... }
 ```
 

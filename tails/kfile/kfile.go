@@ -1,6 +1,23 @@
-// Package kfile provides file, CSV, and JSONL sources and sinks for
-// kitsune pipelines. All functions accept [io.Reader] or [io.Writer] —
-// users own file handles and are responsible for opening/closing them.
+// Package kfile provides file, CSV, and JSONL sources and sinks for kitsune
+// pipelines. All functions accept [io.Reader] or [io.Writer]; the caller owns
+// file handles and is responsible for opening and closing them. Kitsune will
+// never open or close files.
+//
+// Read lines from a file:
+//
+//	f, _ := os.Open("data.txt")
+//	defer f.Close()
+//	kfile.Lines(f).ForEach(process).Run(ctx)
+//
+// Write JSON lines to a file:
+//
+//	out, _ := os.Create("results.jsonl")
+//	defer out.Close()
+//	pipe.ForEach(kfile.WriteJSON[Result](out)).Run(ctx)
+//
+// Delivery semantics: not applicable. kfile wraps local I/O with no broker
+// or ack mechanism. Errors from the underlying reader or writer terminate
+// the pipeline immediately.
 package kfile
 
 import (

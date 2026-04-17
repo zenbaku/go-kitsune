@@ -1,6 +1,6 @@
 // Example: fanout — split a stream and run each branch concurrently.
 //
-// Demonstrates: Partition, ForEachRunner.Build, MergeRunners
+// Demonstrates: Partition, MergeRunners
 package main
 
 import (
@@ -22,23 +22,22 @@ func main() {
 	var mu sync.Mutex
 	var evenResults, oddResults []int
 
-	evenRunner := evens.ForEach(func(_ context.Context, n int) error {
-		mu.Lock()
-		evenResults = append(evenResults, n)
-		mu.Unlock()
-		return nil
-	}).Build()
-
-	oddRunner := odds.ForEach(func(_ context.Context, n int) error {
-		mu.Lock()
-		oddResults = append(oddResults, n)
-		mu.Unlock()
-		return nil
-	}).Build()
-
 	// MergeRunners starts both branches from the same shared source and waits
 	// for both to finish. All branches must complete before Run returns.
-	merged, err := kitsune.MergeRunners(evenRunner, oddRunner)
+	merged, err := kitsune.MergeRunners(
+		evens.ForEach(func(_ context.Context, n int) error {
+			mu.Lock()
+			evenResults = append(evenResults, n)
+			mu.Unlock()
+			return nil
+		}),
+		odds.ForEach(func(_ context.Context, n int) error {
+			mu.Lock()
+			oddResults = append(oddResults, n)
+			mu.Unlock()
+			return nil
+		}),
+	)
 	if err != nil {
 		panic(err)
 	}

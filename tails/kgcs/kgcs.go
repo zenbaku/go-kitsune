@@ -1,7 +1,7 @@
 // Package kgcs provides Google Cloud Storage source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the GCS client — configure credentials yourself and pass the
+// The caller owns the GCS client: configure credentials yourself and pass the
 // result to [NewClient]. Kitsune will never create or close clients.
 //
 // List and parse all objects under a prefix:
@@ -25,6 +25,10 @@
 //	    func(e Event) string { return "events/" + e.ID + ".json" },
 //	    func(e Event, w io.Writer) error { return json.NewEncoder(w).Encode(e) },
 //	)).Run(ctx)
+//
+// Delivery semantics: ListObjects and Lines are read-only sources (at-most-once;
+// no ack mechanism). Upload writes synchronously: the object is finalised when
+// the write function returns without error and the internal writer is closed.
 package kgcs
 
 import (

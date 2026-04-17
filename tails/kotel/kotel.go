@@ -19,12 +19,12 @@
 //	runner.Run(ctx, kitsune.WithHook(hook))
 //
 // The hook records:
-//   - kitsune.stage.items         — Counter{stage, status="ok"|"error"|"skipped"}
-//   - kitsune.stage.duration_ms   — Histogram[ms]{stage}
-//   - kitsune.stage.drops         — Counter{stage}
-//   - kitsune.stage.restarts      — Counter{stage}
-//   - kitsune.pipeline.stages     — UpDownCounter (total stage count)
-//   - kitsune.stage.buffer_length — ObservableGauge{stage, capacity} (items currently buffered)
+//   - kitsune.stage.items: Counter{stage, status="ok"|"error"|"skipped"}
+//   - kitsune.stage.duration_ms: Histogram[ms]{stage}
+//   - kitsune.stage.drops: Counter{stage}
+//   - kitsune.stage.restarts: Counter{stage}
+//   - kitsune.pipeline.stages: UpDownCounter (total stage count)
+//   - kitsune.stage.buffer_length: ObservableGauge{stage, capacity} (items currently buffered)
 //
 // When a tracer is provided via [NewWithTracing], the hook additionally creates
 // one span per stage, named "kitsune.stage.<name>", as a child of the context
@@ -55,7 +55,7 @@ type OTelHook struct {
 
 	// tracing (nil when not configured)
 	tracer trace.Tracer
-	spans  sync.Map // map[string]trace.Span — one span per stage, keyed by name
+	spans  sync.Map // map[string]trace.Span: one span per stage, keyed by name
 }
 
 // New creates an OTelHook using the provided meter.

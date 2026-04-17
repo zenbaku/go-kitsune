@@ -1,9 +1,29 @@
 // Package kredis provides Redis-backed implementations of kitsune's
 // [kitsune.Store], [kitsune.Cache], and [kitsune.DedupSet] interfaces,
-// plus source and sink helpers for Redis lists and streams.
+// plus source and sink helpers for Redis lists.
 //
-// Users own the [redis.Client] lifecycle — create, configure, and close
+// The caller owns the [redis.Client] lifecycle: create, configure, and close
 // it yourself. Kitsune will never open or close connections.
+//
+// State backend (distributed key-value store for MapWithKey):
+//
+//	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+//	defer rdb.Close()
+//	store := kredis.NewStore(rdb, "myapp:")
+//	runner.Run(ctx, kitsune.WithStore(store))
+//
+// List pop source / push sink:
+//
+//	pipe := kredis.FromList(rdb, "myapp:queue")
+//	pipe.ForEach(handle).Run(ctx)
+//
+//	sink := kredis.ListPush(rdb, "myapp:results")
+//	pipe.ForEach(sink).Run(ctx)
+//
+// Delivery semantics: not applicable to Store, Cache, and DedupSet (state
+// backends, not message brokers). FromList pops items from a Redis list
+// (at-most-once; a popped item is not requeued on pipeline crash). ListPush
+// appends synchronously (at-least-once when combined with retries).
 package kredis
 
 import (
@@ -15,7 +35,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Store — state backend
+// Store: state backend
 // ---------------------------------------------------------------------------
 
 type redisStore struct {
@@ -102,7 +122,7 @@ func (s *redisDedupSet) Add(ctx context.Context, key string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Source — read from a Redis list
+// Source: read from a Redis list
 // ---------------------------------------------------------------------------
 
 // FromList creates a Pipeline that pops items from a Redis list (LPOP)
@@ -125,7 +145,7 @@ func FromList(client *redis.Client, key string) *kitsune.Pipeline[string] {
 }
 
 // ---------------------------------------------------------------------------
-// Sink — write to a Redis list
+// Sink: write to a Redis list
 // ---------------------------------------------------------------------------
 
 // ListPush returns a sink function that RPUSHes each item to a Redis list.

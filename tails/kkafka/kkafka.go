@@ -32,6 +32,10 @@
 // messages have been processed or BatchTimeout elapses since the first message
 // in the current batch. Uncommitted messages redeliver on reconnect
 // (at-least-once).
+//
+// Delivery semantics: at-least-once. Consume commits offsets after successful
+// yield; uncommitted messages redeliver on reconnect. Produce writes
+// synchronously per item; the broker confirms receipt before ForEach returns.
 package kkafka
 
 import (
@@ -72,7 +76,7 @@ func BatchTimeout(d time.Duration) ConsumeOption {
 
 // Consume creates a Pipeline that reads messages from a Kafka topic.
 // unmarshal converts each [kafka.Message] into a value of type T.
-// The reader is not closed when the pipeline ends: the caller owns it.
+// The reader is not closed when the pipeline ends; the caller owns it.
 //
 // Delivery semantics: each message is committed individually after it has
 // been successfully yielded downstream. If the downstream closes early
@@ -98,7 +102,7 @@ func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, erro
 	}
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		if !cfg.batching() {
-			// Original per-message commit path — unchanged.
+			// Original per-message commit path: unchanged.
 			for {
 				msg, err := reader.FetchMessage(ctx)
 				if err != nil {
@@ -175,7 +179,7 @@ func Consume[T any](reader *kafka.Reader, unmarshal func(kafka.Message) (T, erro
 // marshal converts the item into a [kafka.Message]. The Message's Topic field
 // may be left empty when the writer has a topic configured.
 // Use with [kitsune.Pipeline.ForEach].
-// The writer is not closed when the pipeline ends — the caller owns it.
+// The writer is not closed when the pipeline ends; the caller owns it.
 func Produce[T any](writer *kafka.Writer, marshal func(T) (kafka.Message, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		msg, err := marshal(item)

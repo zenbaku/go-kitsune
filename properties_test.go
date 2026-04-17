@@ -304,7 +304,7 @@ func TestPropBroadcastCompleteness(t *testing.T) {
 		results := make([][]int, n)
 		var mu sync.Mutex
 
-		runners := make([]*kitsune.Runner, n)
+		runners := make([]kitsune.Runnable, n)
 		for i, b := range branches {
 			i := i
 			runners[i] = b.ForEach(func(_ context.Context, v int) error {
@@ -347,7 +347,7 @@ func TestPropBalanceItemCount(t *testing.T) {
 		results := make([][]int, n)
 		var mu sync.Mutex
 
-		runners := make([]*kitsune.Runner, n)
+		runners := make([]kitsune.Runnable, n)
 		for i, b := range branches {
 			i := i
 			runners[i] = b.ForEach(func(_ context.Context, v int) error {
@@ -398,7 +398,7 @@ func TestPropBalanceRoundRobin(t *testing.T) {
 		counts := make([]int, n)
 		var mu sync.Mutex
 
-		runners := make([]*kitsune.Runner, n)
+		runners := make([]kitsune.Runnable, n)
 		for i, b := range branches {
 			i := i
 			runners[i] = b.ForEach(func(_ context.Context, _ int) error {

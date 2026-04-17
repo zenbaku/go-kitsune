@@ -1,7 +1,30 @@
 // Package ksqlite provides SQLite source and sink helpers for kitsune pipelines.
 //
-// Users own the [sql.DB] lifecycle — create, configure, and close it yourself.
-// Kitsune will never open or close connections.
+// The caller owns the [sql.DB] lifecycle: create, configure, and close it
+// yourself. Kitsune will never open or close connections.
+//
+// Read rows from a query:
+//
+//	db, _ := sql.Open("sqlite", "data.db")
+//	defer db.Close()
+//
+//	pipe := ksqlite.Query(db, "SELECT id, name FROM users WHERE active = ?",
+//	    func(rows *sql.Rows) (User, error) {
+//	        var u User
+//	        return u, rows.Scan(&u.ID, &u.Name)
+//	    }, true)
+//	pipe.ForEach(handle).Run(ctx)
+//
+// Batch insert:
+//
+//	kitsune.Batch(pipe, 100).
+//	    ForEach(ksqlite.BatchInsert(db, "results", []string{"id", "val"},
+//	        func(u User) []any { return []any{u.ID, u.Name} },
+//	    )).Run(ctx)
+//
+// Delivery semantics: Query is a read-only source (at-most-once; no ack
+// mechanism). Insert and BatchInsert write synchronously; each call is
+// committed before returning (at-least-once when combined with retries).
 package ksqlite
 
 import (
@@ -15,7 +38,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Source — read rows from a query
+// Source: read rows from a query
 // ---------------------------------------------------------------------------
 
 // Query creates a Pipeline that executes the given SQL query and emits one
@@ -47,7 +70,7 @@ func Query[T any](db *sql.DB, query string, scan func(*sql.Rows) (T, error), arg
 }
 
 // ---------------------------------------------------------------------------
-// Sink — insert rows
+// Sink: insert rows
 // ---------------------------------------------------------------------------
 
 // Insert returns a sink function that inserts each item into the given table.

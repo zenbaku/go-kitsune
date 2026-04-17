@@ -217,7 +217,7 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
         handle := processed.ForEach(func(_ context.Context, s string) error {
             received = append(received, s)
             return nil
-        }).Build().RunAsync(ctx)
+        }).RunAsync(ctx)
 
         for i := 1; i <= 5; i++ {
             src.Send(ctx, i) //nolint
@@ -258,10 +258,10 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
         }, kitsune.WithName("map"))
 
         var out []string
-        runner := pipeline.ForEach(func(_ context.Context, s string) error {
+        r := pipeline.ForEach(func(_ context.Context, s string) error {
             out = append(out, s)
             return nil
-        }).Build()
+        })
 
         go func() {
             time.Sleep(30 * time.Millisecond)
@@ -272,7 +272,7 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
             fmt.Println("gate resumed")
         }()
 
-        if err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+        if err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
             panic(err)
         }
         fmt.Printf("total: %d items\n", len(out))
@@ -287,7 +287,7 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
 
 Split a stream into two typed branches and run them concurrently.
 
-**Demonstrates:** `Partition`, `ForEachRunner.Build`, `MergeRunners`
+**Demonstrates:** `Partition`, `MergeRunners`
 
 [:material-play: Run in Playground](https://go.dev/play/p/vSSkaKIyre3){ .md-button .md-button--primary }
 [:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/fanout/main.go){ .md-button }
@@ -297,7 +297,7 @@ Split a stream into two typed branches and run them concurrently.
     ```go
     // Example: fanout — split a stream and run each branch concurrently.
     //
-    // Demonstrates: Partition, ForEachRunner.Build, MergeRunners
+    // Demonstrates: Partition, MergeRunners
     package main
 
     import (
@@ -319,23 +319,22 @@ Split a stream into two typed branches and run them concurrently.
         var mu sync.Mutex
         var evenResults, oddResults []int
 
-        evenRunner := evens.ForEach(func(_ context.Context, n int) error {
-            mu.Lock()
-            evenResults = append(evenResults, n)
-            mu.Unlock()
-            return nil
-        }).Build()
-
-        oddRunner := odds.ForEach(func(_ context.Context, n int) error {
-            mu.Lock()
-            oddResults = append(oddResults, n)
-            mu.Unlock()
-            return nil
-        }).Build()
-
         // MergeRunners starts both branches from the same shared source and waits
         // for both to finish. All branches must complete before Run returns.
-        merged, err := kitsune.MergeRunners(evenRunner, oddRunner)
+        merged, err := kitsune.MergeRunners(
+            evens.ForEach(func(_ context.Context, n int) error {
+                mu.Lock()
+                evenResults = append(evenResults, n)
+                mu.Unlock()
+                return nil
+            }),
+            odds.ForEach(func(_ context.Context, n int) error {
+                mu.Lock()
+                oddResults = append(oddResults, n)
+                mu.Unlock()
+                return nil
+            }),
+        )
         if err != nil {
             panic(err)
         }
@@ -387,7 +386,7 @@ Fan a single stream out to N independent consumers; each sees every item.
         var mu sync.Mutex
         counts := make([]int, 3)
 
-        runners := make([]*kitsune.Runner, 3)
+        runners := make([]kitsune.Runnable, 3)
         for i, branch := range branches {
             i, branch := i, branch
             runners[i] = branch.ForEach(func(_ context.Context, s string) error {
@@ -395,7 +394,7 @@ Fan a single stream out to N independent consumers; each sees every item.
                 counts[i]++
                 mu.Unlock()
                 return nil
-            }).Build()
+            })
         }
 
         merged, err := kitsune.MergeRunners(runners...)
@@ -470,7 +469,7 @@ Multicast a stream to a dynamically-built subscriber list — consumers register
             auditLog = append(auditLog, fmt.Sprintf("order #%d: $%.2f", o.ID, o.Amount))
             mu.Unlock()
             return nil
-        }).Build()
+        })
 
         var totalRevenue atomic.Value
         totalRevenue.Store(0.0)
@@ -484,7 +483,7 @@ Multicast a stream to a dynamically-built subscriber list — consumers register
                 }
             }
             return nil
-        }).Build()
+        })
 
         var flagged atomic.Int64
         fraudRunner := fraud.ForEach(func(_ context.Context, o OrderEvent) error {
@@ -493,7 +492,7 @@ Multicast a stream to a dynamically-built subscriber list — consumers register
                 fmt.Printf("fraud alert: order #%d amount $%.2f\n", o.ID, o.Amount)
             }
             return nil
-        }).Build()
+        })
 
         merged, _ := kitsune.MergeRunners(auditRunner, metricsRunner, fraudRunner)
         merged.Run(ctx)
@@ -1087,7 +1086,7 @@ Create a push-based source with `NewChannel`. External producers call `Send` whi
         handle := doubled.ForEach(func(_ context.Context, n int) error {
             mu.Lock(); results = append(results, n); mu.Unlock()
             return nil
-        }).Build().RunAsync(ctx)
+        }).RunAsync(ctx)
 
         for i := 1; i <= 10; i++ {
             if err := src.Send(ctx, i); err != nil {

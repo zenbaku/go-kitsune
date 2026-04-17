@@ -1,7 +1,36 @@
 // Package khttp provides HTTP source and sink helpers for kitsune pipelines.
 //
-// Users own the [http.Client] — configure timeouts, transport, and
+// The caller owns the [http.Client]: configure timeouts, transport, and
 // authentication yourself. Kitsune will never create or close clients.
+//
+// Paginated GET source:
+//
+//	pipe := khttp.GetPages(http.DefaultClient, "https://api.example.com/items?page=1",
+//	    func(resp *http.Response) ([]Item, string, error) {
+//	        var page struct {
+//	            Items   []Item `json:"items"`
+//	            NextURL string `json:"next_url"`
+//	        }
+//	        json.NewDecoder(resp.Body).Decode(&page)
+//	        return page.Items, page.NextURL, nil
+//	    },
+//	)
+//	pipe.ForEach(handle).Run(ctx)
+//
+// POST sink:
+//
+//	pipe.ForEach(khttp.Post(http.DefaultClient, "https://api.example.com/ingest",
+//	    "application/json",
+//	    func(item Item) (io.Reader, error) {
+//	        b, err := json.Marshal(item)
+//	        return bytes.NewReader(b), err
+//	    },
+//	)).Run(ctx)
+//
+// Delivery semantics: GetPages is a read source with no ack mechanism
+// (at-most-once). Post writes synchronously per item; a 4xx or 5xx response
+// terminates the pipeline with an [HTTPError]. There is no built-in retry:
+// combine with [kitsune.Retry] for resilient sinks.
 package khttp
 
 import (

@@ -23,7 +23,7 @@ func main() {
 	var mu sync.Mutex
 	counts := make([]int, 3)
 
-	runners := make([]*kitsune.Runner, 3)
+	runners := make([]kitsune.Runnable, 3)
 	for i, branch := range branches {
 		i, branch := i, branch
 		runners[i] = branch.ForEach(func(_ context.Context, s string) error {
@@ -31,7 +31,7 @@ func main() {
 			counts[i]++
 			mu.Unlock()
 			return nil
-		}).Build()
+		})
 	}
 
 	merged, err := kitsune.MergeRunners(runners...)

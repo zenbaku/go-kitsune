@@ -1,537 +1,136 @@
-# Tails Guide
+# Tail Interface Contract
 
-Tails are optional packages that connect Kitsune pipelines to external systems. Each tail is a separate Go module: you only import and pay for the dependencies you use.
+This document defines the conventions that all tail packages in `tails/` must follow. It serves as the template for new tails and the audit baseline for existing ones.
 
-## The user-managed connections principle
+---
 
-Every tail follows the same rule: **you create, configure, and close clients; Kitsune never opens or closes connections.** This gives you full control over connection pooling, TLS, retries, and lifecycle, and none of that is hidden inside the library.
+## Overview
 
-```go
-// You own the Kafka reader
-reader := kafka.NewReader(kafka.ReaderConfig{
-    Brokers: []string{"localhost:9092"},
-    Topic:   "events",
-    GroupID: "my-group",
-})
-defer reader.Close()
+A tail is an adapter that bridges kitsune pipelines to an external system: a message broker, database, HTTP server, object store, file format, or observability backend. Tails live in `tails/<kname>` as independent Go modules and are versioned separately from the core library. You only import the tails you use; each brings its own dependency graph.
 
-// You pass it to the tail function — Kitsune wraps it in a pipeline
-pipe := kkafka.Consume(reader, unmarshal)
-```
+---
 
-## Three shapes
+## Naming
 
-Every tail is one of three shapes:
+**Primary verbs** for new tails:
 
-| Shape | What it is | Example |
+- `Consume(client, target, unmarshal, opts...)` returns `*Pipeline[T]` (stream from an external system into the pipeline).
+- `Produce(client, target, marshal, opts...)` returns `func(context.Context, T) error` for use with `ForEach` (consume pipeline items and write them out).
+
+**Domain-idiomatic alternatives** accepted when standard in the ecosystem:
+
+| Verb | Equivalent | Used by |
 |---|---|---|
-| **Source** | Returns `*Pipeline[T]` | `kkafka.Consume`, `kpostgres.Listen`, `ks3.ListObjects` |
-| **Sink** | Returns a `func(ctx, T) error` for use with `ForEach` | `kkafka.Produce`, `kpostgres.Insert`, `ks3.Upload` |
-| **Hook** | Implements `kitsune.Hook` for use with `WithHook` | `kotel.New`, `kprometheus.New`, `kdatadog.New` |
+| `Subscribe` | Consume | knats (core), kmqtt, kredis pub/sub, kpubsub |
+| `Receive` | Consume | kazsb, ksqs |
+| `Listen` | Consume | kpostgres (LISTEN/NOTIFY) |
+| `Watch` | Consume | kmongo (change streams), kjetstream (KV watch) |
+| `Fetch` | Consume | kjetstream (pull consumers) |
+| `Read` | Consume | kwebsocket |
+| `Find`, `Query`, `Search`, `Scan` | Consume | kmongo, kdynamo, kclickhouse, kes, ksqlite, ks3 |
+| `Publish` | Produce | knats, kmqtt, kpubsub, kamqp |
+| `Send` | Produce | kazsb, ksqs, kgrpc |
+| `Insert`, `InsertMany`, `CopyFrom`, `BatchWrite` | Produce | kpostgres, kmongo, kclickhouse, kdynamo |
+| `WriteLines`, `WriteCSV`, `WriteJSON` | Produce | kfile |
+| `Upload` | Produce | kgcs |
+| `Lines`, `CSV`, `JSON` | Consume | kfile, kgcs, ks3 |
+| `Write` | Produce | kwebsocket |
+| `GetPages` | Consume | khttp |
+| `Post` | Produce | khttp |
 
-Some tails (like `kredis`) provide multiple shapes, a source, a sink, and a `Store`/`Cache` backend.
-
----
-
-## At a glance
-
-<div class="grid cards" markdown>
-
-- :material-message-processing-outline: **[Messaging](#messaging)**: Kafka, NATS, RabbitMQ, Pulsar, MQTT
-- :material-cloud-outline: **[Cloud](#cloud)**: Pub/Sub, SQS, Kinesis, DynamoDB
-- :material-database-outline: **[Databases](#databases)**: Postgres, MongoDB, ClickHouse, SQLite, Elasticsearch, Redis
-- :material-file-document-outline: **[Files & HTTP](#files-http)**: kfile, khttp, S3, WebSocket, gRPC
-- :material-chart-line: **[Observability](#observability)**: OpenTelemetry, Prometheus, Datadog
-
-</div>
-
----
-
-## :material-message-processing-outline: Messaging { #messaging }
-
-### kkafka: Apache Kafka
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kkafka
-```
-
-**Source**: consume messages from a topic:
-
-```go
-reader := kafka.NewReader(kafka.ReaderConfig{
-    Brokers: []string{"localhost:9092"},
-    Topic:   "events",
-    GroupID: "my-group",
-})
-defer reader.Close()
-
-pipe := kkafka.Consume(reader, func(m kafka.Message) (Event, error) {
-    var e Event
-    return e, json.Unmarshal(m.Value, &e)
-})
-pipe.ForEach(handle).Run(ctx)
-```
-
-**Sink**: produce messages to a topic:
-
-```go
-writer := kafka.NewWriter(kafka.WriterConfig{
-    Brokers: []string{"localhost:9092"},
-    Topic:   "results",
-})
-defer writer.Close()
-
-sink := kkafka.Produce(writer, func(r Result) (kafka.Message, error) {
-    b, err := json.Marshal(r)
-    return kafka.Message{Value: b}, err
-})
-pipe.ForEach(sink).Run(ctx)
-```
-
-**Delivery semantics**: `Consume` commits each message individually after it has been
-successfully yielded downstream (at-least-once). If the downstream closes early — for
-example because a `Take` or `TakeWhile` boundary is reached — the last fetched message
-is not committed. On reconnect the reader redelivers that message. Duplicate handling
-in the consumer is required for exactly-once processing.
-
-**Batch commits** (high-throughput consumers):
-
-Reduce broker round-trips by committing offsets in groups:
-
-```go
-pipe := kkafka.Consume(reader, unmarshal,
-    kkafka.BatchSize(200),
-    kkafka.BatchTimeout(500*time.Millisecond),
-)
-```
-
-Messages are still yielded one at a time. `BatchSize` controls how many are
-accumulated before a single `CommitMessages` call; `BatchTimeout` flushes any
-partial batch after the given duration. Both options can be combined; whichever
-fires first triggers the commit. Uncommitted messages at pipeline exit redeliver
-on reconnect (at-least-once).
-
-See [`examples/` in the kkafka module](../tails/kkafka/) for a complete example.
+**State-backend constructors** (`NewStore`, `NewCache`, `NewDedupSet`) follow the core interface conventions and are not source/sink verbs.
 
 ---
 
-### knats: NATS
+## Parameter order
 
-```
-go get github.com/zenbaku/go-kitsune/tails/knats
-```
+**Read sources:** `(client/conn, target, unmarshal, opts...)`
 
-Provides NATS core subscribe/publish sources and sinks, and JetStream consume/publish variants.
+The "target" is the topic, subject, channel, table, collection, bucket, or URL. When the client already binds a target (e.g. `kafka.Reader` has a configured topic, gRPC stream is already open), omit the target argument.
 
----
+**Write sinks:** `(client/conn, target, marshal, opts...)`
 
-### kamqp: RabbitMQ / AMQP 0-9-1
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kamqp
-```
-
-**Source**: consume messages from a queue (manual ack, at-least-once):
-
-```go
-conn, _ := amqp091.Dial("amqp://guest:guest@localhost:5672/")
-defer conn.Close()
-ch, _ := conn.Channel()
-defer ch.Close()
-_ = ch.Qos(32, 0, false) // prefetch
-
-pipe := kamqp.Consume(ch, "events", func(d *amqp091.Delivery) (Event, error) {
-    var e Event
-    return e, json.Unmarshal(d.Body, &e)
-})
-pipe.ForEach(handle).Run(ctx)
-```
-
-Each delivery is acked after a successful downstream yield. On unmarshal failure the delivery is nacked (requeue=true by default) and the pipeline terminates. Use `kamqp.WithAutoAck()` to delegate acknowledgement to the broker, or `kamqp.WithRequeueOnNack(false)` to dead-letter failed messages.
-
-**Sink**: publish to an exchange with a routing key:
-
-```go
-sink := kamqp.Publish(ch, "events.exchange", "events.created",
-    func(e Event) (amqp091.Publishing, error) {
-        b, err := json.Marshal(e)
-        return amqp091.Publishing{
-            ContentType:  "application/json",
-            DeliveryMode: amqp091.Persistent,
-            Body:         b,
-        }, err
-    })
-pipe.ForEach(sink).Run(ctx)
-```
-
-To publish directly to a queue (default exchange), pass `exchange=""` and `routingKey=queueName`.
+Same rule: drop target when the client binds it.
 
 ---
 
-### kpulsar: Apache Pulsar
+## Connection lifecycle
 
-```
-go get github.com/zenbaku/go-kitsune/tails/kpulsar
-```
+Tails never create, open, or close connections, pools, readers, writers, or subscriptions. The caller constructs these objects, passes them in, and is responsible for closing them.
 
-Consumer source and producer sink. You own the `pulsar.Client`.
+Every tail's package godoc must state this explicitly. The canonical phrasing is:
 
----
+> The caller owns the [ClientType]: configure [credentials/settings] yourself. Kitsune will never create or close [connections/clients].
 
-### kmqtt: MQTT
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kmqtt
-```
-
-Subscribe source and publish sink. You own the `mqtt.Client`.
+Individual function godocs use: "The [conn/client/stream] is not closed when the pipeline ends; the caller owns it."
 
 ---
 
-## :material-cloud-outline: Cloud { #cloud }
+## Error propagation
 
-### kpubsub: Google Cloud Pub/Sub
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kpubsub
-```
-
-Pub/Sub subscribe source and publish sink. You own the `*pubsub.Client`.
+- Unmarshal/marshal errors terminate the pipeline with that error (fail-fast on malformed data).
+- Connection/broker errors terminate the pipeline.
+- Errors from user-supplied transform functions are governed by `OnError` on the consuming stage (`Map`, `ForEach`, etc.), not by the tail itself.
 
 ---
 
-### ksqs: AWS SQS
+## Delivery semantics
 
-```
-go get github.com/zenbaku/go-kitsune/tails/ksqs
-```
+Every tail must declare in its package godoc one of the following:
 
-Provides a receive source, a send sink, and a batch send sink. You own the `*sqs.Client`.
+**At-least-once:** items may redeliver on reconnect or pipeline restart. This is the default for message brokers that support acks (Kafka after commit, NATS JetStream after ack, SQS after delete, AMQP after ack, Pulsar after ack, Pub/Sub after Ack).
 
----
+**At-most-once:** items may be lost on pipeline crash (no ack mechanism; e.g. NATS core, MQTT, Redis pub/sub, WebSocket, PostgreSQL LISTEN/NOTIFY).
 
-### kkinesis: AWS Kinesis
+**Exactly-once-effective:** achievable only with idempotent sinks or external deduplication. Document where this applies (e.g. using `Distinct`/`Dedupe` with `kredis.NewDedupSet`).
 
-```
-go get github.com/zenbaku/go-kitsune/tails/kkinesis
-```
+For sinks, document whether the sink acks synchronously (ForEach returns only after the item is confirmed by the remote) or asynchronously (e.g. `kjetstream.PublishAsync` batches futures; the caller must call `flush` after `Run`).
 
-Shard consumer source and PutRecords batch sink. You own the `*kinesis.Client`.
+Delivery semantics do not apply to:
+- Hook tails (`kdatadog`, `kotel`, `kprometheus`): these implement `hooks.Hook` and record metrics; they are not source/sink adapters.
+- State backends (`kredis.NewStore`, `NewCache`, `NewDedupSet`): these are not message-passing constructs.
 
 ---
 
-### kdynamo: AWS DynamoDB
+## Package godoc template
 
-```
-go get github.com/zenbaku/go-kitsune/tails/kdynamo
-```
+Every tail's package comment (top of the main `.go` file) must include:
 
-Scan and Query sources, BatchWriteItem sink. You own the `*dynamodb.Client`.
-
----
-
-## :material-database-outline: Databases { #databases }
-
-### kpostgres: PostgreSQL
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kpostgres
-```
-
-**Source**: LISTEN/NOTIFY for event-driven pipelines:
-
-```go
-conn, _ := pgx.Connect(ctx, os.Getenv("DATABASE_URL"))
-defer conn.Close(ctx)
-
-pipe := kpostgres.Listen[Event](conn, "events", func(payload string) (Event, error) {
-    var e Event
-    return e, json.Unmarshal([]byte(payload), &e)
-})
-pipe.ForEach(handle).Run(ctx)
-```
-
-**Sink**: bulk insert via COPY (high throughput):
-
-```go
-pool, _ := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
-defer pool.Close()
-
-sink := kpostgres.CopyFrom[Row](pool, "my_table",
-    []string{"id", "name", "value"},
-    func(r Row) []any { return []any{r.ID, r.Name, r.Value} },
-)
-kitsune.Batch(pipe, 500).ForEach(sink).Run(ctx)
-```
-
-**Sink**: single-row insert:
-
-```go
-sink := kpostgres.Insert[Row](pool,
-    "INSERT INTO my_table (id, name) VALUES ($1, $2)",
-    func(r Row) []any { return []any{r.ID, r.Name} },
-)
-pipe.ForEach(sink).Run(ctx)
-```
+1. One-sentence description.
+2. Caller-owns-connection statement.
+3. Minimal worked example block (source and sink if both exist).
+4. Delivery semantics declaration (or a note that it does not apply).
 
 ---
 
-### kmongo: MongoDB
+## Tail matrix
 
-```
-go get github.com/zenbaku/go-kitsune/tails/kmongo
-```
-
-Find and Watch sources, InsertMany batch sink. You own the `*mongo.Client`.
-
----
-
-### kclickhouse: ClickHouse
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kclickhouse
-```
-
-Query source and native-protocol batch Insert sink. You own the `driver.Conn`.
-
----
-
-### ksqlite: SQLite
-
-```
-go get github.com/zenbaku/go-kitsune/tails/ksqlite
-```
-
-Query source and insert/batch-insert sinks. You own the `*sql.DB`. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete SQLite example.
-
----
-
-### kes: Elasticsearch
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kes
-```
-
-Scrolling Search source and Bulk index sink. You own the `*elasticsearch.Client`.
-
----
-
-### kredis: Redis
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kredis
-```
-
-`kredis` is the most feature-rich tail: it provides four distinct capabilities:
-
-**Store backend**: distributed state across pipeline runs:
-
-```go
-rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-store := kredis.NewStore(rdb, "myapp:")
-runner.Run(ctx, kitsune.WithStore(store))
-```
-
-**Cache backend**: shared LRU cache for `CacheBy`:
-
-```go
-cache := kredis.NewCache(rdb, "myapp:cache:", 5*time.Minute)
-runner.Run(ctx, kitsune.WithCache(cache, 5*time.Minute))
-```
-
-**DedupSet**: distributed deduplication for long-running pipelines:
-
-`MemoryDedupSet` (the default) accumulates every seen key in a `map[string]struct{}`. For long-running pipelines this grows without bound. `kredis.NewDedupSet` stores keys in a Redis Set, bounding memory to your Redis instance.
-
-```go
-// Drop-in replacement: switch MemoryDedupSet → Redis for production.
-dedup := kredis.NewDedupSet(rdb, "myapp:seen:")
-enriched := kitsune.Dedupe(events, kitsune.WithDedupSet(dedup))
-// Or via the Pipeline method form:
-//   p.Dedupe(kitsune.WithDedupSet(dedup))
-```
-
-The `DedupSet` interface has two methods, `Contains` and `Add`, called in sequence per item. This means two Redis round-trips per item and a theoretical race window (another process could add the same key between the two calls). In practice this is harmless for dedup: a duplicate that slips through is equivalent to the check arriving slightly later. If you need strictly atomic check-and-add, implement `DedupSet` using a Lua script or `SADD`'s return value (which is `0` when the member already exists):
-
-```go
-// Atomic single-call implementation using SADD return value.
-func (s *redisDedupSet) Contains(ctx context.Context, key string) (bool, error) {
-    n, err := s.client.SAdd(ctx, s.redisKey, key).Result()
-    return n == 0, err // 0 means already present
-}
-func (s *redisDedupSet) Add(ctx context.Context, key string) error {
-    return nil // already added by Contains
-}
-```
-
-For probabilistic dedup with bounded memory (useful when approximate correctness is acceptable and the key space is huge), a Bloom filter backend implementing `DedupSet` is a natural extension, and no built-in implementation is provided yet.
-
-**Source / sink**: Redis list-based queues:
-
-```go
-// List pop source (BLPOP)
-pipe := kredis.ListSource[Event](rdb, "myapp:queue", unmarshal)
-
-// List push sink (RPUSH)
-sink := kredis.ListSink[Result](rdb, "myapp:results", marshal)
-```
-
-See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete Redis example covering all four capabilities.
-
----
-
-## :material-file-document-outline: Files & HTTP { #files-http }
-
-### kfile: Local files (CSV, JSONL, raw)
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kfile
-```
-
-Zero external dependencies. Sources for CSV rows and JSONL records; sinks for CSV, JSONL, and raw line output. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete file example.
-
----
-
-### khttp: HTTP pagination source and webhook sink
-
-```
-go get github.com/zenbaku/go-kitsune/tails/khttp
-```
-
-Paginated GET source that follows cursor-based, offset-based, or link-header pagination. POST/webhook sink. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete HTTP example.
-
----
-
-### ks3: S3-compatible object storage
-
-```
-go get github.com/zenbaku/go-kitsune/tails/ks3
-```
-
-Works with AWS S3, Google Cloud Storage (via S3-interop API), MinIO, and any other S3-compatible store.
-
-**Source**: list and parse all objects under a prefix:
-
-```go
-cfg, _ := config.LoadDefaultConfig(ctx)
-client := s3.NewFromConfig(cfg)
-
-pipe := ks3.ListObjects(client, "my-bucket", "data/2024/", func(key string, body io.Reader) (Event, error) {
-    return parseNDJSON(body)
-})
-pipe.ForEach(handle).Run(ctx)
-```
-
-**Source**: stream lines from a single object:
-
-```go
-pipe := ks3.Lines(client, "my-bucket", "data/large-file.txt")
-pipe.ForEach(processLine).Run(ctx)
-```
-
----
-
-### kwebsocket: WebSocket
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kwebsocket
-```
-
-Frame read source and write sink. Uses `nhooyr.io/websocket`. See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete in-process server/client example.
-
----
-
-### kgrpc: gRPC
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kgrpc
-```
-
-Server-streaming source and client-streaming sink. You own the gRPC connection.
-
----
-
-## :material-chart-line: Observability { #observability }
-
-Observability tails implement `kitsune.Hook` (and optional extensions like `OverflowHook`, `SupervisionHook`, `BufferHook`). Pass them to `kitsune.WithHook`:
-
-```go
-runner.Run(ctx, kitsune.WithHook(hook))
-```
-
-### kotel: OpenTelemetry
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kotel
-```
-
-Records per-stage metrics using any OTel-compatible backend. Instruments emitted:
-
-| Metric | Type | Description |
+| Package | Exported sources / sinks / backends | Delivery semantics |
 |---|---|---|
-| `kitsune.stage.items` | Counter | Items processed; labeled `stage`, `status=ok\|error\|skipped` |
-| `kitsune.stage.duration_ms` | Histogram | Processing time per item in milliseconds |
-| `kitsune.stage.drops` | Counter | Items dropped by overflow strategies |
-| `kitsune.stage.restarts` | Counter | Stage restart events from supervision |
-| `kitsune.pipeline.stages` | UpDownCounter | Total number of stages in the pipeline |
-| `kitsune.stage.buffer_length` | ObservableGauge | Live channel fill level; labeled `stage`, `capacity` |
-
-```go
-meter := otel.Meter("my-app")
-hook  := kotel.New(meter)
-runner.Run(ctx, kitsune.WithHook(hook))
-```
-
----
-
-### kprometheus: Prometheus
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kprometheus
-```
-
-Counters and histograms per stage, registered against any `prometheus.Registerer`.
-
-| Metric | Type | Description |
-|---|---|---|
-| `<ns>_stage_items_total` | CounterVec | Items processed; labeled `stage`, `status` |
-| `<ns>_stage_duration_seconds` | HistogramVec | Processing time per item |
-| `<ns>_stage_drops_total` | CounterVec | Items dropped by overflow |
-| `<ns>_stage_restarts_total` | CounterVec | Stage restarts from supervision |
-
-```go
-reg  := prometheus.NewRegistry()
-hook := kprometheus.New(reg, "myapp") // "myapp" is the metric namespace
-runner.Run(ctx, kitsune.WithHook(hook))
-```
-
-See the [examples directory](https://github.com/zenbaku/go-kitsune/tree/main/examples) for a complete example with an HTTP exposition endpoint.
-
----
-
-### kdatadog: Datadog DogStatsD
-
-```
-go get github.com/zenbaku/go-kitsune/tails/kdatadog
-```
-
-Counts and distributions per stage, sent via DogStatsD. You own the `*statsd.Client`.
-
----
-
-## Choosing a tail
-
-| Need | Tail |
-|---|---|
-| High-throughput event streaming | `kkafka` |
-| Lightweight pub/sub | `knats` |
-| GCP managed messaging | `kpubsub` |
-| AWS managed messaging | `ksqs` |
-| Database change events | `kpostgres` (LISTEN/NOTIFY) or `kmongo` (Watch) |
-| Bulk database writes | `kpostgres` (COPY), `ksqlite`, `kmongo`, `kclickhouse` |
-| Distributed state / cache / dedup | `kredis` |
-| Object storage ingestion | `ks3` |
-| Local file processing | `kfile` |
-| Observability (OTel ecosystem) | `kotel` |
-| Observability (Prometheus) | `kprometheus` |
-| Observability (Datadog) | `kdatadog` |
+| kamqp | `Consume` (source), `Publish` (sink) | At-least-once (manual ack); `WithAutoAck` makes source at-most-once |
+| kazeh | `Consume` (source), `Produce` / `ProduceBatch` (sinks) | At-least-once (offset-based; no consumer ack API) |
+| kazsb | `Receive` (source), `Send` (sink) | At-least-once (CompleteMessage after yield; lock expiry redelivers) |
+| kclickhouse | `Query` (source), `Insert` (batch sink) | Source: at-most-once. Sink: synchronous batch commit |
+| kdatadog | `New` (hook) | N/A: observability hook, not a message broker adapter |
+| kdynamo | `Scan`, `Query` (sources), `BatchWrite` (batch sink) | Sources: at-most-once. Sink: at-least-once with retry |
+| kes | `Search` (source), `Bulk` (batch sink) | Source: at-most-once (scroll). Sink: synchronous per batch |
+| kfile | `Lines`, `CSV`, `JSON` (sources), `WriteLines`, `WriteCSV`, `WriteJSON` (sinks) | N/A: local I/O, no ack mechanism |
+| kgcs | `ListObjects`, `Lines` (sources), `Upload` (sink) | Sources: at-most-once. Sink: synchronous object finalisation |
+| kgrpc | `Recv` (source), `Send` (sink) | At-most-once (transport layer only; no application ack) |
+| khttp | `GetPages` (source), `Post` (sink) | Source: at-most-once. Sink: synchronous; 4xx/5xx terminates pipeline |
+| kjetstream | `Fetch`, `FetchBytes`, `OrderedConsume`, `WatchKV` (sources), `PublishAsync`, `PutKV` (sinks) | Fetch/FetchBytes: at-least-once. OrderedConsume/WatchKV: at-most-once. PublishAsync: at-least-once after flush |
+| kkafka | `Consume` (source), `Produce` (sink) | At-least-once (per-message or batched commit) |
+| kkinesis | `Consume` (source), `Produce` (batch sink) | Source: at-most-once (no ack). Sink: at-least-once (partial failure returned as error) |
+| kmongo | `Find`, `Watch` (sources), `InsertMany` (batch sink) | Find: at-most-once. Watch: at-most-once (no auto-resume). Sink: synchronous batch |
+| kmqtt | `Subscribe` (source), `Publish` (sink) | At-most-once (QoS 0 may lose; QoS 1/2 broker-level only) |
+| knats | `Subscribe` (source, core), `Consume` (source, JetStream), `Publish`, `JetStreamPublish` (sinks) | Subscribe: at-most-once. Consume: at-least-once. JetStreamPublish: synchronous with server ack |
+| kotel | `New`, `NewWithTracing` (hooks) | N/A: observability hook |
+| kpostgres | `Listen` (source), `Insert` (sink), `CopyFrom` (batch sink) | Listen: at-most-once. Sinks: synchronous; CopyFrom is all-or-nothing per batch |
+| kprometheus | `New` (hook) | N/A: observability hook |
+| kpubsub | `Subscribe` (source), `Publish` (sink) | At-least-once (Ack after yield; Nack on unmarshal failure) |
+| kpulsar | `Consume` (source), `Produce` (sink) | At-least-once (Ack after yield; Nack on unmarshal failure) |
+| kredis | `NewStore`, `NewCache`, `NewDedupSet` (state backends), `FromList` (source), `ListPush` (sink) | Backends: N/A. Source: at-most-once (LPOP). Sink: synchronous RPUSH |
+| ks3 | `ListObjects`, `Lines` (sources) | At-most-once (read-only; no ack or upload) |
+| ksqlite | `Query` (source), `Insert`, `BatchInsert` (sinks) | Source: at-most-once. Sinks: synchronous; each call committed before return |
+| ksqs | `Receive` (source), `Send`, `SendBatch` (sinks) | At-least-once (DeleteMessage after yield; visibility timeout redelivers on crash) |
+| kwebsocket | `Read` (source), `Write` (sink) | At-most-once (streaming transport; no application ack) |

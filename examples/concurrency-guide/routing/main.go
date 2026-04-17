@@ -70,25 +70,23 @@ func main() {
 		kitsune.Buffer(16),     // absorb bursts from the splitter
 		kitsune.WithName("enrich"),
 	)
-	validRunner := enriched.ForEach(func(_ context.Context, o Order) error {
-		mu.Lock()
-		processed = append(processed, o.ID)
-		mu.Unlock()
-		return nil
-	}, kitsune.WithName("store")).Build()
-
-	// Invalid branch: log and route to dead-letter. No enrichment, no concurrency.
-	invalidRunner := invalid.ForEach(func(_ context.Context, o Order) error {
-		mu.Lock()
-		deadLettered = append(deadLettered, o.ID)
-		mu.Unlock()
-		return nil
-	}, kitsune.WithName("dead-letter")).Build()
-
 	// MergeRunners starts both branches from the shared source and waits for
 	// both to finish. Forgetting to consume one branch stalls the other via
 	// backpressure — MergeRunners prevents that mistake.
-	merged, err := kitsune.MergeRunners(validRunner, invalidRunner)
+	merged, err := kitsune.MergeRunners(
+		enriched.ForEach(func(_ context.Context, o Order) error {
+			mu.Lock()
+			processed = append(processed, o.ID)
+			mu.Unlock()
+			return nil
+		}, kitsune.WithName("store")),
+		invalid.ForEach(func(_ context.Context, o Order) error {
+			mu.Lock()
+			deadLettered = append(deadLettered, o.ID)
+			mu.Unlock()
+			return nil
+		}, kitsune.WithName("dead-letter")),
+	)
 	if err != nil {
 		panic(err)
 	}

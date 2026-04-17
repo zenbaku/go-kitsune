@@ -13,10 +13,10 @@
 //	runner.Run(ctx, kitsune.WithHook(hook))
 //
 // The hook records:
-//   - stage.items_total    — Count{stage, status="ok"|"error"|"skipped"}
-//   - stage.duration_ms    — Distribution{stage} (milliseconds)
-//   - stage.drops_total    — Count{stage}
-//   - stage.restarts_total — Count{stage}
+//   - stage.items_total: Count{stage, status="ok"|"error"|"skipped"}
+//   - stage.duration_ms: Distribution{stage} (milliseconds)
+//   - stage.drops_total: Count{stage}
+//   - stage.restarts_total: Count{stage}
 package kdatadog
 
 import (
@@ -41,7 +41,7 @@ var (
 )
 
 // New creates a DatadogHook that sends metrics via client. The client is not
-// closed when the pipeline ends — the caller owns it.
+// closed when the pipeline ends; the caller owns it.
 func New(client *statsd.Client) *DatadogHook {
 	return &DatadogHook{client: client}
 }

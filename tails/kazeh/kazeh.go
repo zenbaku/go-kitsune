@@ -1,7 +1,7 @@
 // Package kazeh provides Azure Event Hubs source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the Event Hubs clients — configure the connection string or
+// The caller owns all Event Hubs clients: configure the connection string or
 // credential yourself and pass the partition/producer client to the pipeline
 // functions. Kitsune will never create or close clients.
 //
@@ -32,6 +32,11 @@
 // Publish events in batches (respects 1 MB limit automatically):
 //
 //	kitsune.Batch(pipe, 100).ForEach(kazeh.ProduceBatch(producerClient, marshal)).Run(ctx)
+//
+// Delivery semantics: at-least-once. Azure Event Hubs does not have
+// consumer-side acks; the partition client tracks the offset and redelivers
+// from the last checkpoint on reconnect. Use offset checkpointing in your
+// consumer configuration to control redelivery scope.
 package kazeh
 
 import (
@@ -57,7 +62,7 @@ type PartitionClient interface {
 // For multi-partition consumption, run one Consume pipeline per partition and
 // combine them with [kitsune.MergeIndependent].
 //
-// The partition client is not closed when the pipeline ends — the caller owns it.
+// The partition client is not closed when the pipeline ends; the caller owns it.
 func Consume[T any](client PartitionClient, unmarshal func(*azeventhubs.ReceivedEventData) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		for {
@@ -92,7 +97,7 @@ func Consume[T any](client PartitionClient, unmarshal func(*azeventhubs.Received
 // For high-throughput scenarios, prefer [ProduceBatch] with [kitsune.Batch]
 // to amortise batch creation overhead across multiple items.
 //
-// The producer client is not closed when the pipeline ends — the caller owns it.
+// The producer client is not closed when the pipeline ends; the caller owns it.
 func Produce[T any](client *azeventhubs.ProducerClient, marshal func(T) (*azeventhubs.EventData, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		event, err := marshal(item)
@@ -114,7 +119,7 @@ func Produce[T any](client *azeventhubs.ProducerClient, marshal func(T) (*azeven
 // items as one or more Azure Event Hubs batches, respecting the 1 MB batch
 // size limit automatically. Use with [kitsune.Batch] + [kitsune.Pipeline.ForEach].
 //
-// The producer client is not closed when the pipeline ends — the caller owns it.
+// The producer client is not closed when the pipeline ends; the caller owns it.
 func ProduceBatch[T any](client *azeventhubs.ProducerClient, marshal func(T) (*azeventhubs.EventData, error)) func(context.Context, []T) error {
 	return func(ctx context.Context, items []T) error {
 		batch, err := client.NewEventDataBatch(ctx, nil)
@@ -128,7 +133,7 @@ func ProduceBatch[T any](client *azeventhubs.ProducerClient, marshal func(T) (*a
 			}
 			err = batch.AddEventData(event, nil)
 			if errors.Is(err, azeventhubs.ErrEventDataTooLarge) {
-				// Current batch is full — send it and start a new one.
+				// Current batch is full: send it and start a new one.
 				if err := client.SendEventDataBatch(ctx, batch, nil); err != nil {
 					return err
 				}

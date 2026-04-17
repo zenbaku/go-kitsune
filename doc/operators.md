@@ -710,17 +710,16 @@ ok, failed := kitsune.MapResult(records, func(ctx context.Context, r Record) (St
     return db.Store(ctx, r)
 })
 
-stored := ok.ForEach(func(_ context.Context, s Stored) error {
-    metrics.Inc("stored")
-    return nil
-}).Build()
-
-logged := failed.ForEach(func(_ context.Context, e kitsune.ErrItem[Record]) error {
-    log.Printf("failed to store %v: %v", e.Item.ID, e.Err)
-    return nil
-}).Build()
-
-runner, _ := kitsune.MergeRunners(stored, logged)
+runner, _ := kitsune.MergeRunners(
+    ok.ForEach(func(_ context.Context, s Stored) error {
+        metrics.Inc("stored")
+        return nil
+    }),
+    failed.ForEach(func(_ context.Context, e kitsune.ErrItem[Record]) error {
+        log.Printf("failed to store %v: %v", e.Item.ID, e.Err)
+        return nil
+    }),
+)
 runner.Run(ctx)
 ```
 
@@ -1814,9 +1813,10 @@ Splits a pipeline into two: items for which `pred` returns `true` go to the firs
 ```go
 valid, invalid := kitsune.Partition(records, func(r Record) bool { return r.Valid })
 
-r1 := valid.ForEach(store).Build()
-r2 := invalid.ForEach(logInvalid).Build()
-runner, _ := kitsune.MergeRunners(r1, r2)
+runner, _ := kitsune.MergeRunners(
+    valid.ForEach(store),
+    invalid.ForEach(logInvalid),
+)
 runner.Run(ctx)
 ```
 
@@ -1836,10 +1836,11 @@ Fans out each item to `n` identical output pipelines. Every item is delivered to
 
 ```go
 branches := kitsune.Broadcast(events, 3)
-r1 := branches[0].ForEach(storeEvent).Build()
-r2 := branches[1].ForEach(updateMetrics).Build()
-r3 := branches[2].ForEach(auditLog).Build()
-runner, _ := kitsune.MergeRunners(r1, r2, r3)
+runner, _ := kitsune.MergeRunners(
+    branches[0].ForEach(storeEvent),
+    branches[1].ForEach(updateMetrics),
+    branches[2].ForEach(auditLog),
+)
 runner.Run(ctx)
 ```
 
@@ -1868,9 +1869,10 @@ if cfg.FraudEnabled {
     fraud = subscribe(kitsune.WithName("fraud"))
 }
 
-r1 := audit.ForEach(writeAudit).Build()
-r2 := metrics.ForEach(updateMetrics).Build()
-runner, _ := kitsune.MergeRunners(r1, r2)
+runner, _ := kitsune.MergeRunners(
+    audit.ForEach(writeAudit),
+    metrics.ForEach(updateMetrics),
+)
 runner.Run(ctx)
 ```
 
@@ -1890,9 +1892,9 @@ Distributes items across `n` output pipelines in round-robin order. Each item go
 
 ```go
 branches := kitsune.Balance(jobs, 4)
-runners := make([]*kitsune.Runner, 4)
+runners := make([]kitsune.Runnable, 4)
 for i, b := range branches {
-    runners[i] = b.ForEach(worker).Build()
+    runners[i] = b.ForEach(worker)
 }
 runner, _ := kitsune.MergeRunners(runners...)
 runner.Run(ctx)
@@ -2565,7 +2567,8 @@ Returns a `ForEachRunner` that calls `fn` for every item. No processing occurs u
 
 `ForEachRunner` has:
 - `Run(ctx, opts...)`: blocks until complete
-- `Build()`: returns a `Runner` for use with [`MergeRunners`](#mergerunners)
+- `RunAsync(ctx, opts...)`: runs in background, returns a `RunHandle`
+- `Build()`: returns a `Runner` (retained for backwards compatibility; not required for `MergeRunners`)
 
 With `Concurrency(n)` > 1, `fn` is called from `n` goroutines. Add `Ordered()` to call `fn` in input order even with concurrency.
 
@@ -2633,16 +2636,19 @@ if err := handle.Wait(); err != nil {
 ### MergeRunners
 
 ```go
-func MergeRunners(runners ...*Runner) (*Runner, error)
+func MergeRunners(runners ...Runnable) (*Runner, error)
 ```
 
-Combines multiple runners into one. Use this when a pipeline forks (via [`Partition`](#partition), [`Broadcast`](#broadcast-broadcastn), [`Share`](#share)) into multiple terminal branches that must run together on a shared graph.
+Combines multiple terminal stages into one runner. Use this when a pipeline forks (via [`Partition`](#partition), [`Broadcast`](#broadcast-broadcastn), [`Share`](#share)) into multiple terminal branches that must run together on a shared graph.
+
+Both `*Runner` and `*ForEachRunner[T]` satisfy `Runnable`, so terminal stages can be passed directly without calling `Build()`.
 
 ```go
 valid, invalid := kitsune.Partition(records, isValid)
-r1 := valid.ForEach(store).Build()
-r2 := invalid.ForEach(logInvalid).Build()
-runner, _ := kitsune.MergeRunners(r1, r2)
+runner, _ := kitsune.MergeRunners(
+    valid.ForEach(store),
+    invalid.ForEach(logInvalid),
+)
 runner.Run(ctx)
 ```
 

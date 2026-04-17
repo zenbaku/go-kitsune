@@ -1,8 +1,9 @@
 // Package kmongo provides MongoDB source and sink helpers for kitsune
 // pipelines.
 //
-// Users own the [mongo.Client] and collections — configure connection strings,
-// auth, and pool settings yourself. Kitsune will never create or close clients.
+// The caller owns the [mongo.Client] and collections: configure connection
+// strings, auth, and pool settings yourself. Kitsune will never create or
+// close clients.
 //
 // Stream query results:
 //
@@ -28,6 +29,12 @@
 //	kitsune.Batch(pipe, 100).
 //	    ForEach(kmongo.InsertMany(coll, func(e Event) (any, error) { return e, nil })).
 //	    Run(ctx)
+//
+// Delivery semantics: Find is a read-only source (at-most-once; no ack
+// mechanism). Watch is at-most-once; the change stream resumes from the last
+// resume token on reconnect only if resume-token management is handled
+// externally. InsertMany is synchronous; a batch either succeeds or returns
+// an error (at-least-once when combined with retries).
 package kmongo
 
 import (
@@ -40,7 +47,7 @@ import (
 // Find creates a Pipeline that streams results from a MongoDB query. decode is
 // called once per document to convert the cursor into a value of type T.
 //
-// The collection is not closed when the pipeline ends — the caller owns it.
+// The collection is not closed when the pipeline ends; the caller owns it.
 func Find[T any](coll *mongo.Collection, filter any, decode func(*mongo.Cursor) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		cur, err := coll.Find(ctx, filter)
@@ -66,7 +73,7 @@ func Find[T any](coll *mongo.Collection, filter any, decode func(*mongo.Cursor) 
 // called once per event to convert the change stream into a value of type T.
 //
 // The pipeline runs until the context is cancelled or an error occurs.
-// The collection is not closed when the pipeline ends — the caller owns it.
+// The collection is not closed when the pipeline ends; the caller owns it.
 func Watch[T any](coll *mongo.Collection, pipeline any, decode func(*mongo.ChangeStream) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		cs, err := coll.Watch(ctx, pipeline)
@@ -95,7 +102,7 @@ func Watch[T any](coll *mongo.Collection, pipeline any, decode func(*mongo.Chang
 // MongoDB collection. marshal converts each item into a document to insert.
 // Use with [kitsune.Pipeline.ForEach] after [kitsune.Batch].
 //
-// The collection is not closed when the pipeline ends — the caller owns it.
+// The collection is not closed when the pipeline ends; the caller owns it.
 func InsertMany[T any](coll *mongo.Collection, marshal func(T) (any, error)) func(context.Context, []T) error {
 	return func(ctx context.Context, items []T) error {
 		docs := make([]any, len(items))

@@ -29,7 +29,7 @@ func main() {
 		results = append(results, n)
 		mu.Unlock()
 		return nil
-	}).Build().RunAsync(ctx)
+	}).RunAsync(ctx)
 
 	// Push items from this goroutine while the pipeline runs in the background.
 	for i := 1; i <= 10; i++ {
@@ -53,7 +53,7 @@ func main() {
 	h2 := src2.Source().ForEach(func(_ context.Context, s string) error {
 		collected = append(collected, s)
 		return nil
-	}).Build().RunAsync(ctx)
+	}).RunAsync(ctx)
 
 	src2.TrySend("a")
 	src2.TrySend("b")

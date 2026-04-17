@@ -3,7 +3,7 @@
 // pull-batch consumers, ordered consumers, key-value watches, and async
 // batched publish.
 //
-// Users own all NATS objects — kitsune never creates or closes them. Use
+// The caller owns all NATS objects; kitsune never creates or closes them. Use
 // tails/knats for simple push-style consume ([knats.Consume]) and synchronous
 // JetStream publish ([knats.JetStreamPublish]). Reach for kjetstream when you
 // need pull fetching, ordered delivery, KV watch streams, or async publish
@@ -50,6 +50,13 @@
 //	    return err
 //	}
 //	return flush(ctx) // drain any tail ack futures
+//
+// Delivery semantics: Fetch and FetchBytes use explicit acks (at-least-once);
+// each message is acked after a successful yield and nacked on unmarshal
+// failure. OrderedConsume uses AckNone (at-most-once; server guarantees
+// ordered sequential delivery but does not redeliver). WatchKV is at-most-once
+// from the pipeline's perspective. PublishAsync is at-least-once when flush
+// is called; always call flush after Run to drain pending ack futures.
 package kjetstream
 
 import (
@@ -70,7 +77,7 @@ import (
 // rate-limited processing. Choose batch to match your processing throughput;
 // tune wait based on how sparse your stream is.
 //
-// The consumer is not closed when the pipeline ends — the caller owns it.
+// The consumer is not closed when the pipeline ends; the caller owns it.
 func Fetch[T any](
 	cons jetstream.Consumer,
 	batch int,
@@ -118,10 +125,10 @@ func Fetch[T any](
 
 // FetchBytes creates a Pipeline that pulls messages from a JetStream pull
 // consumer bounded by total payload size. It is identical to [Fetch] but
-// sized by bytes rather than count — useful when message sizes vary widely
+// sized by bytes rather than count; useful when message sizes vary widely
 // and you want to bound memory per batch.
 //
-// The consumer is not closed when the pipeline ends — the caller owns it.
+// The consumer is not closed when the pipeline ends; the caller owns it.
 func FetchBytes[T any](
 	cons jetstream.Consumer,
 	maxBytes int,
@@ -177,7 +184,7 @@ func FetchBytes[T any](
 // and releases it when the pipeline exits. cfg controls delivery policy,
 // filter subjects, and start position.
 //
-// The JetStream handle is not closed when the pipeline ends — the caller owns it.
+// The JetStream handle is not closed when the pipeline ends; the caller owns it.
 func OrderedConsume[T any](
 	js jetstream.JetStream,
 	stream string,
@@ -205,7 +212,7 @@ func OrderedConsume[T any](
 			}
 			v, err := unmarshal(msg)
 			if err != nil {
-				// Ordered consumers use AckNone — no nak; just terminate.
+				// Ordered consumers use AckNone: no nak; just terminate.
 				return err
 			}
 			if !yield(v) {
@@ -216,7 +223,7 @@ func OrderedConsume[T any](
 }
 
 // WatchKV creates a Pipeline that watches a JetStream key-value bucket for
-// changes. keys is a NATS subject-style pattern — use ">" to watch all keys,
+// changes. keys is a NATS subject-style pattern: use ">" to watch all keys,
 // "prefix.>" for a subtree, or an exact key name. Each entry (PUT, DELETE,
 // and PURGE operations) is decoded with unmarshal; filter by
 // [jetstream.KeyValueEntry.Operation] inside unmarshal if needed.
@@ -228,7 +235,7 @@ func OrderedConsume[T any](
 // Additional [jetstream.WatchOpt] values (e.g. [jetstream.IncludeHistory],
 // [jetstream.UpdatesOnly], [jetstream.MetaOnly]) can be passed as opts.
 //
-// The KeyValue handle is not closed when the pipeline ends — the caller owns it.
+// The KeyValue handle is not closed when the pipeline ends; the caller owns it.
 func WatchKV[T any](
 	kv jetstream.KeyValue,
 	keys string,
@@ -251,7 +258,7 @@ func WatchKV[T any](
 					return nil
 				}
 				if entry == nil {
-					// Init done sentinel — existing keys have been delivered.
+					// Init done sentinel: existing keys have been delivered.
 					continue
 				}
 				v, err := unmarshal(entry)
@@ -279,7 +286,7 @@ func WatchKV[T any](
 // cancelled. Always call flush, even on error, to avoid memory leaks in the
 // NATS client's internal ack tracker.
 //
-// The JetStream handle is not closed when the pipeline ends — the caller owns it.
+// The JetStream handle is not closed when the pipeline ends; the caller owns it.
 func PublishAsync[T any](
 	js jetstream.JetStream,
 	subject string,
@@ -317,7 +324,7 @@ func PublishAsync[T any](
 // key-value bucket. key derives the bucket key from the item; marshal
 // serialises the value. Use with [kitsune.Pipeline.ForEach].
 //
-// The KeyValue handle is not closed when the pipeline ends — the caller owns it.
+// The KeyValue handle is not closed when the pipeline ends; the caller owns it.
 func PutKV[T any](
 	kv jetstream.KeyValue,
 	key func(T) string,

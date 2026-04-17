@@ -1,7 +1,8 @@
 // Package kpostgres provides PostgreSQL source and sink helpers for kitsune pipelines.
 //
-// Users own the [pgxpool.Pool] and [pgx.Conn] — configure connection strings,
-// pool sizes, and TLS yourself. Kitsune will never create or close connections.
+// The caller owns the [pgxpool.Pool] and [pgx.Conn]: configure connection
+// strings, pool sizes, and TLS yourself. Kitsune will never create or close
+// connections.
 //
 // LISTEN/NOTIFY source:
 //
@@ -24,6 +25,11 @@
 //	    func(r Row) []any { return []any{r.ID, r.Name} },
 //	)
 //	kitsune.Batch(pipe, 500).ForEach(sink).Run(ctx)
+//
+// Delivery semantics: Listen is at-most-once; notifications are not persisted
+// and will not redeliver after a disconnect. Insert and CopyFrom are
+// synchronous sinks; each call is committed before returning. CopyFrom is
+// all-or-nothing per batch (at-least-once when combined with retries).
 package kpostgres
 
 import (
@@ -38,7 +44,7 @@ import (
 // Listen creates a Pipeline that receives PostgreSQL LISTEN/NOTIFY notifications
 // on the named channel. unmarshal converts the raw notification payload string
 // into a value of type T.
-// The connection is not closed when the pipeline ends — the caller owns it.
+// The connection is not closed when the pipeline ends; the caller owns it.
 func Listen[T any](conn *pgx.Conn, channel string, unmarshal func(payload string) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{channel}.Sanitize()); err != nil {
@@ -48,7 +54,7 @@ func Listen[T any](conn *pgx.Conn, channel string, unmarshal func(payload string
 			notif, err := conn.WaitForNotification(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
-					return nil // context cancelled — clean exit
+					return nil // context cancelled: clean exit
 				}
 				return err
 			}

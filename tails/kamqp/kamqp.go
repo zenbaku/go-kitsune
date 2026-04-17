@@ -1,10 +1,9 @@
 // Package kamqp provides RabbitMQ / AMQP 0-9-1 source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the [*amqp091.Connection] and [*amqp091.Channel] — configure
-// brokers, credentials, TLS, QoS prefetch, publisher confirms, and exchange/
-// queue topology yourself. Kitsune will never create or close connections or
-// channels.
+// The caller owns all connections and channels: configure brokers, credentials,
+// TLS, QoS prefetch, publisher confirms, and exchange/queue topology yourself.
+// Kitsune will never create or close connections or channels.
 //
 // Consume source (manual-ack, at-least-once):
 //
@@ -38,6 +37,11 @@
 //
 // To publish to the default exchange (direct-to-queue), pass exchange="" and
 // routingKey=queueName.
+//
+// Delivery semantics: at-least-once. Each message is acked individually after
+// a successful yield; on unmarshal failure or early pipeline exit the delivery
+// is nacked and will redeliver. Use [WithAutoAck] to delegate acking to the
+// broker (at-most-once for failures after delivery).
 package kamqp
 
 import (
@@ -104,7 +108,7 @@ func WithConsumeArgs(args amqp.Table) ConsumeOption {
 // downstream and then acknowledged. On unmarshal failure the delivery is
 // nacked and the pipeline terminates.
 //
-// The channel is not closed when the pipeline ends — the caller owns it.
+// The channel is not closed when the pipeline ends; the caller owns it.
 // Call [*amqp.Channel.Qos] on the channel before passing it to control
 // prefetch.
 func Consume[T any](client ConsumerClient, queue string, unmarshal func(*amqp.Delivery) (T, error), opts ...ConsumeOption) *kitsune.Pipeline[T] {
@@ -164,7 +168,7 @@ func Consume[T any](client ConsumerClient, queue string, unmarshal func(*amqp.De
 // To publish to the default exchange (direct-to-queue), pass exchange=""
 // and routingKey equal to the queue name.
 //
-// The channel is not closed when the pipeline ends — the caller owns it.
+// The channel is not closed when the pipeline ends; the caller owns it.
 // Use with [kitsune.Pipeline.ForEach].
 func Publish[T any](client PublisherClient, exchange, routingKey string, marshal func(T) (amqp.Publishing, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {

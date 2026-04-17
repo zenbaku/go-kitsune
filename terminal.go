@@ -365,17 +365,21 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 	return &ForEachRunner[T]{runner: &Runner{terminal: terminal}}
 }
 
-// Build returns a [Runner] that can be combined with other runners via [MergeRunners].
-// Use this when the pipeline forks (e.g., [Partition], [Broadcast]) and you need
-// to run multiple terminal stages together.
+// Build returns a [*Runner] exposing the terminal stage. The *Runner type is
+// the same one produced by [MergeRunners].
 //
+// Build is retained for backwards compatibility. New code does not need to
+// call it: [*ForEachRunner] satisfies [Runnable] directly, so it can be
+// passed to [MergeRunners] without Build(), and [ForEachRunner.Run] /
+// [ForEachRunner.RunAsync] can be called directly.
+//
+//	// New style (no Build needed):
 //	evens, odds := kitsune.Partition(p, isEven)
-//	r1 := evens.ForEach(storeEven).Build()
-//	r2 := odds.ForEach(logOdd).Build()
-//	runner, _ := kitsune.MergeRunners(r1, r2)
+//	runner, _ := kitsune.MergeRunners(
+//		evens.ForEach(storeEven),
+//		odds.ForEach(logOdd),
+//	)
 //	err := runner.Run(ctx)
-//
-// Returns [ErrNoRunners] if called with no arguments.
 func (r *ForEachRunner[T]) Build() *Runner {
 	return r.runner
 }
@@ -383,6 +387,13 @@ func (r *ForEachRunner[T]) Build() *Runner {
 // Run executes the pipeline, blocking until completion.
 func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
 	return r.runner.Run(ctx, opts...)
+}
+
+// RunAsync starts the pipeline in a background goroutine and returns a
+// [RunHandle] for observing completion and controlling execution.
+// See [Runner.RunAsync] for details.
+func (r *ForEachRunner[T]) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
+	return r.runner.RunAsync(ctx, opts...)
 }
 
 // ---------------------------------------------------------------------------
@@ -416,4 +427,12 @@ func (r *DrainRunner[T]) Build() *Runner {
 // Run registers the Drain terminal stage and executes the pipeline.
 func (r *DrainRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
 	return r.Build().Run(ctx, opts...)
+}
+
+// RunAsync starts the pipeline in a background goroutine and returns a
+// [RunHandle]. See [Runner.RunAsync].
+//
+// Deprecated: use [Pipeline.ForEach] with a no-op function instead.
+func (r *DrainRunner[T]) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
+	return r.Build().RunAsync(ctx, opts...)
 }

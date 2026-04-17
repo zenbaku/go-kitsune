@@ -1,9 +1,9 @@
 // Package kpubsub provides Google Cloud Pub/Sub source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the [pubsub.Client], subscriptions, and topics — configure project
-// IDs, credentials, and subscription settings yourself. Kitsune will never
-// create or close them.
+// The caller owns the [pubsub.Client], subscriptions, and topics: configure
+// project IDs, credentials, and subscription settings yourself. Kitsune will
+// never create or close them.
 //
 // Minimal subscribe source:
 //
@@ -24,6 +24,11 @@
 //  3. The Generate loop reads from the channel and yields.
 //  4. When the pipeline stops (yield returns false) the derived context is
 //     cancelled, which causes sub.Receive to return and the goroutine to exit.
+//
+// Delivery semantics: at-least-once. Messages are Acked after a successful
+// yield; on unmarshal failure the message is Nacked and will redeliver. Publish
+// calls topic.Publish synchronously (waits for server confirmation via Get
+// before returning), making the sink synchronous per item.
 package kpubsub
 
 import (
@@ -41,7 +46,7 @@ import (
 // the subscription is exhausted (e.g. after Take), the underlying subscription
 // receive loop is cancelled cleanly.
 //
-// The subscription is not closed when the pipeline ends — the caller owns it.
+// The subscription is not closed when the pipeline ends; the caller owns it.
 func Subscribe[T any](sub *pubsub.Subscription, unmarshal func(*pubsub.Message) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		type result struct {
@@ -102,7 +107,7 @@ func Subscribe[T any](sub *pubsub.Subscription, unmarshal func(*pubsub.Message) 
 // marshal converts the item into a [*pubsub.Message]. Use with
 // [kitsune.Pipeline.ForEach].
 //
-// The topic is not stopped when the pipeline ends — the caller owns it.
+// The topic is not stopped when the pipeline ends; the caller owns it.
 func Publish[T any](topic *pubsub.Topic, marshal func(T) (*pubsub.Message, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		msg, err := marshal(item)

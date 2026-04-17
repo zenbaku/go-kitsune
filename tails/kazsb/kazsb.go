@@ -1,7 +1,7 @@
 // Package kazsb provides Azure Service Bus source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the Service Bus clients — configure the connection string or
+// The caller owns all Service Bus clients: configure the connection string or
 // credential yourself and pass the receiver/sender to the pipeline functions.
 // Kitsune will never create or close clients.
 //
@@ -26,6 +26,11 @@
 //	    b, err := json.Marshal(e)
 //	    return &azservicebus.Message{Body: b}, err
 //	})).Run(ctx)
+//
+// Delivery semantics: at-least-once. Each message is completed (acked) after
+// a successful yield. On unmarshal failure the message is abandoned and
+// becomes available again after its lock expires. On pipeline restart, any
+// messages whose lock expired will redeliver.
 package kazsb
 
 import (
@@ -54,10 +59,10 @@ type SenderClient interface {
 // Receive creates a Pipeline that long-polls an Azure Service Bus queue or
 // topic subscription and yields decoded messages. Each message is completed
 // (acknowledged) after a successful yield. If unmarshal fails the message is
-// not completed and the pipeline terminates — the message becomes available
+// not completed and the pipeline terminates; the message becomes available
 // again after its lock expires.
 //
-// The receiver is not closed when the pipeline ends — the caller owns it.
+// The receiver is not closed when the pipeline ends; the caller owns it.
 func Receive[T any](client ReceiverClient, unmarshal func(*azservicebus.ReceivedMessage) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		for {
@@ -94,7 +99,7 @@ func Receive[T any](client ReceiverClient, unmarshal func(*azservicebus.Received
 // single Azure Service Bus message. marshal converts the item into a
 // *azservicebus.Message. Use with [kitsune.Pipeline.ForEach].
 //
-// The sender is not closed when the pipeline ends — the caller owns it.
+// The sender is not closed when the pipeline ends; the caller owns it.
 func Send[T any](client SenderClient, marshal func(T) (*azservicebus.Message, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		msg, err := marshal(item)

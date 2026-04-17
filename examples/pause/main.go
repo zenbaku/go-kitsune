@@ -34,7 +34,7 @@ func main() {
 	handle := processed.ForEach(func(_ context.Context, s string) error {
 		received = append(received, s)
 		return nil
-	}).Build().RunAsync(ctx)
+	}).RunAsync(ctx)
 
 	// Send items 1–5 while running normally.
 	for i := 1; i <= 5; i++ {
@@ -85,10 +85,10 @@ func main() {
 	}, kitsune.WithName("map"))
 
 	var out []string
-	runner := pipeline.ForEach(func(_ context.Context, s string) error {
+	r := pipeline.ForEach(func(_ context.Context, s string) error {
 		out = append(out, s)
 		return nil
-	}).Build()
+	})
 
 	// Pause after 30ms (roughly 3 items processed) then resume after 50ms.
 	go func() {
@@ -100,7 +100,7 @@ func main() {
 		fmt.Println("gate resumed")
 	}()
 
-	if err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+	if err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
 		panic(err)
 	}
 	fmt.Printf("total: %d items\n", len(out))

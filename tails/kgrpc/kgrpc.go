@@ -1,6 +1,9 @@
 // Package kgrpc provides gRPC streaming source and sink helpers for kitsune
 // pipelines.
 //
+// The caller owns all gRPC connections and streams; Kitsune will never create
+// or close them.
+//
 // Recv adapts a server-streaming RPC into a kitsune source:
 //
 //	conn, _ := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -18,6 +21,11 @@
 //	kitsune.FromSlice(events).
 //	    ForEach(kgrpc.Send(stream)).
 //	    Run(ctx)
+//
+// Delivery semantics: Recv is at-most-once from the pipeline's perspective;
+// there is no ack mechanism below the gRPC transport layer. Send writes
+// synchronously per item; delivery guarantees depend on the server
+// implementation and the underlying transport.
 package kgrpc
 
 import (
@@ -33,7 +41,7 @@ import (
 // The pipeline ends when the stream is exhausted (io.EOF) or the context is
 // cancelled.
 //
-// The stream is not closed when the pipeline ends — the caller owns it.
+// The stream is not closed when the pipeline ends; the caller owns it.
 func Recv[T any](stream grpc.ServerStreamingClient[T]) *kitsune.Pipeline[*T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(*T) bool) error {
 		for {
@@ -58,7 +66,7 @@ func Recv[T any](stream grpc.ServerStreamingClient[T]) *kitsune.Pipeline[*T] {
 // RPC. Items are sent as pointers (matching gRPC's generated types).
 // Use with [kitsune.Pipeline.ForEach].
 //
-// The stream is not closed when the pipeline ends — the caller owns it.
+// The stream is not closed when the pipeline ends; the caller owns it.
 func Send[T any, R any](stream grpc.ClientStreamingClient[T, R]) func(context.Context, *T) error {
 	return func(_ context.Context, item *T) error {
 		return stream.Send(item)

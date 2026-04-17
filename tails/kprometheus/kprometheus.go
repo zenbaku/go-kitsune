@@ -11,10 +11,10 @@
 //	runner.Run(ctx, kitsune.WithHook(hook))
 //
 // The hook records:
-//   - <ns>_stage_items_total     — CounterVec{stage, status="ok"|"error"|"skipped"}
-//   - <ns>_stage_duration_seconds — HistogramVec{stage}
-//   - <ns>_stage_drops_total     — CounterVec{stage}
-//   - <ns>_stage_restarts_total  — CounterVec{stage}
+//   - <ns>_stage_items_total: CounterVec{stage, status="ok"|"error"|"skipped"}
+//   - <ns>_stage_duration_seconds: HistogramVec{stage}
+//   - <ns>_stage_drops_total: CounterVec{stage}
+//   - <ns>_stage_restarts_total: CounterVec{stage}
 package kprometheus
 
 import (

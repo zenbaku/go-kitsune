@@ -1175,7 +1175,7 @@ func TestKeyedBalance(t *testing.T) {
 	var mu sync.Mutex
 	keyToBranch := map[string]int{}
 	counts := make([]int, 3)
-	runners := make([]*kitsune.Runner, 3)
+	runners := make([]kitsune.Runnable, 3)
 	for i := 0; i < 3; i++ {
 		i := i
 		runners[i] = branches[i].ForEach(func(_ context.Context, s string) error {

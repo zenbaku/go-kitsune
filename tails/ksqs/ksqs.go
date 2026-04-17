@@ -1,6 +1,6 @@
 // Package ksqs provides AWS SQS source and sink helpers for kitsune pipelines.
 //
-// Users own the SQS client — configure credentials, region, and endpoint
+// The caller owns the SQS client: configure credentials, region, and endpoint
 // yourself. Kitsune will never create or close clients.
 //
 // Minimal consumer pipeline:
@@ -19,6 +19,12 @@
 //	kitsune.Batch(pipe, 10).
 //	    ForEach(ksqs.SendBatch(client, queueURL, marshal)).
 //	    Run(ctx)
+//
+// Delivery semantics: at-least-once. Receive deletes each message from SQS
+// after a successful yield. If unmarshal fails, the message is not deleted and
+// becomes visible again after its visibility timeout expires. On pipeline crash
+// before deletion, the message redelivers. Send and SendBatch are synchronous;
+// partial failures terminate the pipeline with the first error.
 package ksqs
 
 import (
@@ -46,7 +52,7 @@ type SQSClient interface {
 // messages. Messages are deleted from the queue after a successful yield.
 // If unmarshal fails the message is not deleted and the pipeline terminates.
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Receive[T any](client SQSClient, queueURL string, unmarshal func(types.Message) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		for {
@@ -92,7 +98,7 @@ func Receive[T any](client SQSClient, queueURL string, unmarshal func(types.Mess
 // marshal converts the item into the message body string. Use with
 // [kitsune.Pipeline.ForEach].
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Send[T any](client SQSClient, queueURL string, marshal func(T) (string, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		body, err := marshal(item)
@@ -112,7 +118,7 @@ func Send[T any](client SQSClient, queueURL string, marshal func(T) (string, err
 // marshal converts each item into the message body string. Use with
 // [kitsune.Pipeline.ForEach] after [kitsune.Batch].
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func SendBatch[T any](client SQSClient, queueURL string, marshal func(T) (string, error)) func(context.Context, []T) error {
 	return func(ctx context.Context, items []T) error {
 		const maxBatch = 10

@@ -1,6 +1,6 @@
 // Package kmqtt provides MQTT source and sink helpers for kitsune pipelines.
 //
-// Users own the [mqtt.Client] — configure brokers, credentials, and TLS
+// The caller owns the [mqtt.Client]: configure brokers, credentials, and TLS
 // yourself. Kitsune will never create or disconnect clients.
 //
 // Subscribe source:
@@ -30,6 +30,10 @@
 //  3. The Generate loop reads from the channel and yields.
 //  4. When the context is cancelled or yield returns false, the subscription
 //     is unsubscribed and the pipeline exits.
+//
+// Delivery semantics: at-most-once. MQTT core (QoS 0) may lose messages on
+// network failure. QoS 1 and 2 provide stronger broker guarantees, but the
+// pipeline itself does not track or replay missed messages.
 package kmqtt
 
 import (
@@ -43,7 +47,7 @@ import (
 // unmarshal is called for each message; a decode error terminates the pipeline.
 // qos specifies the MQTT QoS level (0, 1, or 2).
 //
-// The client is not disconnected when the pipeline ends — the caller owns it.
+// The client is not disconnected when the pipeline ends; the caller owns it.
 func Subscribe[T any](client mqtt.Client, topic string, qos byte, unmarshal func(mqtt.Message) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		type result struct {
@@ -87,7 +91,7 @@ func Subscribe[T any](client mqtt.Client, topic string, qos byte, unmarshal func
 // marshal converts the item into a byte payload. qos specifies the MQTT QoS
 // level (0, 1, or 2). Use with [kitsune.Pipeline.ForEach].
 //
-// The client is not disconnected when the pipeline ends — the caller owns it.
+// The client is not disconnected when the pipeline ends; the caller owns it.
 func Publish[T any](client mqtt.Client, topic string, qos byte, marshal func(T) ([]byte, error)) func(context.Context, T) error {
 	return func(_ context.Context, item T) error {
 		data, err := marshal(item)

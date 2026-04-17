@@ -1,9 +1,9 @@
 // Package kpulsar provides Apache Pulsar source and sink helpers for kitsune
 // pipelines.
 //
-// Users own the [pulsar.Client], consumers, and producers — configure brokers,
-// auth, and subscription settings yourself. Kitsune will never create or close
-// them.
+// The caller owns the [pulsar.Client], consumers, and producers: configure
+// brokers, auth, and subscription settings yourself. Kitsune will never create
+// or close them.
 //
 // Note: The Pulsar Go client uses CGO by default. If building without CGO, you
 // must set the build tag `pulsar_client_go_no_cgo`.
@@ -35,6 +35,11 @@
 //	        b, err := json.Marshal(e)
 //	        return &pulsar.ProducerMessage{Payload: b}, err
 //	    })).Run(ctx)
+//
+// Delivery semantics: at-least-once. Messages are acked after a successful
+// yield; on unmarshal failure the message is nacked and the pipeline
+// terminates. Produce sends synchronously per item (waits for broker ack
+// via Send before returning).
 package kpulsar
 
 import (
@@ -48,7 +53,7 @@ import (
 // Messages are acked after a successful yield; if unmarshal fails the message
 // is nacked and the pipeline terminates with that error.
 //
-// The consumer is not closed when the pipeline ends — the caller owns it.
+// The consumer is not closed when the pipeline ends; the caller owns it.
 func Consume[T any](consumer pulsar.Consumer, unmarshal func(pulsar.Message) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		for {
@@ -77,7 +82,7 @@ func Consume[T any](consumer pulsar.Consumer, unmarshal func(pulsar.Message) (T,
 // marshal converts the item into a [*pulsar.ProducerMessage]. Use with
 // [kitsune.Pipeline.ForEach].
 //
-// The producer is not closed when the pipeline ends — the caller owns it.
+// The producer is not closed when the pipeline ends; the caller owns it.
 func Produce[T any](producer pulsar.Producer, marshal func(T) (*pulsar.ProducerMessage, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		msg, err := marshal(item)

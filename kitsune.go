@@ -169,6 +169,15 @@ func TTLDedupSet(ttl time.Duration) DedupSet { return internal.TTLDedupSet(ttl) 
 // Runner
 // ---------------------------------------------------------------------------
 
+// Runnable is implemented by any value that can produce a [*Runner] for
+// execution. It is the argument type accepted by [MergeRunners].
+//
+// Both [*Runner] and [*ForEachRunner] satisfy this interface, so terminal
+// stages can be passed directly to MergeRunners without first calling Build().
+type Runnable interface {
+	Build() *Runner
+}
+
 // Runner holds a compiled pipeline for deferred execution.
 // No goroutines start until [Runner.Run] is called.
 // The same Runner (and the Pipeline[T] values it was built from) may be Run
@@ -178,6 +187,10 @@ type Runner struct {
 	// It is set by ForEachRunner.Build() / ForEachRunner.Run().
 	terminal func(rc *runCtx)
 }
+
+// Build returns r itself. It exists so that [*Runner] satisfies the
+// [Runnable] interface.
+func (r *Runner) Build() *Runner { return r }
 
 // ErrNoRunners is returned by [MergeRunners] when called with no arguments.
 var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runner")
@@ -387,18 +400,20 @@ func metasToGraphNodes(metas []stageMeta) []internal.GraphNode {
 	return nodes
 }
 
-// MergeRunners combines multiple runners that share the same pipeline graph
-// into a single runner. Use this when a pipeline forks (e.g., via [Partition]
-// or [Broadcast]) into multiple terminal branches.
+// MergeRunners combines multiple terminal stages that share the same pipeline
+// graph into a single runner. Use this when a pipeline forks (e.g., via
+// [Partition] or [Broadcast]) into multiple terminal branches.
 //
 //	valid, invalid := kitsune.Partition(parsed, isValid)
-//	stored := valid.ForEach(storeEvent).Build()
-//	logged := invalid.ForEach(logRejection).Build()
-//	runner, _ := kitsune.MergeRunners(stored, logged)
+//	runner, _ := kitsune.MergeRunners(
+//		valid.ForEach(storeEvent),
+//		invalid.ForEach(logRejection),
+//	)
 //	err := runner.Run(ctx)
 //
+// Both [*Runner] and [*ForEachRunner] satisfy the [Runnable] interface.
 // Returns [ErrNoRunners] if called with no arguments.
-func MergeRunners(runners ...*Runner) (*Runner, error) {
+func MergeRunners(runners ...Runnable) (*Runner, error) {
 	if len(runners) == 0 {
 		return nil, ErrNoRunners
 	}
@@ -407,7 +422,7 @@ func MergeRunners(runners ...*Runner) (*Runner, error) {
 	// are built only once (memoised by stage ID).
 	terminals := make([]func(*runCtx), len(runners))
 	for i, r := range runners {
-		terminals[i] = r.terminal
+		terminals[i] = r.Build().terminal
 	}
 	return &Runner{
 		terminal: func(rc *runCtx) {

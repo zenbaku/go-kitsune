@@ -1,8 +1,8 @@
 // Package kes provides Elasticsearch / OpenSearch source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the [elasticsearch.Client] — configure addresses, auth, and TLS
-// yourself. Kitsune will never create or close clients.
+// The caller owns the [elasticsearch.Client]: configure addresses, auth, and
+// TLS yourself. Kitsune will never create or close clients.
 //
 // Scrolling search source:
 //
@@ -23,6 +23,11 @@
 //	        b, err := json.Marshal(e)
 //	        return e.ID, b, err
 //	    })).Run(ctx)
+//
+// Delivery semantics: Search is a read-only scrolling source (at-most-once;
+// the scroll is cleared on pipeline exit). Bulk is a synchronous write: the
+// call returns after the batch is indexed. Per-item errors inside a bulk
+// response terminate the pipeline with the first error found.
 package kes
 
 import (
@@ -42,7 +47,7 @@ import (
 // request body. unmarshal receives the raw JSON of each hit's "_source" field.
 //
 // The scroll is cleared when the pipeline ends. The client is not closed when
-// the pipeline ends — the caller owns it.
+// the pipeline ends; the caller owns it.
 func Search[T any](client *elasticsearch.Client, index string, query map[string]any, unmarshal func([]byte) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		body, err := json.Marshal(query)
@@ -127,7 +132,7 @@ func Search[T any](client *elasticsearch.Client, index string, query map[string]
 // Elasticsearch auto-assign one. Use with [kitsune.Pipeline.ForEach] after
 // [kitsune.Batch].
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Bulk[T any](client *elasticsearch.Client, index string, marshal func(T) (id string, doc []byte, err error)) func(context.Context, []T) error {
 	return func(ctx context.Context, items []T) error {
 		var buf bytes.Buffer

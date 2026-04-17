@@ -1,8 +1,8 @@
 // Package knats provides NATS and NATS JetStream source and sink helpers for
 // kitsune pipelines.
 //
-// Users own the [nats.Conn] and JetStream objects — configure servers, TLS,
-// credentials, and stream/consumer settings yourself. Kitsune will never
+// The caller owns the [nats.Conn] and JetStream objects: configure servers,
+// TLS, credentials, and stream/consumer settings yourself. Kitsune will never
 // create or close them.
 //
 // Core NATS subscribe source:
@@ -26,6 +26,12 @@
 //	    return e, json.Unmarshal(msg.Data(), &e)
 //	})
 //	pipe.ForEach(handle).Run(ctx)
+//
+// Delivery semantics: Subscribe (core NATS) is at-most-once; messages are
+// not persisted and will not redeliver after a disconnect. Consume (JetStream)
+// is at-least-once; messages are acked after a successful yield and nacked on
+// unmarshal failure. Publish (core) and JetStreamPublish send synchronously
+// per item; JetStreamPublish receives server confirmation before returning.
 package knats
 
 import (
@@ -41,7 +47,7 @@ import (
 // a synchronous subscription. Each message is decoded with unmarshal; a decode
 // error terminates the pipeline with that error.
 //
-// The connection is not closed when the pipeline ends — the caller owns it.
+// The connection is not closed when the pipeline ends; the caller owns it.
 func Subscribe[T any](conn *nats.Conn, subject string, unmarshal func(*nats.Msg) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		sub, err := conn.SubscribeSync(subject)
@@ -73,7 +79,7 @@ func Subscribe[T any](conn *nats.Conn, subject string, unmarshal func(*nats.Msg)
 // with at-least-once delivery. Each message is acked after a successful yield;
 // if unmarshal fails the message is nacked and the pipeline terminates.
 //
-// The consumer is not closed when the pipeline ends — the caller owns it.
+// The consumer is not closed when the pipeline ends; the caller owns it.
 func Consume[T any](cons jetstream.Consumer, unmarshal func(jetstream.Msg) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		msgs, err := cons.Messages()
@@ -112,7 +118,7 @@ func Consume[T any](cons jetstream.Consumer, unmarshal func(jetstream.Msg) (T, e
 // Publish returns a sink function that publishes each item to a NATS subject.
 // marshal converts the item into a byte payload. Use with [kitsune.Pipeline.ForEach].
 //
-// The connection is not closed when the pipeline ends — the caller owns it.
+// The connection is not closed when the pipeline ends; the caller owns it.
 func Publish[T any](conn *nats.Conn, subject string, marshal func(T) ([]byte, error)) func(context.Context, T) error {
 	return func(ctx context.Context, item T) error {
 		data, err := marshal(item)

@@ -1,8 +1,8 @@
 // Package kkinesis provides AWS Kinesis source and sink helpers for kitsune
 // pipelines.
 //
-// Users own the Kinesis client — configure credentials and region yourself.
-// Kitsune will never create or close clients.
+// The caller owns the Kinesis client: configure credentials and region
+// yourself. Kitsune will never create or close clients.
 //
 // Consume a shard:
 //
@@ -24,6 +24,11 @@
 //	        b, err := json.Marshal(e)
 //	        return types.PutRecordsRequestEntry{Data: b, PartitionKey: aws.String(e.ID)}, err
 //	    })).Run(ctx)
+//
+// Delivery semantics: Consume is at-most-once from the pipeline's perspective;
+// Kinesis does not have consumer-side acks and there is no automatic
+// checkpoint. Produce is at-least-once: partial failures from PutRecords
+// are returned as errors; combine with [kitsune.Retry] for resilient sinks.
 package kkinesis
 
 import (
@@ -53,7 +58,7 @@ type KinesisClient interface {
 //
 // The source polls GetRecords in a loop. When no records are available
 // (MillisBehindLatest == 0 and empty batch), it waits briefly before retrying.
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Consume[T any](client KinesisClient, stream, shardID string, iteratorType types.ShardIteratorType, startSeq string, unmarshal func(types.Record) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		input := &kinesis.GetShardIteratorInput{
@@ -116,7 +121,7 @@ func Consume[T any](client KinesisClient, stream, shardID string, iteratorType t
 // marshal converts each item into a PutRecordsRequestEntry (Data + PartitionKey).
 // Use with [kitsune.Pipeline.ForEach] after [kitsune.Batch].
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Produce[T any](client KinesisClient, stream string, marshal func(T) (types.PutRecordsRequestEntry, error)) func(context.Context, []T) error {
 	const maxBatch = 500
 	return func(ctx context.Context, items []T) error {

@@ -1,8 +1,8 @@
 // Package kdynamo provides AWS DynamoDB source and sink helpers for kitsune
 // pipelines.
 //
-// Users own the DynamoDB client — configure credentials and region yourself.
-// Kitsune will never create or close clients.
+// The caller owns the DynamoDB client: configure credentials and region
+// yourself. Kitsune will never create or close clients.
 //
 // Full-table scan source:
 //
@@ -23,6 +23,11 @@
 //	        item, err := attributevalue.MarshalMap(e)
 //	        return types.WriteRequest{PutRequest: &types.PutRequest{Item: item}}, err
 //	    })).Run(ctx)
+//
+// Delivery semantics: Scan and Query are read-only sources (at-most-once;
+// no ack mechanism). BatchWrite provides at-least-once delivery when combined
+// with retries; unprocessed items are retried once and an error is returned
+// if they persist, so the caller controls retry logic at the pipeline level.
 package kdynamo
 
 import (
@@ -47,7 +52,7 @@ type DynamoClient interface {
 // DynamoDB table. unmarshal converts each item's attribute map into a value of
 // type T.
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Scan[T any](client DynamoClient, input *dynamodb.ScanInput, unmarshal func(map[string]types.AttributeValue) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		req := *input // shallow copy; do not mutate the caller's input
@@ -81,7 +86,7 @@ func Scan[T any](client DynamoClient, input *dynamodb.ScanInput, unmarshal func(
 // Query creates a Pipeline that performs a paginated DynamoDB query. unmarshal
 // converts each item's attribute map into a value of type T.
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func Query[T any](client DynamoClient, input *dynamodb.QueryInput, unmarshal func(map[string]types.AttributeValue) (T, error)) *kitsune.Pipeline[T] {
 	return kitsune.Generate(func(ctx context.Context, yield func(T) bool) error {
 		req := *input // shallow copy
@@ -120,7 +125,7 @@ func Query[T any](client DynamoClient, input *dynamodb.QueryInput, unmarshal fun
 // UnprocessedItems are retried once; if they persist the error is returned.
 // Use with [kitsune.Pipeline.ForEach] after [kitsune.Batch].
 //
-// The client is not closed when the pipeline ends — the caller owns it.
+// The client is not closed when the pipeline ends; the caller owns it.
 func BatchWrite[T any](client DynamoClient, table string, marshal func(T) (types.WriteRequest, error)) func(context.Context, []T) error {
 	const maxBatch = 25
 	return func(ctx context.Context, items []T) error {

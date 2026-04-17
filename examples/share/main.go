@@ -73,7 +73,7 @@ func main() {
 		auditLog = append(auditLog, fmt.Sprintf("order #%d: $%.2f", o.ID, o.Amount))
 		mu.Unlock()
 		return nil
-	}).Build()
+	})
 
 	var totalRevenue atomic.Value
 	totalRevenue.Store(0.0)
@@ -88,9 +88,9 @@ func main() {
 			}
 		}
 		return nil
-	}).Build()
+	})
 
-	runners := []*kitsune.Runner{auditRunner, metricsRunner}
+	runners := []kitsune.Runnable{auditRunner, metricsRunner}
 
 	var flagged atomic.Int64
 	if fraud != nil {
@@ -100,7 +100,7 @@ func main() {
 				fmt.Printf("fraud alert: order #%d amount $%.2f exceeds threshold\n", o.ID, o.Amount)
 			}
 			return nil
-		}).Build()
+		})
 		runners = append(runners, fraudRunner)
 	}
 

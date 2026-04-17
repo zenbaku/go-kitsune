@@ -22,7 +22,7 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 ### API and ergonomics
 
-- [ ] **`MergeRunners` should accept a `Runnable` interface instead of `*Runner`**: `Build()` currently leaks into user-facing code solely because `MergeRunners` requires `*Runner` arguments. Introduce a `Runnable` interface implemented by both `*ForEachRunner[T]` and `*Runner`, change `MergeRunners` to accept `...Runnable`, and add `RunAsync` directly to `ForEachRunner[T]`. `Build()` is retained for backwards compatibility but nothing in the new design requires it and the docs should stop recommending it.
+- [x] **`MergeRunners` should accept a `Runnable` interface instead of `*Runner`**: `Build()` currently leaks into user-facing code solely because `MergeRunners` requires `*Runner` arguments. Introduce a `Runnable` interface implemented by both `*ForEachRunner[T]` and `*Runner`, change `MergeRunners` to accept `...Runnable`, and add `RunAsync` directly to `ForEachRunner[T]`. `Build()` is retained for backwards compatibility but nothing in the new design requires it and the docs should stop recommending it. Added `Runnable` interface satisfied by `*Runner` and `*ForEachRunner[T]`; added `RunAsync` to `*ForEachRunner[T]` and `*DrainRunner[T]`; `Build()` retained as an identity on `*Runner` and unchanged on `*ForEachRunner[T]` for backwards compatibility.
 
 - [x] **Operator cohesiveness — cleanup pass**: remove dead/duplicated symbols and standardise naming across the surface. Removed `ConsecutiveDedup`/`ConsecutiveDedupBy`, `DeadLetter`/`DeadLetterSink`, `WindowByTime`, `ElementAt`, `BroadcastN`, `Skip()` alias, `Lift` alias. Renamed `SkipLast`→`DropLast`, `SkipUntil`→`DropUntil`, `WithLatestFrom`→`LatestFrom`, `FrequenciesStream`→`RunningFrequencies` (and converted to true running semantics). Replaced string-keyed `CountBy`/`SumBy` with generic `RunningCountBy`/`RunningSumBy`. Relocated `MapBatch`, `MapIntersperse`, `EndWith`, `Stage.Or` from `compat.go` to their natural homes; deleted `compat.go` entirely. See [cleanup plan](../docs/superpowers/plans/2026-04-17-cohesiveness-cleanup.md).
 
@@ -70,13 +70,13 @@ Completed milestones are preserved in [roadmap-archive.md](roadmap-archive.md).
 
 - [x] **`ContextCarrier` vs `WithContextMapper` decision guide**: The two approaches for per-item trace propagation have meaningfully different trade-offs: `ContextCarrier` requires modifying the item type (impossible for third-party types); `WithContextMapper` is a stage option requiring no type changes. The comparison exists only as a one-line godoc mention. Add a section to `doc/operators.md` or a new `doc/tracing.md` with a comparison table and worked examples for both.
 
-- [ ] **Tail godoc quality baseline and template**: Godoc quality varies across the 20+ tail packages. Define a standard template: package-level working example, standard function names (`Consume`/`Produce` or `Source`/`Sink`), "caller owns the connection" lifecycle note, explicit at-least-once / at-most-once declaration. Audit all tails against the template and bring each up to standard.
+- [x] **Tail godoc quality baseline and template**: Audited all 27 tail packages against a standard template. Added missing caller-owns statements, worked examples, and delivery semantics declarations to each package godoc. Replaced all em dashes in godoc with colons or semicolons. Template codified in `doc/tails.md`.
 
 ---
 
 ### Ecosystem
 
-- [ ] **Shared tail interface contract (`doc/tails.md`)**: The 20+ tail packages expose inconsistent function names, parameter orders, and error semantics with no shared convention. Define a tail interface guide covering: standard naming (`Consume`/`Produce`), parameter order (connection first, transform function second), connection lifecycle ownership, error propagation behaviour, and at-least-once semantics declaration. Retrofit existing tails to conform and use this as the template for future tails.
+- [x] **Shared tail interface contract (`doc/tails.md`)**: Wrote `doc/tails.md` covering: naming conventions (primary verbs plus accepted domain-idiomatic alternatives), parameter order, connection lifecycle ownership, error propagation, delivery semantics, the package godoc template, and a tail matrix with all 27 tails. Existing tails were audited and brought to conform.
 
 - [x] **`kkafka` batched commit variant**: `kkafka.Consume` commits each Kafka message individually after `yield`, which serializes commit latency with processing latency. For high-throughput consumers, batched commits (flush N offsets at once, or on a timer) reduce broker round-trips significantly. Implemented as `BatchSize(n)` and `BatchTimeout(d)` options on `Consume` (variadic, backward-compatible) rather than a standalone function.
 
