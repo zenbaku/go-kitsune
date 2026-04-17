@@ -1,6 +1,6 @@
 // Example: broadcast — fan-out a single stream to N independent consumers.
 //
-// Demonstrates: BroadcastN, MergeRunners
+// Demonstrates: Broadcast, MergeRunners
 package main
 
 import (
@@ -16,9 +16,9 @@ func main() {
 
 	events := kitsune.FromSlice([]string{"login", "purchase", "logout", "search", "purchase"})
 
-	// BroadcastN fans the stream out to 3 independent channels. Each consumer
+	// Broadcast fans the stream out to 3 independent channels. Each consumer
 	// sees every item. The source is consumed at the speed of the slowest consumer.
-	branches := kitsune.BroadcastN(events, 3)
+	branches := kitsune.Broadcast(events, 3)
 
 	var mu sync.Mutex
 	counts := make([]int, 3)

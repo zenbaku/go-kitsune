@@ -1903,11 +1903,10 @@ runner.Run(ctx)
 
 ---
 
-### Broadcast / BroadcastN
+### Broadcast
 
 ```go
 func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
-func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 ```
 
 Fans out each item to `n` identical output pipelines. Every item is delivered to every branch (synchronised fan-out). A slow branch backpressures upstream and all other branches. All `n` pipelines must be consumed. Panics if `n < 2`.
@@ -1933,11 +1932,11 @@ runner.Run(ctx)
 func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pipeline[T]
 ```
 
-Returns a subscription factory for dynamic multicast. Call the returned function once per desired branch; each branch receives every item from `p`. Unlike [`Broadcast`](#broadcast-broadcastn), the number of consumers does not need to be known upfront; branches are registered dynamically before `Run` is called.
+Returns a subscription factory for dynamic multicast. Call the returned function once per desired branch; each branch receives every item from `p`. Unlike [`Broadcast`](#broadcast), the number of consumers does not need to be known upfront; branches are registered dynamically before `Run` is called.
 
 Options passed to `Share` are defaults for all branches; options passed to individual subscribe calls override them per-branch.
 
-**When to use:** When consumers are built in a loop, from config, or from a plugin registry, when [`Broadcast`](#broadcast-broadcastn)'s fixed `n` is inconvenient.
+**When to use:** When consumers are built in a loop, from config, or from a plugin registry, when [`Broadcast`](#broadcast)'s fixed `n` is inconvenient.
 
 **Options on the factory:** `Buffer`, `WithName` (defaults for all branches). Per-subscribe calls can also pass `Buffer`, `WithName`.
 

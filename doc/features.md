@@ -48,7 +48,7 @@ Split a stream into multiple branches or merge multiple streams into one.
 | Operator | What it does |
 |---|---|
 | [`Partition(p)`](operators.md#partition) | Route each item to one of two typed branches based on a predicate |
-| [`BroadcastN(n)`](operators.md#broadcast--broadcastn) | Copy every item to N independent consumer branches |
+| [`Broadcast(n)`](operators.md#broadcast) | Copy every item to N independent consumer branches |
 | [`Share(src)`](operators.md#share) | Register consumers one at a time, each with independent options |
 | [`Balance(n)`](operators.md#balance) | Round-robin distribute across N branches |
 | [`KeyedBalance(n, keyFn)`](operators.md#keyedbalance) | Route by `hash(key) % n` for stable per-key assignment |

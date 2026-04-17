@@ -354,7 +354,7 @@ Split a stream into two typed branches and run them concurrently.
 
 Fan a single stream out to N independent consumers; each sees every item.
 
-**Demonstrates:** `BroadcastN`, `MergeRunners`
+**Demonstrates:** `Broadcast`, `MergeRunners`
 
 [:material-play: Run in Playground](https://go.dev/play/p/z2rybKDooom){ .md-button .md-button--primary }
 [:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/broadcast/main.go){ .md-button }
@@ -364,7 +364,7 @@ Fan a single stream out to N independent consumers; each sees every item.
     ```go
     // Example: broadcast — fan-out a single stream to N independent consumers.
     //
-    // Demonstrates: BroadcastN, MergeRunners
+    // Demonstrates: Broadcast, MergeRunners
     package main
 
     import (
@@ -380,9 +380,9 @@ Fan a single stream out to N independent consumers; each sees every item.
 
         events := kitsune.FromSlice([]string{"login", "purchase", "logout", "search", "purchase"})
 
-        // BroadcastN fans the stream out to 3 independent channels. Each consumer
+        // Broadcast fans the stream out to 3 independent channels. Each consumer
         // sees every item. The source is consumed at the speed of the slowest consumer.
-        branches := kitsune.BroadcastN(events, 3)
+        branches := kitsune.Broadcast(events, 3)
 
         var mu sync.Mutex
         counts := make([]int, 3)

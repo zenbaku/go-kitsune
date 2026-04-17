@@ -160,7 +160,6 @@ Documents every exported operator and which `StageOption` features each one actu
 | Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
 | `Broadcast` | `Broadcast[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `BroadcastN` | `BroadcastN[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Balance` | `Balance[T](p, n, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `KeyedBalance` | `KeyedBalance[T](p, n, keyFn, opts...)` → `[]*Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Share` | `Share[T](p, opts...)` → `func(opts...) *Pipeline[T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -179,7 +178,6 @@ Documents every exported operator and which `StageOption` features each one actu
 **Notes**
 - `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
 - The `*With` variants run a user fn and do produce a buffered output channel; `Buffer` and `Name` apply.
-- `BroadcastN` is an explicit N-way alias for `Broadcast` (identical semantics).
 - `Broadcast` requires `n ≥ 2`.
 - `Share` returns a factory; call the factory once per desired branch before building the runner. At least one subscribe call is required. `Buffer` and `WithName` can be set on each individual subscribe call (per-subscribe opts override factory opts). Calling the factory after `Run()` has started panics. Unlike `Broadcast`, `Share` allows a single subscriber.
 - `LookupBy` and `Enrich` also accept `BatchTimeout` as a first-class field on `LookupConfig` / `EnrichConfig`; the field is equivalent to passing the `BatchTimeout(d)` `StageOption` and is forwarded to the internal `Batch` stage.

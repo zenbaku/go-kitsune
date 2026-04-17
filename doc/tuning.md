@@ -62,7 +62,7 @@ Fusion propagates upstream as long as every operator in the chain sets a `fusion
 | `Batch`, `Window`, `SlidingWindow`, `SessionWindow`, `BufferWith`, `ChunkBy`, `ChunkWhile` | **Yes** | Windowing and batching operators do not set `fusionEntry` |
 | `Throttle`, `Debounce`, `Sample`, `SampleWith` | **Yes** | Rate and timing operators do not set `fusionEntry` |
 | `Merge`, `Concat`, `Amb`, `Zip`, `CombineLatest`, `WithLatestFrom` | **Yes** | Multi-input operators do not set `fusionEntry` |
-| `Partition`, `Broadcast`, `BroadcastN`, `Balance`, `Share` | **Yes** | Fan-out operators do not set `fusionEntry` |
+| `Partition`, `Broadcast`, `Balance`, `Share` | **Yes** | Fan-out operators do not set `fusionEntry` |
 | Sources (`FromSlice`, `Generate`, `FromChan`, `Ticker`, etc.) | **Yes** | Sources have no upstream to fuse with |
 | `Tap`, `TapError`, `Finally`, `IgnoreElements`, `ExpandMap` | **Yes** | Utility operators do not set `fusionEntry` |
 | `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey` | **Yes** | Stateful key-sharding operators do not set `fusionEntry` |

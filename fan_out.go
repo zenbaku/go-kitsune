@@ -185,18 +185,13 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 }
 
 // ---------------------------------------------------------------------------
-// Broadcast / BroadcastN
+// Broadcast
 // ---------------------------------------------------------------------------
 
 // Broadcast fans out each item to n identical output pipelines.
 // All n pipelines must be consumed. The stage blocks until all consumers
 // have accepted each item (synchronised fan-out).
 func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
-	return BroadcastN(p, n, opts...)
-}
-
-// BroadcastN fans out each item to n identical output pipelines.
-func BroadcastN[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 	if n < 2 {
 		panic("kitsune: Broadcast requires n >= 2")
 	}
