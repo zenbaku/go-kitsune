@@ -48,14 +48,14 @@ func TestMapIntersperseSingle(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CountBy
+// RunningCountBy
 // ---------------------------------------------------------------------------
 
-func TestCountBy(t *testing.T) {
+func TestRunningCountBy(t *testing.T) {
 	ctx := context.Background()
 	items := []string{"a", "b", "a", "c", "b", "a"}
 	p := kitsune.FromSlice(items)
-	snapshots, err := kitsune.Collect(ctx, kitsune.CountBy(p, func(s string) string { return s }))
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningCountBy(p, func(s string) string { return s }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +69,10 @@ func TestCountBy(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SumBy
+// RunningSumBy
 // ---------------------------------------------------------------------------
 
-func TestSumBy(t *testing.T) {
+func TestRunningSumBy(t *testing.T) {
 	ctx := context.Background()
 	type txn struct {
 		account string
@@ -81,7 +81,7 @@ func TestSumBy(t *testing.T) {
 	items := []txn{
 		{"alice", 10}, {"bob", 5}, {"alice", 20}, {"bob", 15},
 	}
-	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(kitsune.FromSlice(items),
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningSumBy(kitsune.FromSlice(items),
 		func(t txn) string { return t.account },
 		func(t txn) float64 { return t.amount },
 	))
@@ -288,12 +288,12 @@ func TestStageOr_BothFailJoinsErrors(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CountBy edge cases (6e)
+// RunningCountBy edge cases (6e)
 // ---------------------------------------------------------------------------
 
-func TestCountBy_EmptyStream(t *testing.T) {
+func TestRunningCountBy_EmptyStream(t *testing.T) {
 	ctx := context.Background()
-	snapshots, err := kitsune.Collect(ctx, kitsune.CountBy(kitsune.FromSlice([]string{}),
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningCountBy(kitsune.FromSlice([]string{}),
 		func(s string) string { return s },
 	))
 	if err != nil {
@@ -304,10 +304,10 @@ func TestCountBy_EmptyStream(t *testing.T) {
 	}
 }
 
-func TestCountBy_SnapshotIsolation(t *testing.T) {
+func TestRunningCountBy_SnapshotIsolation(t *testing.T) {
 	// Mutating a returned snapshot must not affect the next one.
 	ctx := context.Background()
-	snapshots, err := kitsune.Collect(ctx, kitsune.CountBy(
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningCountBy(
 		kitsune.FromSlice([]string{"a", "a"}),
 		func(s string) string { return s },
 	))
@@ -325,18 +325,18 @@ func TestCountBy_SnapshotIsolation(t *testing.T) {
 	}
 }
 
-func TestCountBy_MultipleInstances(t *testing.T) {
-	// Two CountBy stages on independent pipelines must not share state.
+func TestRunningCountBy_MultipleInstances(t *testing.T) {
+	// Two RunningCountBy stages on independent pipelines must not share state.
 	ctx := context.Background()
 
 	p1 := kitsune.FromSlice([]string{"x", "x", "x"})
 	p2 := kitsune.FromSlice([]string{"y", "y"})
 
-	s1, err := kitsune.Collect(ctx, kitsune.CountBy(p1, func(s string) string { return s }))
+	s1, err := kitsune.Collect(ctx, kitsune.RunningCountBy(p1, func(s string) string { return s }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := kitsune.Collect(ctx, kitsune.CountBy(p2, func(s string) string { return s }))
+	s2, err := kitsune.Collect(ctx, kitsune.RunningCountBy(p2, func(s string) string { return s }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,16 +356,16 @@ func TestCountBy_MultipleInstances(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SumBy edge cases (6e)
+// RunningSumBy edge cases (6e)
 // ---------------------------------------------------------------------------
 
-func TestSumBy_EmptyStream(t *testing.T) {
+func TestRunningSumBy_EmptyStream(t *testing.T) {
 	ctx := context.Background()
 	type item struct {
 		k string
 		v int
 	}
-	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningSumBy(
 		kitsune.FromSlice([]item{}),
 		func(i item) string { return i.k },
 		func(i item) int { return i.v },
@@ -378,13 +378,13 @@ func TestSumBy_EmptyStream(t *testing.T) {
 	}
 }
 
-func TestSumBy_SnapshotIsolation(t *testing.T) {
+func TestRunningSumBy_SnapshotIsolation(t *testing.T) {
 	type item struct {
 		k string
 		v int
 	}
 	ctx := context.Background()
-	snapshots, err := kitsune.Collect(ctx, kitsune.SumBy(
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningSumBy(
 		kitsune.FromSlice([]item{{"a", 10}, {"a", 20}}),
 		func(i item) string { return i.k },
 		func(i item) int { return i.v },

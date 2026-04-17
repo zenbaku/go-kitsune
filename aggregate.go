@@ -491,3 +491,119 @@ func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, 
 	}
 	return newPipeline(id, meta, build)
 }
+
+// ---------------------------------------------------------------------------
+// RunningCountBy / RunningSumBy
+// ---------------------------------------------------------------------------
+
+// RunningCountBy emits a running count-per-key snapshot after each item.
+// The map key type K is determined by keyFn. The emitted map is a new copy
+// on each item: safe to retain across iterations.
+func RunningCountBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "running_count_by",
+		name:   orDefault(cfg.name, "running_count_by"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan map[K]int64 {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan map[K]int64)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan map[K]int64, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			counts := make(map[K]int64)
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					counts[keyFn(item)]++
+					snapshot := make(map[K]int64, len(counts))
+					for k, v := range counts {
+						snapshot[k] = v
+					}
+					if err := outbox.Send(ctx, snapshot); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
+// RunningSumBy emits a running sum-per-key snapshot after each item.
+// The map key type K is determined by keyFn; values are summed using valueFn.
+// The emitted map is a new copy on each item: safe to retain across iterations.
+func RunningSumBy[T any, K comparable, V Numeric](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "running_sum_by",
+		name:   orDefault(cfg.name, "running_sum_by"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan map[K]V {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan map[K]V)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan map[K]V, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			sums := make(map[K]V)
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					sums[keyFn(item)] += valueFn(item)
+					snapshot := make(map[K]V, len(sums))
+					for k, v := range sums {
+						snapshot[k] = v
+					}
+					if err := outbox.Send(ctx, snapshot); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
