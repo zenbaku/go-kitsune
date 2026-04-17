@@ -14,7 +14,7 @@ import (
 //
 // Note: Go does not allow methods with their own type parameters, so the
 // following terminals must remain free functions only:
-//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, TakeRandom, SequenceEqual
+//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, SequenceEqual
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.

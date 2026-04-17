@@ -338,33 +338,71 @@ func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn fu
 // TakeRandom — reservoir sampling
 // ---------------------------------------------------------------------------
 
-// TakeRandom returns a random sample of up to n items from the pipeline using
+// TakeRandom returns a pipeline that buffers all items from p and emits a
+// single []T containing a random sample of up to n items, selected using
 // reservoir sampling (Algorithm R). Each item has an equal probability of
-// being selected. The returned slice has min(n, pipelineSize) items.
-// Order of the returned items is not guaranteed.
-func TakeRandom[T any](ctx context.Context, p *Pipeline[T], n int, opts ...RunOption) ([]T, error) {
-	if n <= 0 {
-		err := p.ForEach(func(_ context.Context, _ T) error { return nil }).Run(ctx, opts...)
-		return nil, err
+// being selected. The emitted slice has min(n, sourceSize) items. Order is
+// not guaranteed. Use [Single] to collect the result.
+func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "take_random",
+		name:   orDefault(cfg.name, "take_random"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
 	}
+	build := func(rc *runCtx) chan []T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan []T)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
 
-	reservoir := make([]T, 0, n)
-	i := 0
+			if n <= 0 {
+				return outbox.Send(ctx, []T{})
+			}
 
-	err := p.ForEach(func(_ context.Context, v T) error {
-		i++
-		if len(reservoir) < n {
-			reservoir = append(reservoir, v)
-		} else {
-			// Algorithm R: replace a random element with decreasing probability.
-			j := rand.Intn(i)
-			if j < n {
-				reservoir[j] = v
+			reservoir := make([]T, 0, n)
+			i := 0
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						result := make([]T, len(reservoir))
+						copy(result, reservoir)
+						return outbox.Send(ctx, result)
+					}
+					i++
+					if len(reservoir) < n {
+						reservoir = append(reservoir, item)
+					} else {
+						j := rand.Intn(i)
+						if j < n {
+							reservoir[j] = item
+						}
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		}
-		return nil
-	}).Run(ctx, opts...)
-	return reservoir, err
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------

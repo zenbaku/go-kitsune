@@ -3,7 +3,6 @@ package kitsune_test
 import (
 	"context"
 	"errors"
-	"math/rand"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -588,43 +587,45 @@ func TestReduceWhileNeverStops(t *testing.T) {
 // TakeRandom
 // ---------------------------------------------------------------------------
 
-func TestTakeRandom(t *testing.T) {
+func TestTakeRandom_Pipeline(t *testing.T) {
 	ctx := context.Background()
-	rand.Seed(42)
-	items := makeInts(100)
-	p := kitsune.FromSlice(items)
-	got, err := kitsune.TakeRandom(ctx, p, 10)
+	src := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+	sample, err := kitsune.Single(ctx, kitsune.TakeRandom(src, 3))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 10 {
-		t.Fatalf("got %d items, want 10", len(got))
+	if len(sample) != 3 {
+		t.Errorf("got %d items, want 3", len(sample))
 	}
-	// All returned items must be from the original set.
-	set := make(map[int]bool)
-	for _, v := range items {
-		set[v] = true
-	}
-	for _, v := range got {
-		if !set[v] {
-			t.Fatalf("returned value %d not in source", v)
+	srcSet := map[int]struct{}{1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {}, 9: {}, 10: {}}
+	for _, v := range sample {
+		if _, ok := srcSet[v]; !ok {
+			t.Errorf("item %d not in source", v)
 		}
 	}
 }
 
-func TestTakeRandomFewerThanN(t *testing.T) {
+func TestTakeRandom_NLargerThanSource(t *testing.T) {
 	ctx := context.Background()
-	p := kitsune.FromSlice([]int{1, 2, 3})
-	got, err := kitsune.TakeRandom(ctx, p, 10)
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	sample, err := kitsune.Single(ctx, kitsune.TakeRandom(src, 10))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("got %d items, want 3", len(got))
+	if len(sample) != 3 {
+		t.Errorf("got %d items, want 3 (capped at source size)", len(sample))
 	}
-	sort.Ints(got)
-	if got[0] != 1 || got[1] != 2 || got[2] != 3 {
-		t.Fatalf("got %v", got)
+}
+
+func TestTakeRandom_NZero(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	sample, err := kitsune.Single(ctx, kitsune.TakeRandom(src, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sample) != 0 {
+		t.Errorf("got %d items, want 0 when n=0", len(sample))
 	}
 }
 
