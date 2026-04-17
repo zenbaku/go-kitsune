@@ -454,3 +454,51 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error) {
 	return Any(ctx, p, func(v T) bool { return v == value }, opts...)
 }
+
+// ---------------------------------------------------------------------------
+// MapIntersperse
+// ---------------------------------------------------------------------------
+
+// MapIntersperse applies fn to each item and inserts sep between consecutive
+// mapped outputs (not before the first or after the last).
+//
+//	kitsune.MapIntersperse(words, ",", strings.ToUpper)
+//	// "hello", "world" → "HELLO", ",", "WORLD"
+func MapIntersperse[T, O any](p *Pipeline[T], sep O, fn func(context.Context, T) (O, error), opts ...StageOption) *Pipeline[O] {
+	first := true
+	return FlatMap(p, func(ctx context.Context, item T, yield func(O) error) error {
+		out, err := fn(ctx, item)
+		if err != nil {
+			return err
+		}
+		if first {
+			first = false
+			return yield(out)
+		}
+		if err := yield(sep); err != nil {
+			return err
+		}
+		return yield(out)
+	}, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// EndWith
+// ---------------------------------------------------------------------------
+
+// EndWith appends one or more items to p after it closes. Suffix items are
+// always emitted after all items from p, in the order given.
+//
+//	kitsune.EndWith(kitsune.FromSlice([]int{1, 2, 3}), 4, 5)
+//	// emits: 1, 2, 3, 4, 5
+func EndWith[T any](p *Pipeline[T], items ...T) *Pipeline[T] {
+	track(p)
+	if len(items) == 0 {
+		return p
+	}
+	itemsCopy := items
+	return Concat(
+		func() *Pipeline[T] { return p },
+		func() *Pipeline[T] { return FromSlice(itemsCopy) },
+	)
+}

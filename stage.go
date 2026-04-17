@@ -47,6 +47,36 @@ func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T] {
 	return s(p)
 }
 
+// Or returns a Stage that tries s first and, on error, calls fallback with the
+// same input to produce a value.
+//
+// If both s and fallback return errors, the returned error wraps both via
+// [errors.Join] so neither is silently discarded. Callers can inspect either
+// cause with [errors.Is] or [errors.As].
+//
+//	fetch := kitsune.Stage[ID, User](func(p *Pipeline[ID]) *Pipeline[User] {
+//	    return kitsune.Map(p, fetchFromDB)
+//	})
+//	withCache := fetch.Or(func(p *Pipeline[ID]) *Pipeline[User] {
+//	    return kitsune.Map(p, fetchFromCache)
+//	})
+func (s Stage[I, O]) Or(fallback Stage[I, O]) Stage[I, O] {
+	return func(p *Pipeline[I]) *Pipeline[O] {
+		return Map(p, func(ctx context.Context, v I) (O, error) {
+			results, primaryErr := Collect(ctx, s(FromSlice([]I{v})))
+			if primaryErr == nil && len(results) > 0 {
+				return results[0], nil
+			}
+			results, fallbackErr := Collect(ctx, fallback(FromSlice([]I{v})))
+			if fallbackErr == nil && len(results) > 0 {
+				return results[0], nil
+			}
+			var zero O
+			return zero, errors.Join(primaryErr, fallbackErr)
+		})
+	}
+}
+
 // Or returns a Stage that tries primary and, on error, falls back to fallback.
 // If primary succeeds its result is emitted; if primary returns an error,
 // fallback is called with the same item and its result (or error) is used.

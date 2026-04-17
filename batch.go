@@ -589,3 +589,43 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 	}
 	return newPipeline(id, meta, build)
 }
+
+// ---------------------------------------------------------------------------
+// MapBatch
+// ---------------------------------------------------------------------------
+
+// MapBatch collects up to size items, passes the slice to fn, and flattens
+// the returned slice back into individual items. Useful for bulk DB or API
+// calls where batching reduces round-trips.
+//
+// Use [BatchTimeout] in opts to flush partial batches after a duration.
+// Use [Concurrency] to process multiple batches in parallel.
+//
+//	kitsune.MapBatch(terms, 200, func(ctx context.Context, batch []Term) ([]Enriched, error) {
+//	    return db.BulkLookup(ctx, batch)
+//	})
+func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) ([]O, error), opts ...StageOption) *Pipeline[O] {
+	batched := Batch(p, size, batchCollectOpts(opts)...)
+	return FlatMap(batched, func(ctx context.Context, batch []I, yield func(O) error) error {
+		results, err := fn(ctx, batch)
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			if err := yield(r); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, opts...)
+}
+
+// batchCollectOpts extracts only the BatchTimeout option for the Batch stage;
+// all other options (Concurrency, OnError, etc.) apply to the FlatMap stage.
+func batchCollectOpts(opts []StageOption) []StageOption {
+	cfg := buildStageConfig(opts)
+	if cfg.batchTimeout == 0 {
+		return nil
+	}
+	return []StageOption{BatchTimeout(cfg.batchTimeout)}
+}
