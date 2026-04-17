@@ -152,61 +152,27 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
-		var stage stageFunc
-		if cfg.dedupSet != nil {
-			set := cfg.dedupSet
-			stage = func(ctx context.Context) error {
-				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
-				outbox := internal.NewBlockingOutbox(ch)
-				for {
-					select {
-					case item, ok := <-inCh:
-						if !ok {
-							return nil
-						}
-						k := fmt.Sprintf("%v", keyFn(item))
-						dup, err := set.Contains(ctx, k)
-						if err != nil {
-							return err
-						}
-						if dup {
-							continue
-						}
-						if err := set.Add(ctx, k); err != nil {
-							return err
-						}
-						if err := outbox.Send(ctx, item); err != nil {
-							return err
-						}
-					case <-ctx.Done():
-						return ctx.Err()
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			seen := make(map[K]struct{})
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
 					}
-				}
-			}
-		} else {
-			stage = func(ctx context.Context) error {
-				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
-				outbox := internal.NewBlockingOutbox(ch)
-				seen := make(map[K]struct{})
-				for {
-					select {
-					case item, ok := <-inCh:
-						if !ok {
-							return nil
-						}
-						k := keyFn(item)
-						if _, dup := seen[k]; dup {
-							continue
-						}
-						seen[k] = struct{}{}
-						if err := outbox.Send(ctx, item); err != nil {
-							return err
-						}
-					case <-ctx.Done():
-						return ctx.Err()
+					k := keyFn(item)
+					if _, dup := seen[k]; dup {
+						continue
 					}
+					seen[k] = struct{}{}
+					if err := outbox.Send(ctx, item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 		}

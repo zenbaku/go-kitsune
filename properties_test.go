@@ -1233,22 +1233,22 @@ func TestPropWithKeyTTLResetAfterEviction(t *testing.T) {
 	})
 }
 
-// TestPropTTLDedupSetDistinctDeduplication verifies the deduplication law:
-// DistinctBy with a TTLDedupSet produces exactly the set of first-seen keys
+// TestPropTTLDedupSetDeduplication verifies the deduplication law:
+// DedupeBy with a TTLDedupSet produces exactly the set of first-seen keys
 // from a finite input when the TTL is long enough not to expire during the run.
-func TestPropTTLDedupSetDistinctDeduplication(t *testing.T) {
+func TestPropTTLDedupSetDeduplication(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		ctx := context.Background()
 		in := rapid.SliceOfN(rapid.IntRange(0, 9), 0, 20).Draw(t, "in")
 
 		set := kitsune.TTLDedupSet(5 * time.Second)
-		got, err := kitsune.Collect(ctx, kitsune.DistinctBy(
+		got, err := kitsune.Collect(ctx, kitsune.DedupeBy(
 			kitsune.FromSlice(in),
 			func(v int) int { return v },
 			kitsune.WithDedupSet(set),
 		))
 		if err != nil {
-			t.Fatalf("DistinctBy error: %v", err)
+			t.Fatalf("DedupeBy error: %v", err)
 		}
 
 		// Build the expected first-seen set in order.

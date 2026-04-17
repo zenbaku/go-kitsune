@@ -1,6 +1,6 @@
 // Example: ttldedup — time-bounded deduplication with TTLDedupSet.
 //
-// Demonstrates: TTLDedupSet, WithDedupSet, DistinctBy.
+// Demonstrates: TTLDedupSet, WithDedupSet, Dedupe.
 //
 // TTLDedupSet forgets keys after a configured TTL. Unlike MemoryDedupSet
 // (unbounded memory) and BloomDedupSet (bounded but lossy), it bounds memory
@@ -31,7 +31,7 @@ func main() {
 		"wh-3", "wh-2", // duplicate within window: suppressed
 	})
 
-	unique := kitsune.DistinctBy(deliveries, func(id string) string { return id },
+	unique := kitsune.DedupeBy(deliveries, func(id string) string { return id },
 		kitsune.WithDedupSet(set),
 	)
 

@@ -1,6 +1,6 @@
 // Example: bloomdedup — probabilistic deduplication with a Bloom filter.
 //
-// Demonstrates: BloomDedupSet, WithDedupSet, DistinctBy, Dedupe
+// Demonstrates: BloomDedupSet, WithDedupSet, Dedupe, DedupeBy
 //
 // BloomDedupSet provides bounded memory regardless of key-space size.
 // Unlike MemoryDedupSet, it trades a configurable false-positive rate for
@@ -18,7 +18,7 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// --- DistinctBy with a Bloom filter ---
+	// --- DedupeBy with a Bloom filter ---
 	//
 	// BloomDedupSet(expectedItems, falsePositiveRate) creates a filter sized
 	// for expectedItems unique keys at the given FP probability.
@@ -31,7 +31,7 @@ func main() {
 	})
 
 	set := kitsune.BloomDedupSet(1_000, 0.01)
-	unique := kitsune.DistinctBy(events, func(e string) string { return e },
+	unique := kitsune.DedupeBy(events, func(e string) string { return e },
 		kitsune.WithDedupSet(set),
 	)
 
@@ -39,8 +39,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("distinct events:", results)
-	// Output: distinct events: [login:alice purchase:bob logout:carol login:dave]
+	fmt.Println("deduped events:", results)
+	// Output: deduped events: [login:alice purchase:bob logout:carol login:dave]
 
 	// --- Shared filter across pipeline runs ---
 	//
@@ -50,7 +50,7 @@ func main() {
 	sharedSet := kitsune.BloomDedupSet(10_000, 0.01)
 
 	run1 := kitsune.FromSlice([]int{1, 2, 3})
-	_, err = kitsune.Collect(ctx, kitsune.DistinctBy(run1, func(n int) int { return n },
+	_, err = kitsune.Collect(ctx, kitsune.DedupeBy(run1, func(n int) int { return n },
 		kitsune.WithDedupSet(sharedSet),
 	))
 	if err != nil {
@@ -58,7 +58,7 @@ func main() {
 	}
 
 	run2 := kitsune.FromSlice([]int{2, 3, 4, 5}) // 2 and 3 already seen
-	newOnly, err := kitsune.Collect(ctx, kitsune.DistinctBy(run2, func(n int) int { return n },
+	newOnly, err := kitsune.Collect(ctx, kitsune.DedupeBy(run2, func(n int) int { return n },
 		kitsune.WithDedupSet(sharedSet),
 	))
 	if err != nil {
