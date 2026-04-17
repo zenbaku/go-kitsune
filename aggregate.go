@@ -362,46 +362,30 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 // GroupBy
 // ---------------------------------------------------------------------------
 
-// Group holds all items sharing a common key.
-type Group[K comparable, V any] struct {
-	Key   K
-	Items []V
-}
-
-// GroupBy runs the pipeline and returns a map from key to slice of items.
-// For a streaming variant that keeps the result in-pipeline, use [GroupByStream].
-func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K][]T, error) {
-	groups := make(map[K][]T)
-	err := p.ForEach(func(_ context.Context, v T) error {
-		k := keyFn(v)
-		groups[k] = append(groups[k], v)
-		return nil
-	}).Run(ctx, opts...)
-	return groups, err
-}
-
-// GroupByStream partitions items by key and emits one [Group] per distinct key
-// when the source completes, in first-seen key order. Use this when you need to
-// pipeline the grouped results into further stages; for a terminal map result
-// use [GroupBy].
-func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
+// GroupBy buffers all items from p, groups them by the key returned by keyFn,
+// and emits a single map[K][]T when the source closes. Use [Single] (once
+// available) to collect the result, or pipe the map into further stages.
+//
+// Items within each group preserve arrival order. Empty input produces a
+// single emission of an empty map.
+func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "group_by_stream",
-		name:   orDefault(cfg.name, "group_by_stream"),
+		kind:   "group_by",
+		name:   orDefault(cfg.name, "group_by"),
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
-	build := func(rc *runCtx) chan Group[K, T] {
+	build := func(rc *runCtx) chan map[K][]T {
 		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan Group[K, T])
+			return existing.(chan map[K][]T)
 		}
 		inCh := p.build(rc)
 		buf := rc.effectiveBufSize(cfg)
-		ch := make(chan Group[K, T], buf)
+		ch := make(chan map[K][]T, buf)
 		m := meta
 		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
@@ -410,30 +394,16 @@ func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
-
 			outbox := internal.NewBlockingOutbox(ch)
-			groups := make(map[K]*Group[K, T])
-			var order []K // preserve insertion order
-
+			groups := make(map[K][]T)
 			for {
 				select {
 				case item, ok := <-inCh:
 					if !ok {
-						// Emit all groups in first-seen order.
-						for _, k := range order {
-							if err := outbox.Send(ctx, *groups[k]); err != nil {
-								return err
-							}
-						}
-						return nil
+						return outbox.Send(ctx, groups)
 					}
 					k := keyFn(item)
-					if g, exists := groups[k]; exists {
-						g.Items = append(g.Items, item)
-					} else {
-						groups[k] = &Group[K, T]{Key: k, Items: []T{item}}
-						order = append(order, k)
-					}
+					groups[k] = append(groups[k], item)
 				case <-ctx.Done():
 					return ctx.Err()
 				}

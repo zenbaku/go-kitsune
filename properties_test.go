@@ -1999,29 +1999,33 @@ func TestPropMinMax(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GroupByStream properties
+// GroupBy properties
 // ---------------------------------------------------------------------------
 
-// TestPropGroupByStreamPartition verifies that GroupByStream partitions the
-// input stream without loss or duplication: the concatenation of all group
-// Items slices is a multiset-equal to the original input.
-func TestPropGroupByStreamPartition(t *testing.T) {
+// TestPropGroupByPartition verifies that GroupBy partitions the input stream
+// without loss or duplication: the concatenation of all group value slices is
+// multiset-equal to the original input.
+func TestPropGroupByPartition(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		emissions, err := kitsune.Collect(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
+			t.Fatalf("GroupBy error: %v", err)
 		}
+		if len(emissions) != 1 {
+			t.Fatalf("expected 1 emission, got %d", len(emissions))
+		}
+		result := emissions[0]
 
-		// Flatten all group items.
+		// Flatten all group values.
 		var got []int
-		for _, g := range groups {
-			got = append(got, g.Items...)
+		for _, items := range result {
+			got = append(got, items...)
 		}
 
 		if !sameMultiset(got, in) {
@@ -2030,34 +2034,32 @@ func TestPropGroupByStreamPartition(t *testing.T) {
 	})
 }
 
-// TestPropGroupByStreamKeyOrder verifies two laws:
+// TestPropGroupByKeyOrder verifies two laws:
 //  1. Key correctness: every item in group K satisfies keyFn(item) == K.
 //  2. Relative ordering: items within each group appear in the same relative
 //     order as they did in the original input.
-func TestPropGroupByStreamKeyOrder(t *testing.T) {
+func TestPropGroupByKeyOrder(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		emissions, err := kitsune.Collect(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
+			t.Fatalf("GroupBy error: %v", err)
 		}
-
-		// Build a map from key to group for easy lookup.
-		byKey := make(map[int]kitsune.Group[int, int], len(groups))
-		for _, g := range groups {
-			byKey[g.Key] = g
+		if len(emissions) != 1 {
+			t.Fatalf("expected 1 emission, got %d", len(emissions))
 		}
+		result := emissions[0]
 
 		// Law 1: key correctness.
-		for _, g := range groups {
-			for _, item := range g.Items {
-				if item%3 != g.Key {
-					t.Fatalf("key mismatch: item %d in group %d", item, g.Key)
+		for k, items := range result {
+			for _, item := range items {
+				if item%3 != k {
+					t.Fatalf("key mismatch: item %d in group %d", item, k)
 				}
 			}
 		}
@@ -2070,7 +2072,7 @@ func TestPropGroupByStreamKeyOrder(t *testing.T) {
 			expected[k] = append(expected[k], v)
 		}
 		for k, want := range expected {
-			got := byKey[k].Items
+			got := result[k]
 			if len(got) != len(want) {
 				t.Fatalf("group %d: len mismatch got=%d want=%d", k, len(got), len(want))
 			}
@@ -2084,39 +2086,35 @@ func TestPropGroupByStreamKeyOrder(t *testing.T) {
 	})
 }
 
-// TestPropGroupByStreamGroupCount verifies:
-//  1. No cross-key contamination: no key appears in more than one group.
+// TestPropGroupByGroupCount verifies:
+//  1. No cross-key contamination: each key maps to exactly one entry (trivially
+//     true for map[K][]T).
 //  2. Group count equals the number of distinct keys in the input.
-func TestPropGroupByStreamGroupCount(t *testing.T) {
+func TestPropGroupByGroupCount(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		emissions, err := kitsune.Collect(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
+			t.Fatalf("GroupBy error: %v", err)
 		}
-
-		// Law 1: each key appears in exactly one group.
-		seen := make(map[int]bool)
-		for _, g := range groups {
-			if seen[g.Key] {
-				t.Fatalf("key %d appeared in more than one group", g.Key)
-			}
-			seen[g.Key] = true
+		if len(emissions) != 1 {
+			t.Fatalf("expected 1 emission, got %d", len(emissions))
 		}
+		result := emissions[0]
 
-		// Law 2: group count equals distinct key count.
+		// Law: group count equals distinct key count.
 		distinctKeys := make(map[int]struct{})
 		for _, v := range in {
 			distinctKeys[v%3] = struct{}{}
 		}
-		if len(groups) != len(distinctKeys) {
+		if len(result) != len(distinctKeys) {
 			t.Fatalf("group count: got %d want %d (distinct keys in input: %v)",
-				len(groups), len(distinctKeys), distinctKeys)
+				len(result), len(distinctKeys), distinctKeys)
 		}
 	})
 }
