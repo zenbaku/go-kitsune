@@ -156,7 +156,7 @@ func BatchTimeout(d time.Duration) StageOption {
 // trailing batch. Use DropPartial when only full batches are meaningful:
 //
 //	// Emit only complete batches of 10; drop any trailing items.
-//	kitsune.Batch(p, 10, kitsune.DropPartial())
+//	kitsune.Batch(p, kitsune.BatchCount(10), kitsune.DropPartial())
 //
 // Only meaningful when used with [Batch].
 func DropPartial() StageOption {

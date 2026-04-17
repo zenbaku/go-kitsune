@@ -32,7 +32,7 @@ func TestWithDrainFlushesPartialBatch(t *testing.T) {
 		return nil
 	})
 
-	runner := kitsune.Batch(p, batchSize).ForEach(func(_ context.Context, batch []int) error {
+	runner := kitsune.Batch(p, kitsune.BatchCount(batchSize)).ForEach(func(_ context.Context, batch []int) error {
 		mu.Lock()
 		received = append(received, append([]int(nil), batch...))
 		mu.Unlock()

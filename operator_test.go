@@ -821,7 +821,7 @@ func TestDropWhile(t *testing.T) {
 
 func TestBatch(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	got := collectAll(t, kitsune.Batch(p, 2))
+	got := collectAll(t, kitsune.Batch(p, kitsune.BatchCount(2)))
 	if len(got) != 3 {
 		t.Fatalf("expected 3 batches, got %d: %v", len(got), got)
 	}
@@ -848,7 +848,7 @@ func TestUnbatch(t *testing.T) {
 func TestBatch_DropPartial(t *testing.T) {
 	// 7 items, size 3: full batches are [1,2,3] and [4,5,6]; trailing [7] is dropped.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7})
-	got := collectAll(t, kitsune.Batch(p, 3, kitsune.DropPartial()))
+	got := collectAll(t, kitsune.Batch(p, kitsune.BatchCount(3), kitsune.DropPartial()))
 	if len(got) != 2 {
 		t.Fatalf("expected 2 full batches, got %d: %v", len(got), got)
 	}
@@ -858,6 +858,83 @@ func TestBatch_DropPartial(t *testing.T) {
 	if !sliceEqual(got[1], []int{4, 5, 6}) {
 		t.Errorf("batch 1: %v", got[1])
 	}
+}
+
+func TestBatch_BatchCount(t *testing.T) {
+	ctx := context.Background()
+	ch := kitsune.NewChannel[int](10)
+	batches := make(chan []int, 10)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
+			ForEach(func(_ context.Context, b []int) error {
+				batches <- b
+				return nil
+			}).Run(ctx)
+	}()
+
+	for _, v := range []int{1, 2, 3, 4, 5} {
+		if err := ch.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	var got [][]int
+	for len(batches) > 0 {
+		got = append(got, <-batches)
+	}
+	if len(got) != 2 || len(got[0]) != 3 || len(got[1]) != 2 {
+		t.Errorf("batches: got %v", got)
+	}
+}
+
+func TestBatch_BatchMeasure(t *testing.T) {
+	ctx := context.Background()
+	ch := kitsune.NewChannel[string](10)
+	batches := make(chan []string, 10)
+	done := make(chan error, 1)
+	go func() {
+		// flush when total byte length >= 6
+		done <- kitsune.Batch(ch.Source(),
+			kitsune.BatchMeasure(func(s string) int { return len(s) }, 6),
+		).ForEach(func(_ context.Context, b []string) error {
+			batches <- b
+			return nil
+		}).Run(ctx)
+	}()
+
+	// "abc"=3, "def"=3 -> flush at 6; "gh"=2 -> partial on close
+	for _, s := range []string{"abc", "def", "gh"} {
+		if err := ch.Send(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	var got [][]string
+	for len(batches) > 0 {
+		got = append(got, <-batches)
+	}
+	if len(got) != 2 || len(got[0]) != 2 || got[0][0] != "abc" {
+		t.Errorf("batches: got %v", got)
+	}
+}
+
+func TestBatch_PanicIfNoTrigger(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when no flush trigger provided")
+		}
+	}()
+	ch := kitsune.NewChannel[int](1)
+	kitsune.Batch(ch.Source()) // no BatchCount, BatchMeasure, or BatchTimeout
 }
 
 func TestSlidingWindow(t *testing.T) {

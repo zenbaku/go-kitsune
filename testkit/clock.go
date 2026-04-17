@@ -7,7 +7,7 @@
 // Usage:
 //
 //	clock := testkit.NewTestClock()
-//	p := kitsune.Batch(source, 10, kitsune.BatchTimeout(5*time.Second), kitsune.WithClock(clock))
+//	p := kitsune.Batch(source, kitsune.BatchCount(10), kitsune.BatchTimeout(5*time.Second), kitsune.WithClock(clock))
 //	// ... feed items ...
 //	clock.Advance(5 * time.Second) // fires the batch timer immediately
 package testkit

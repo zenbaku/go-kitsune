@@ -1279,7 +1279,7 @@ func TestPropBatchPartition(t *testing.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 		size := rapid.IntRange(1, 10).Draw(t, "size")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(size)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}
@@ -1302,7 +1302,7 @@ func TestPropBatchSizes(t *testing.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 		size := rapid.IntRange(1, 10).Draw(t, "size")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(size)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}
@@ -1330,7 +1330,7 @@ func TestPropBatchSizeOneIsIdentity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), 1).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(1)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}

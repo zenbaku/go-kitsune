@@ -259,7 +259,7 @@ func TestGraphNodeBatchSize(t *testing.T) {
 	hook := &testkit.RecordingHook{}
 	p := kitsune.Batch(
 		kitsune.FromSlice([]int{1, 2, 3}),
-		4,
+		kitsune.BatchCount(4),
 		kitsune.WithName("batcher"),
 	)
 	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {

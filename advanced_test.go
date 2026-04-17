@@ -860,7 +860,7 @@ func TestBatchWithTimeout(t *testing.T) {
 		return nil
 	})
 
-	got := collectAll(t, kitsune.Batch(p, 10, kitsune.BatchTimeout(20*time.Millisecond)))
+	got := collectAll(t, kitsune.Batch(p, kitsune.BatchCount(10), kitsune.BatchTimeout(20*time.Millisecond)))
 	// With size=10 and items arriving every 8ms, the 20ms timeout should fire
 	// and emit partial batches.
 	if len(got) == 0 {
