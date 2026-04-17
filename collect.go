@@ -13,7 +13,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Collect — gather all items into a slice
+// Collect: gather all items into a slice
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.
@@ -335,7 +335,7 @@ func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn fu
 }
 
 // ---------------------------------------------------------------------------
-// TakeRandom — reservoir sampling
+// TakeRandom: reservoir sampling
 // ---------------------------------------------------------------------------
 
 // TakeRandom returns a pipeline that buffers all items from p and emits a
@@ -461,7 +461,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 				}
 
 				if !aok && !bok {
-					return nil // both exhausted simultaneously — lengths match
+					return nil // both exhausted simultaneously; lengths match
 				}
 				if !aok || !bok || av != bv {
 					equal = false
@@ -481,7 +481,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 }
 
 // ---------------------------------------------------------------------------
-// Iter — Go 1.23 range-over-func
+// Iter: Go 1.23 range-over-func
 // ---------------------------------------------------------------------------
 
 // Iter returns an iterator over all items emitted by the pipeline.
@@ -489,8 +489,8 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 // error function. The iterator is suitable for use with range-over-func
 // (Go 1.23+).
 //
-// The error function must be called after iteration completes — or after
-// breaking out of the loop — to retrieve any pipeline execution error. It
+// The error function must be called after iteration completes, or after
+// breaking out of the loop, to retrieve any pipeline execution error. It
 // blocks until the pipeline finishes and is safe to call multiple times.
 //
 // If the caller breaks out of the loop early, the pipeline context is

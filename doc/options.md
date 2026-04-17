@@ -120,7 +120,7 @@ out := kitsune.Map(items, callAPI,
 
 Backoff helpers: `FixedBackoff(d)`, `ExponentialBackoff(min, max)`, `JitteredBackoff(min, max)`.
 
-**`Return(v)` type safety:** `ErrorHandler` is not parameterized on the stage's output type. If the type of `v` does not match the stage's output type, the substitution silently fails at runtime and the original error is propagated as though `Halt` had been used. For a compile-time guarantee, use `TypedReturn[O](v)` as a `StageOption` directly — the type `O` is checked against the stage output at the call site. `TypedReturn` cannot be composed inside `RetryThen`; for retry chains use `Return` with a typed variable. See the [TypedReturn section in operators.md](operators.md#typedreturn) for details.
+**`Return(v)` type safety:** `ErrorHandler` is not parameterized on the stage's output type. If the type of `v` does not match the stage's output type, the substitution silently fails at runtime and the original error is propagated as though `Halt` had been used. For a compile-time guarantee, use `TypedReturn[O](v)` as a `StageOption` directly; the type `O` is checked against the stage output at the call site. `TypedReturn` cannot be composed inside `RetryThen`; for retry chains use `Return` with a typed variable. See the [TypedReturn section in operators.md](operators.md#typedreturn) for details.
 
 ---
 
@@ -167,10 +167,11 @@ If not set, Kitsune generates a name from the function name via reflection.
 
 **Applies to:** `Batch`, `MapBatch`
 
-Flush a partial batch after `d` even if it has not reached the size limit. Without this option, a partial batch at the end of the stream is flushed only when the input closes.
+Flush a partial batch after `d` even if the count or measure threshold has not been reached. Without this option, a partial batch at the end of the stream is flushed only when the input closes.
 
 ```go
-batched := kitsune.Batch(enriched, 500,
+batched := kitsune.Batch(enriched,
+    kitsune.BatchCount(500),
     kitsune.BatchTimeout(2*time.Second),
 )
 ```
@@ -188,7 +189,8 @@ Substitute a deterministic clock for testing. Instead of calling `time.Now()` or
 ```go
 clock := testkit.NewTestClock()
 
-batched := kitsune.Batch(in, 100,
+batched := kitsune.Batch(in,
+    kitsune.BatchCount(100),
     kitsune.BatchTimeout(5*time.Second),
     kitsune.WithClock(clock),
 )
@@ -266,7 +268,7 @@ enriched := kitsune.Map(orders, fetchCustomer,
 
 ## `WithDedupSet(s DedupSet)`
 
-**Applies to:** `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap`
+**Applies to:** `Dedupe`, `DedupeBy`, `ExpandMap`
 
 Provide an external deduplication backend. The default is an in-process `MemoryDedupSet` that does not survive restarts and is not shared across pipeline instances.
 
@@ -313,7 +315,7 @@ Limit BFS expansion to at most `n` levels below the root items.
 - `MaxDepth(1)` emits roots plus their immediate children.
 - Default is unlimited.
 
-When the depth cap is reached the stage stops enqueueing children but continues to drain items already in the BFS queue. The output channel closes normally — no error is returned.
+When the depth cap is reached the stage stops enqueueing children but continues to drain items already in the BFS queue. The output channel closes normally; no error is returned.
 
 ```go
 // Walk at most 3 levels below each root.
@@ -332,7 +334,7 @@ Silently ignored on all operators other than `ExpandMap`.
 
 **Applies to:** `ExpandMap`
 
-Limit total items emitted by an `ExpandMap` stage to `n`. When the stage has emitted `n` items it stops enqueueing children, cancels its currently-running inner pipeline, and closes its output channel normally — no error is returned, matching the semantics of `Take(n)` downstream.
+Limit total items emitted by an `ExpandMap` stage to `n`. When the stage has emitted `n` items it stops enqueueing children, cancels its currently-running inner pipeline, and closes its output channel normally; no error is returned, matching the semantics of `Take(n)` downstream.
 
 Unlike a downstream `Take(n)`, `MaxItems` stops the BFS queue from growing in memory after the cap is reached. Prefer `MaxItems` over `Take` for graphs with high fan-out.
 
@@ -366,7 +368,7 @@ Without this option, the key map grows without bound on high-cardinality streams
 | `StateTTL(d)` (on `Key`) | The value stored inside a `Ref` | On the next `Get` after `d` since the last `Set` |
 | `WithKeyTTL(d)` (StageOption) | The entire map entry holding the `Ref` | On the next item for any key, after `d` of inactivity for the expired key |
 
-Default: `0` (disabled — entries persist for the lifetime of the run).
+Default: `0` (disabled; entries persist for the lifetime of the run).
 
 ```go
 var sessionKey = kitsune.NewKey[SessionState]("session", SessionState{})
@@ -403,7 +405,7 @@ The returned context contributes values only (e.g. the active trace span). Cance
 **Fast-path note:** setting `WithContextMapper` disqualifies a stage from the micro-batching fast path. For tracing-intensive workloads this is negligible (span creation costs far exceed the routing overhead), but it is worth knowing if you are tuning throughput on a hot non-tracing stage.
 
 ```go
-// QueueMessage is a third-party type — cannot implement ContextCarrier.
+// QueueMessage is a third-party type; cannot implement ContextCarrier.
 type QueueMessage struct {
     Body    string
     Headers map[string]string // carries W3C traceparent, etc.
@@ -420,4 +422,75 @@ processed := kitsune.Map(msgs, processMsg,
 )
 ```
 
-If `fn` returns `nil`, the stage context is used unchanged — same behaviour as when `WithContextMapper` is not set.
+If `fn` returns `nil`, the stage context is used unchanged; same behaviour as when `WithContextMapper` is not set.
+
+---
+
+## `BatchCount(n int)`
+
+**Applies to:** `Batch`
+
+Flush the current batch when it contains exactly `n` items. At least one of `BatchCount`, `BatchMeasure`, or `BatchTimeout` must be provided to `Batch`; the stage panics at construction time if none are set.
+
+```go
+// Flush every 200 items.
+batched := kitsune.Batch(events, kitsune.BatchCount(200))
+
+// Flush at 200 items OR after 1 second, whichever comes first.
+batched := kitsune.Batch(events,
+    kitsune.BatchCount(200),
+    kitsune.BatchTimeout(time.Second),
+)
+```
+
+---
+
+## `BatchMeasure[T any](fn func(T) int, n int)`
+
+**Applies to:** `Batch`
+
+Flush the current batch when the cumulative value of `fn` across all buffered items reaches or exceeds `n`. `fn` is called for each item as it enters the buffer; the batch flushes as soon as the running total meets the threshold.
+
+At least one of `BatchCount`, `BatchMeasure`, or `BatchTimeout` must be provided to `Batch`.
+
+```go
+// Flush when accumulated payload bytes reach 64 KiB.
+batched := kitsune.Batch(messages,
+    kitsune.BatchMeasure(func(m Message) int { return len(m.Payload) }, 64*1024),
+)
+
+// Combine with a timeout for low-throughput streams.
+batched := kitsune.Batch(messages,
+    kitsune.BatchMeasure(func(m Message) int { return len(m.Payload) }, 64*1024),
+    kitsune.BatchTimeout(5*time.Second),
+)
+```
+
+---
+
+## `DedupeWindow(n int)`
+
+**Applies to:** `Dedupe`, `DedupeBy`
+
+Controls the scope of deduplication:
+
+| Value | Behaviour |
+|---|---|
+| `0` | Global (default): all previously-seen keys are remembered for the lifetime of the pipeline run. |
+| `1` | Consecutive only: an item is dropped only if it is identical to the immediately preceding item. |
+| `n > 1` | Sliding window: an item is dropped if it appeared in the last `n` items. |
+
+Without `DedupeWindow`, `Dedupe` and `DedupeBy` use global deduplication backed by an in-process `MemoryDedupSet`.
+
+```go
+// Global dedup (default): drop any value seen previously.
+unique := kitsune.Dedupe(events)
+
+// Consecutive-only dedup: suppress adjacent duplicates.
+changes := kitsune.DedupeBy(statuses, func(s Status) string { return s.State },
+    kitsune.DedupeWindow(1),
+)
+
+// Sliding window: drop any value seen in the last 100 items.
+recent := kitsune.Dedupe(values, kitsune.DedupeWindow(100))
+```

@@ -53,7 +53,7 @@ Documents every exported operator and which `StageOption` features each one actu
 - `Filter`, `Tap`, `Reject` support `Supervise` but not `OnError`; errors from their fn/pred propagate directly.
 - `TapError` fires its callback only for non-context errors; context cancellation does not trigger the callback. It does not accept `StageOption` (implemented via `Generate`, like `Catch`).
 - `Finally` fires for all exits (success, error, cancellation, early consumer stop). On early stop (e.g. downstream `Take`), fn receives nil. Does not accept `StageOption`.
-- `ExpandMap` performs BFS expansion: items at depth N are all emitted before any item at depth N+1. fn may return nil for leaf nodes. Accepts `WithName` and `Buffer`. Use `MaxDepth(n)` to cap BFS depth (0 = roots only) and `MaxItems(n)` to cap total emissions — the stage closes normally when either cap is reached. Use `VisitedBy(keyFn)` to enable cycle detection (items whose key was already seen are skipped, along with their subtrees); combine with `WithDedupSet` to override the default `MemoryDedupSet` backend. **WARNING:** without `MaxDepth`, `MaxItems`, or a downstream `Take`, `ExpandMap` traverses the entire reachable graph and can exhaust memory on high-fanout inputs.
+- `ExpandMap` performs BFS expansion: items at depth N are all emitted before any item at depth N+1. fn may return nil for leaf nodes. Accepts `WithName` and `Buffer`. Use `MaxDepth(n)` to cap BFS depth (0 = roots only) and `MaxItems(n)` to cap total emissions; the stage closes normally when either cap is reached. Use `VisitedBy(keyFn)` to enable cycle detection (items whose key was already seen are skipped, along with their subtrees); combine with `WithDedupSet` to override the default `MemoryDedupSet` backend. **WARNING:** without `MaxDepth`, `MaxItems`, or a downstream `Take`, `ExpandMap` traverses the entire reachable graph and can exhaust memory on high-fanout inputs.
 - `ForEach` returns a typed `ForEachRunner[T]`; call `.Run(ctx)` or `.RunAsync(ctx)`. Supports `Concurrency`, `Ordered`, `OnError`, and `Supervise`.
 - `Drain` returns a `DrainRunner[T]` (deprecated; use `ForEach` with a no-op). It satisfies `Runnable`, so it can be passed to `MergeRunners` directly; `RunAsync` is also available on it.
 - Map → FlatMap → ForEach chains fuse into a single goroutine when the chain is serial, hook-free, and uses default overflow (**FP** column). See [doc/tuning.md](tuning.md#fast-path-and-stage-fusion) for exact eligibility conditions.
@@ -108,7 +108,8 @@ Documents every exported operator and which `StageOption` features each one actu
 
 | Operator | Signature | Conc | Ord | Buf | Name | Err | Sup | TO | Cache | OvF | Clock | DS | BT | FP |
 |----------|-----------|------|-----|-----|------|-----|-----|----|-------|-----|-------|----|----|-----|
-| `Batch` | `Batch[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
+| `Batch` | `Batch[T](p, opts...)` ✱ | – | – | ✓ | ✓ | – | – | – | – | – | ✓ | – | ✓ | – |
+| `Within` | `Within[T,O](p, stage, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `BufferWith` | `BufferWith[T,S](p, closingSelector, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Unbatch` | `Unbatch[T](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SlidingWindow` | `SlidingWindow[T](p, size, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -117,6 +118,7 @@ Documents every exported operator and which `StageOption` features each one actu
 | `ChunkWhile` | `ChunkWhile[T](p, pred func(prev,curr T)bool, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
+- ✱ `Batch` requires at least one flush trigger (`BatchCount`, `BatchMeasure`, or `BatchTimeout`); panics at construction if none are provided.
 - `Batch` supports `WithClock` only when `BatchTimeout` is also set (the clock powers the flush ticker).
 - `DropPartial` discards the final partial batch when the source closes; only full batches are emitted. Use `BufferWith(p, Ticker(d))` for fixed-duration time bucketing.
 - `BufferWith` takes a second pipeline (`closingSelector`) as its flush trigger; each signal from that pipeline emits the current buffer. When the selector closes, any remaining items are flushed. Named `BufferWith` to avoid collision with the `Buffer(n)` stage option.
@@ -134,17 +136,19 @@ Documents every exported operator and which `StageOption` features each one actu
 | `DistinctBy` | `DistinctBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Dedupe` | `Dedupe[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
 | `DedupeBy` | `DedupeBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | ✓ | – | – |
-| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)`: terminal | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `GroupByStream` | `GroupByStream[T,K](p, keyFn, opts...)` → `*Pipeline[Group[K,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `GroupBy` | `GroupBy[T,K](p, keyFn, opts...)` → `*Pipeline[map[K][]T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `TakeRandom` | `TakeRandom[T](p, n, opts...)` → `*Pipeline[[]T]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningCountBy` | `RunningCountBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningSumBy` | `RunningSumBy[T,K comparable,V Numeric](p, keyFn, valFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningFrequencies` | `RunningFrequencies[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `RunningFrequenciesBy` | `RunningFrequenciesBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `RandomSample` | `RandomSample[T](p, rate float64, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `GroupBy` is a terminal function returning `(map[K][]T, error)`. Use `GroupByStream` for mid-pipeline grouping.
-- `GroupByStream` emits one `Group[K,T]{Key, Items}` per distinct key in first-seen order when the source closes.
-- `Dedupe` is identity-based (`T comparable`). `DedupeBy` is key-based. When `WithDedupSet` is provided to either, deduplication becomes global (set-backed) rather than consecutive.
+- `GroupBy` is a buffering pipeline operator; it emits a single `map[K][]T` when the source closes. Combine with `Single` to collect the result.
+- `TakeRandom` is a buffering pipeline operator; it buffers all input and emits one `[]T` slice. Combine with `Single` to collect the result.
+- `Dedupe` is identity-based (`T comparable`). `DedupeBy` is key-based. Default behaviour is global (all-seen) deduplication. Use `DedupeWindow(1)` for consecutive-only deduplication.
+- `RandomSample` passes each item downstream with independent probability `rate`; it is stateless and streaming (no buffering).
 - `RunningFrequencies` / `RunningFrequenciesBy` emit a fresh count-map snapshot after each item.
 - `RunningCountBy` / `RunningSumBy` emit a fresh full snapshot after each item; the snapshot map is a copy so it is safe to retain.
 
@@ -216,6 +220,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | Operator | Signature |
 |----------|-----------|
 | `Collect` | `Collect[T](ctx, p, opts...)` → `([]T, error)`; also `(p).Collect` |
+| `Single` | `Single[T](ctx, p, opts...)` → `(T, error)`: expect exactly one item; use `OrDefault(v)` or `OrZero[T]()` for empty-stream fallback |
 | `First` | `First[T](ctx, p, opts...)` → `(T, bool, error)`; also `(p).First` |
 | `Last` | `Last[T](ctx, p, opts...)` → `(T, bool, error)`; also `(p).Last` |
 | `Count` | `Count[T](ctx, p, opts...)` → `(int, error)`; also `(p).Count` |
@@ -224,7 +229,6 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Find` | `Find[T](ctx, p, pred, opts...)` → `(T, bool, error)`; also `(p).Find` |
 | `Iter` | `Iter[T](ctx, p, opts...)` → `(iter.Seq[T], func()error)`; also `(p).Iter` |
 | `ReduceWhile` | `ReduceWhile[T,S](ctx, p, seed, fn, opts...)` → `(S, error)`; also `(p).ReduceWhile` (S=T) |
-| `GroupBy` | `GroupBy[T,K](ctx, p, keyFn, opts...)` → `(map[K][]T, error)` |
 | `Sum` | `Sum[T](ctx, p, opts...)` → `(T, error)` |
 | `Min` / `Max` | `Min[T](ctx, p, opts...)` → `(T, bool, error)` |
 | `MinMax` | `MinMax[T](ctx, p, opts...)` → `(MinMaxResult[T], bool, error)` |
@@ -232,12 +236,12 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Contains` | `Contains[T comparable](ctx, p, val, opts...)` → `(bool, error)` |
 | `ToMap` | `ToMap[T,K,V](ctx, p, keyFn, valFn, opts...)` → `(map[K]V, error)` |
 | `SequenceEqual` | `SequenceEqual[T comparable](ctx, a, b, opts...)` → `(bool, error)` |
-| `TakeRandom` | `TakeRandom[T](ctx, p, n, opts...)` → `([]T, error)` |
 | `Frequencies` | `Frequencies[T comparable](ctx, p, opts...)` → `(map[T]int, error)` |
 | `FrequenciesBy` | `FrequenciesBy[T,K comparable](ctx, p, keyFn, opts...)` → `(map[K]int, error)` |
 
 **Notes**
 - `Iter` exposes a pipeline as `iter.Seq[T]` for range-over-func (Go 1.23+). Breaking out of the loop early cancels the pipeline.
+- `Single` returns `ErrEmpty` if the pipeline is empty and `ErrMultiple` if it emits more than one item. Use `OrDefault(v)` to suppress `ErrEmpty` and return `v` instead.
 
 ---
 
