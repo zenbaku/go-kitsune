@@ -46,9 +46,9 @@ type stageConfig struct {
 	dropPartial            bool // DropPartial: discard the final partial batch when source closes
 
 	// Batch flush triggers (BatchCount / BatchMeasure options).
-	batchCount      int          // flush when len(buf) >= batchCount; 0 = no count trigger
+	batchCount      int           // flush when len(buf) >= batchCount; 0 = no count trigger
 	batchMeasureFn  func(any) int // type-erased measure function; nil = no measure trigger
-	batchMeasureMax int          // flush when cumulative measure >= batchMeasureMax
+	batchMeasureMax int           // flush when cumulative measure >= batchMeasureMax
 
 	// Dedupe sliding window (DedupeWindow option).
 	// 0 = global in-memory (default); 1 = consecutive; n > 1 = sliding window of n items.

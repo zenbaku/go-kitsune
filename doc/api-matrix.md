@@ -241,7 +241,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 **Notes**
 - `Iter` exposes a pipeline as `iter.Seq[T]` for range-over-func (Go 1.23+). Breaking out of the loop early cancels the pipeline.
-- `Single` returns `ErrEmpty` if the pipeline is empty and `ErrMultiple` if it emits more than one item. Use `OrDefault(v)` to suppress `ErrEmpty` and return `v` instead.
+- `Single` returns a plain error if the pipeline emits zero items (unless `OrDefault(v)` or `OrZero[T]()` is supplied) or more than one item.
 
 ---
 

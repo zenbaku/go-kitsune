@@ -2672,16 +2672,16 @@ err := events.ForEach(func(ctx context.Context, e Event) error {
 ### Single
 
 ```go
-func Single[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, error)
+func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T, error)
 ```
 
 Runs the pipeline and expects it to emit exactly one item. Returns that item on success. Returns an error if:
 
-- The pipeline emits zero items (`ErrEmpty`).
-- The pipeline emits more than one item (`ErrMultiple`).
+- The pipeline emits zero items (plain error, unless `OrDefault` or `OrZero` is supplied).
+- The pipeline emits more than one item (plain error, always).
 - The pipeline itself returns an error.
 
-Use `OrDefault(v)` to return a default value instead of `ErrEmpty`, and `OrZero[T]()` to return the zero value of `T` instead of `ErrEmpty`.
+Use `OrDefault(v)` to return a default value instead of an error on empty input, and `OrZero[T]()` to return the zero value of `T` instead.
 
 **When to use:** Collecting the single output of a buffering aggregator such as [`GroupBy`](#groupby), [`TakeRandom`](#takerandom), or [`Reduce`](#reduce), where you expect exactly one output item.
 
