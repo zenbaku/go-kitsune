@@ -1569,7 +1569,7 @@ func TestOrderedNoConcurrency(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TakeUntil / SkipUntil
+// TakeUntil / DropUntil
 // ---------------------------------------------------------------------------
 
 func TestTakeUntil_SourceFinishesBeforeBoundary(t *testing.T) {
@@ -1646,31 +1646,31 @@ func TestTakeUntil_BoundaryChannel(t *testing.T) {
 	}
 }
 
-func TestSkipUntil_BoundaryNeverFires(t *testing.T) {
+func TestDropUntil_BoundaryNeverFires(t *testing.T) {
 	// Boundary never fires; p is finite — no items should be emitted.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	boundary := kitsune.Generate(func(ctx context.Context, yield func(struct{}) bool) error {
 		<-ctx.Done()
 		return nil
 	})
-	got := collectAll(t, kitsune.SkipUntil(p, boundary))
+	got := collectAll(t, kitsune.DropUntil(p, boundary))
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got %v", got)
 	}
 }
 
-func TestSkipUntil_EmptySource(t *testing.T) {
+func TestDropUntil_EmptySource(t *testing.T) {
 	// p is empty; boundary fires immediately. Output must be empty and error-free.
 	// (No race: p emits nothing regardless of when boundary fires.)
 	p := kitsune.FromSlice([]int{})
 	boundary := kitsune.FromSlice([]struct{}{{}})
-	got := collectAll(t, kitsune.SkipUntil(p, boundary))
+	got := collectAll(t, kitsune.DropUntil(p, boundary))
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got %v", got)
 	}
 }
 
-func TestSkipUntil_BoundaryChannel(t *testing.T) {
+func TestDropUntil_BoundaryChannel(t *testing.T) {
 	// Fire boundary after 3 items; the subsequent items must appear in output.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1680,7 +1680,7 @@ func TestSkipUntil_BoundaryChannel(t *testing.T) {
 
 	resultCh := make(chan []int, 1)
 	go func() {
-		got, _ := kitsune.Collect(ctx, kitsune.SkipUntil(pCh.Source(), bCh.Source()))
+		got, _ := kitsune.Collect(ctx, kitsune.DropUntil(pCh.Source(), bCh.Source()))
 		resultCh <- got
 	}()
 
@@ -1722,44 +1722,44 @@ func TestSkipUntil_BoundaryChannel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SkipLast
+// DropLast
 // ---------------------------------------------------------------------------
 
-func TestSkipLast_Basic(t *testing.T) {
-	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 2))
+func TestDropLast_Basic(t *testing.T) {
+	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 2))
 	want := []int{1, 2, 3}
 	if !sliceEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
-func TestSkipLast_ZeroN(t *testing.T) {
+func TestDropLast_ZeroN(t *testing.T) {
 	// n=0 should forward all items unchanged.
-	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3}), 0))
+	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{1, 2, 3}), 0))
 	if !sliceEqual(got, []int{1, 2, 3}) {
 		t.Errorf("got %v, want [1 2 3]", got)
 	}
 }
 
-func TestSkipLast_NGreaterThanLen(t *testing.T) {
+func TestDropLast_NGreaterThanLen(t *testing.T) {
 	// n ≥ len → empty output.
-	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2}), 5))
+	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{1, 2}), 5))
 	if len(got) != 0 {
 		t.Errorf("got %v, want []", got)
 	}
 }
 
-func TestSkipLast_ExactN(t *testing.T) {
+func TestDropLast_ExactN(t *testing.T) {
 	// n == len → empty output.
-	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{1, 2, 3}), 3))
+	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{1, 2, 3}), 3))
 	if len(got) != 0 {
 		t.Errorf("got %v, want []", got)
 	}
 }
 
-func TestSkipLast_One(t *testing.T) {
+func TestDropLast_One(t *testing.T) {
 	// n=1 should drop only the last item.
-	got := collectAll(t, kitsune.SkipLast(kitsune.FromSlice([]int{10, 20, 30}), 1))
+	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{10, 20, 30}), 1))
 	if !sliceEqual(got, []int{10, 20}) {
 		t.Errorf("got %v, want [10 20]", got)
 	}

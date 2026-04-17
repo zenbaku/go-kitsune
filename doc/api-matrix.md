@@ -269,7 +269,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Drop` | `Drop[T](p, n)`; also `(p).Skip`, `(p).Drop` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeWhile` | `TakeWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropWhile` | `DropWhile[T](p, pred func(T)bool)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `SkipLast` | `SkipLast[T](p, n)`: omit last n items | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `DropLast` | `DropLast[T](p, n)`: omit last n items | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `TakeEvery` | `TakeEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DropEvery` | `DropEvery[T](p, n)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `MapEvery` | `MapEvery[I,O](p, n, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
@@ -277,7 +277,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `Intersperse` | `Intersperse[T](p, sep, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Pairwise` | `Pairwise[T](p, opts...)` → `*Pipeline[Consecutive[T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `TakeUntil` | `TakeUntil[T,U](p, boundary *Pipeline[U], opts...)`: pass items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `SkipUntil` | `SkipUntil[T,U](p, boundary *Pipeline[U], opts...)`: skip items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `DropUntil` | `DropUntil[T,U](p, boundary *Pipeline[U], opts...)`: drop items until boundary emits | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `StartWith` | `StartWith[T](p, items...)` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `EndWith` | `EndWith[T](p, items...)`: append fixed items after source closes | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `DefaultIfEmpty` | `DefaultIfEmpty[T](p, val, opts...)` | – | – | ✓ | ✓ | – | – | – | – | ✓ | – | – | – | – |
@@ -285,8 +285,8 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `SortBy` | `SortBy[T,K](p, keyFn, less, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
-- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery`, `SkipLast` use hardcoded buffer sizes and accept no options.
-- `TakeUntil` / `SkipUntil` accept any `*Pipeline[U]` as boundary; only its first emission matters.
+- `Take`, `Drop`, `TakeWhile`, `DropWhile`, `TakeEvery`, `DropEvery`, `DropLast` use hardcoded buffer sizes and accept no options.
+- `TakeUntil` / `DropUntil` accept any `*Pipeline[U]` as boundary; only its first emission matters.
 - `StartWith` / `EndWith` accept no options; they delegate to `Concat` + `FromSlice`.
 - `Indexed[T]` is `struct{ Index int; Value T }`.
 - `(p).Skip` is an alias for `Drop`.

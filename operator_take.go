@@ -275,10 +275,10 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
-// SkipLast
+// DropLast
 // ---------------------------------------------------------------------------
 
-// SkipLast omits the last n items of p, emitting all earlier items. If n ≤ 0
+// DropLast omits the last n items of p, emitting all earlier items. If n ≤ 0
 // all items are forwarded unchanged. If n ≥ the total number of items the
 // output is empty.
 //
@@ -286,9 +286,9 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 // the oldest buffered item, which is then emitted. The n items still in the
 // buffer when the source closes are discarded.
 //
-//	kitsune.SkipLast(kitsune.FromSlice([]int{1,2,3,4,5}), 2)
+//	kitsune.DropLast(kitsune.FromSlice([]int{1,2,3,4,5}), 2)
 //	// emits 1, 2, 3
-func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
+func DropLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 	if n <= 0 {
 		return p
 	}
@@ -296,8 +296,8 @@ func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "skip_last",
-		name:   "skip_last",
+		kind:   "drop_last",
+		name:   "drop_last",
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
@@ -352,7 +352,7 @@ func SkipLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
-// TakeUntil / SkipUntil
+// TakeUntil / DropUntil
 // ---------------------------------------------------------------------------
 
 // TakeUntil passes items from p through until the boundary pipeline emits its
@@ -432,21 +432,21 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 	return newPipeline(id, meta, build)
 }
 
-// SkipUntil suppresses all items from p until the boundary pipeline emits its
+// DropUntil suppresses all items from p until the boundary pipeline emits its
 // first item (or closes), then passes everything through. The boundary item
 // type U is ignored; only the signal matters.
 //
-//	kitsune.SkipUntil(stream, readySignal)
+//	kitsune.DropUntil(stream, readySignal)
 //	// discards items until readySignal fires, then forwards all subsequent items
-func SkipUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOption) *Pipeline[T] {
+func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOption) *Pipeline[T] {
 	track(p)
 	track(boundary)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "skip_until",
-		name:   orDefault(cfg.name, "skip_until"),
+		kind:   "drop_until",
+		name:   orDefault(cfg.name, "drop_until"),
 		buffer: cfg.buffer,
 		inputs: []int64{p.id, boundary.id},
 	}
