@@ -3,6 +3,7 @@ package kitsune
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"math/rand"
 	"sync"
@@ -73,6 +74,66 @@ func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, boo
 		return zero, false, err
 	}
 	return result, found, nil
+}
+
+// ---------------------------------------------------------------------------
+// Single
+// ---------------------------------------------------------------------------
+
+// SingleOption configures [Single] behaviour for empty pipelines.
+type SingleOption func(*singleConfig)
+
+type singleConfig struct {
+	hasDefault bool
+	defaultVal any
+}
+
+// OrDefault returns v when the pipeline emits no items, instead of an error.
+func OrDefault[T any](v T) SingleOption {
+	return func(cfg *singleConfig) {
+		cfg.hasDefault = true
+		cfg.defaultVal = v
+	}
+}
+
+// OrZero returns the zero value of T when the pipeline emits no items,
+// instead of an error. Equivalent to [OrDefault] with the zero value.
+func OrZero[T any]() SingleOption {
+	var zero T
+	return OrDefault[T](zero)
+}
+
+// Single drains p and returns the single item it emits. It returns an error
+// if the pipeline emits zero items (unless [OrDefault] or [OrZero] is
+// provided) or more than one item (always an error).
+func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T, error) {
+	cfg := &singleConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	var result T
+	count := 0
+	err := p.ForEach(func(_ context.Context, v T) error {
+		count++
+		if count > 1 {
+			return fmt.Errorf("kitsune: Single: pipeline emitted more than one item")
+		}
+		result = v
+		return nil
+	}).Run(ctx)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if count == 0 {
+		if cfg.hasDefault {
+			return cfg.defaultVal.(T), nil
+		}
+		var zero T
+		return zero, fmt.Errorf("kitsune: Single: pipeline emitted no items")
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -2010,17 +2010,13 @@ func TestPropGroupByPartition(t *testing.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		emissions, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
 			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
 			t.Fatalf("GroupBy error: %v", err)
 		}
-		if len(emissions) != 1 {
-			t.Fatalf("expected 1 emission, got %d", len(emissions))
-		}
-		result := emissions[0]
 
 		// Flatten all group values.
 		var got []int
@@ -2043,17 +2039,13 @@ func TestPropGroupByKeyOrder(t *testing.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		emissions, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
 			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
 			t.Fatalf("GroupBy error: %v", err)
 		}
-		if len(emissions) != 1 {
-			t.Fatalf("expected 1 emission, got %d", len(emissions))
-		}
-		result := emissions[0]
 
 		// Law 1: key correctness.
 		for k, items := range result {
@@ -2095,17 +2087,13 @@ func TestPropGroupByGroupCount(t *testing.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		emissions, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
 			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
 			t.Fatalf("GroupBy error: %v", err)
 		}
-		if len(emissions) != 1 {
-			t.Fatalf("expected 1 emission, got %d", len(emissions))
-		}
-		result := emissions[0]
 
 		// Law: group count equals distinct key count.
 		distinctKeys := make(map[int]struct{})

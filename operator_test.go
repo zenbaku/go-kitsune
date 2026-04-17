@@ -1058,13 +1058,66 @@ func TestDedupe_Window(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Single
+// ---------------------------------------------------------------------------
+
+func TestSingle_OneItem(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.FromSlice([]int{42}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 42 {
+		t.Errorf("got %d, want 42", v)
+	}
+}
+
+func TestSingle_EmptyErrors(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Single(ctx, kitsune.Empty[int]())
+	if err == nil {
+		t.Error("expected error for empty pipeline")
+	}
+}
+
+func TestSingle_OrDefault(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.Empty[int](), kitsune.OrDefault(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 99 {
+		t.Errorf("got %d, want 99", v)
+	}
+}
+
+func TestSingle_OrZero(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.Empty[string](), kitsune.OrZero[string]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "" {
+		t.Errorf("got %q, want empty string", v)
+	}
+}
+
+func TestSingle_TooManyErrors(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Single(ctx, kitsune.FromSlice([]int{1, 2}))
+	if err == nil {
+		t.Error("expected error for pipeline emitting more than one item")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GroupBy / Frequencies
 // ---------------------------------------------------------------------------
 
 func TestGroupBy_Basic(t *testing.T) {
 	ctx := context.Background()
 	type event struct{ kind, val string }
-	results, err := kitsune.Collect(ctx,
+	result, err := kitsune.Single(ctx,
 		kitsune.GroupBy(
 			kitsune.FromSlice([]event{
 				{"a", "1"}, {"b", "2"}, {"a", "3"},
@@ -1075,10 +1128,6 @@ func TestGroupBy_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 emission, got %d", len(results))
-	}
-	result := results[0]
 	if len(result["a"]) != 2 || len(result["b"]) != 1 {
 		t.Errorf("got %v", result)
 	}
@@ -1090,23 +1139,20 @@ func TestGroupBy_Basic(t *testing.T) {
 
 func TestGroupBy_EmptySource(t *testing.T) {
 	ctx := context.Background()
-	results, err := kitsune.Collect(ctx,
+	result, err := kitsune.Single(ctx,
 		kitsune.GroupBy(kitsune.Empty[int](), func(v int) int { return v }),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 emission (empty map), got %d", len(results))
-	}
-	if len(results[0]) != 0 {
-		t.Errorf("expected empty map, got %v", results[0])
+	if len(result) != 0 {
+		t.Errorf("expected empty map, got %v", result)
 	}
 }
 
 func TestGroupBy_WithName(t *testing.T) {
 	ctx := context.Background()
-	_, err := kitsune.Collect(ctx,
+	result, err := kitsune.Single(ctx,
 		kitsune.GroupBy(kitsune.FromSlice([]int{1, 2}),
 			func(v int) int { return v % 2 },
 			kitsune.WithName("my_groupby"),
@@ -1114,6 +1160,10 @@ func TestGroupBy_WithName(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// input {1, 2}: group 0 has [2], group 1 has [1]
+	if len(result) != 2 {
+		t.Errorf("expected 2 groups, got %d: %v", len(result), result)
 	}
 }
 
