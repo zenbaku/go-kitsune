@@ -2107,6 +2107,46 @@ func TestPropGroupByGroupCount(t *testing.T) {
 	})
 }
 
+// TestPropWithinSortInChunks verifies that when Within sorts each chunk, the
+// total item count is preserved and each chunk ends up non-decreasing.
+func TestPropWithinSortInChunks(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		items := rapid.SliceOf(rapid.Int()).Draw(t, "items")
+		chunkSize := rapid.IntRange(1, 10).Draw(t, "chunkSize")
+
+		ctx := context.Background()
+		got, err := kitsune.Collect(ctx,
+			kitsune.Within(
+				kitsune.Batch(kitsune.FromSlice(items), kitsune.BatchCount(chunkSize)),
+				func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+					return kitsune.Sort(w, func(a, b int) bool { return a < b })
+				},
+			),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Flattened count equals input count.
+		total := 0
+		for _, chunk := range got {
+			total += len(chunk)
+		}
+		if total != len(items) {
+			t.Fatalf("total items: got %d, want %d", total, len(items))
+		}
+
+		// Each chunk is non-decreasing.
+		for i, chunk := range got {
+			for j := 1; j < len(chunk); j++ {
+				if chunk[j-1] > chunk[j] {
+					t.Fatalf("chunk %d not sorted at position %d: %v", i, j, chunk)
+				}
+			}
+		}
+	})
+}
+
 // TestPropSingle verifies the three Single laws: empty -> error, one -> value,
 // more-than-one -> error.
 func TestPropSingle(t *testing.T) {

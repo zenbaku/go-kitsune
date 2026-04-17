@@ -650,6 +650,74 @@ func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) 
 	}, opts...)
 }
 
+// ---------------------------------------------------------------------------
+// Within
+// ---------------------------------------------------------------------------
+
+// Within applies stage to the items within each slice emitted by p,
+// collecting the stage's output into a new slice. The output pipeline emits
+// one []O per input []T slice.
+//
+// All existing pipeline operators work unchanged inside the stage function.
+// Use [Unbatch] to flatten the result back to *Pipeline[O] when the slice
+// structure is no longer needed.
+//
+// Example:
+//
+//	kitsune.Unbatch(kitsune.Within(chunks, func(w *kitsune.Pipeline[T]) *kitsune.Pipeline[T] {
+//	    return kitsune.Sort(w, less)
+//	}))
+func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "within",
+		name:   orDefault(cfg.name, "within"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan []O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan []O)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan []O, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stageFunc := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			for {
+				select {
+				case items, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					transformed, err := Collect(ctx, stage(FromSlice(items)))
+					if err != nil {
+						return err
+					}
+					if err := outbox.Send(ctx, transformed); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stageFunc, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
+}
+
 // batchCollectOpts extracts only the BatchTimeout option for the Batch stage;
 // all other options (Concurrency, OnError, etc.) apply to the FlatMap stage.
 func batchCollectOpts(opts []StageOption) []StageOption {

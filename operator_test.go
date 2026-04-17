@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -1984,6 +1985,83 @@ func TestDropLast_One(t *testing.T) {
 	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{10, 20, 30}), 1))
 	if !sliceEqual(got, []int{10, 20}) {
 		t.Errorf("got %v, want [10 20]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Within
+// ---------------------------------------------------------------------------
+
+func TestWithin_SortEachChunk(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{3, 1, 2, 6, 4, 5})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Unbatch(
+			kitsune.Within(
+				kitsune.Batch(src, kitsune.BatchCount(3)),
+				func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+					return kitsune.Sort(w, func(a, b int) bool { return a < b })
+				},
+			),
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4, 5, 6}
+	if !slices.Equal(result, want) {
+		t.Errorf("got %v, want %v", result, want)
+	}
+}
+
+func TestWithin_FilterEachChunk(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Within(
+			kitsune.Batch(src, kitsune.BatchCount(3)),
+			func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+				return kitsune.Filter(w, func(_ context.Context, v int) (bool, error) {
+					return v%2 == 0, nil
+				})
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each chunk [1,2,3] -> [2], [4,5,6] -> [4,6]
+	want := [][]int{{2}, {4, 6}}
+	if len(result) != len(want) {
+		t.Errorf("got %v, want %v", result, want)
+		return
+	}
+	for i := range want {
+		if !slices.Equal(result[i], want[i]) {
+			t.Errorf("chunk %d: got %v, want %v", i, result[i], want[i])
+		}
+	}
+}
+
+func TestWithin_EmptyChunk(t *testing.T) {
+	ctx := context.Background()
+	// A chunk that filters to nothing should still emit an empty slice (one emission per input slice).
+	src := kitsune.FromSlice([]int{1, 3, 5})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Within(
+			kitsune.Batch(src, kitsune.BatchCount(3)),
+			func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+				return kitsune.Filter(w, func(_ context.Context, v int) (bool, error) {
+					return v%2 == 0, nil // no evens -> empty
+				})
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 || len(result[0]) != 0 {
+		t.Errorf("expected one empty slice, got %v", result)
 	}
 }
 
