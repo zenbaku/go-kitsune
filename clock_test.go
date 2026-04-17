@@ -29,7 +29,7 @@ func TestBatch_CountFlush(t *testing.T) {
 	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Batch(ch.Source(), 3).
+		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
 			ForEach(func(_ context.Context, b []int) error {
 				batches <- b
 				return nil
@@ -86,7 +86,7 @@ func TestBatch_TestClock(t *testing.T) {
 	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Batch(ch.Source(), 100,
+		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(100),
 			kitsune.BatchTimeout(5*time.Second),
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, b []int) error {

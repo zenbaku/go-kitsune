@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -821,7 +822,7 @@ func TestDropWhile(t *testing.T) {
 
 func TestBatch(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
-	got := collectAll(t, kitsune.Batch(p, 2))
+	got := collectAll(t, kitsune.Batch(p, kitsune.BatchCount(2)))
 	if len(got) != 3 {
 		t.Fatalf("expected 3 batches, got %d: %v", len(got), got)
 	}
@@ -848,7 +849,7 @@ func TestUnbatch(t *testing.T) {
 func TestBatch_DropPartial(t *testing.T) {
 	// 7 items, size 3: full batches are [1,2,3] and [4,5,6]; trailing [7] is dropped.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6, 7})
-	got := collectAll(t, kitsune.Batch(p, 3, kitsune.DropPartial()))
+	got := collectAll(t, kitsune.Batch(p, kitsune.BatchCount(3), kitsune.DropPartial()))
 	if len(got) != 2 {
 		t.Fatalf("expected 2 full batches, got %d: %v", len(got), got)
 	}
@@ -858,6 +859,83 @@ func TestBatch_DropPartial(t *testing.T) {
 	if !sliceEqual(got[1], []int{4, 5, 6}) {
 		t.Errorf("batch 1: %v", got[1])
 	}
+}
+
+func TestBatch_BatchCount(t *testing.T) {
+	ctx := context.Background()
+	ch := kitsune.NewChannel[int](10)
+	batches := make(chan []int, 10)
+	done := make(chan error, 1)
+	go func() {
+		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
+			ForEach(func(_ context.Context, b []int) error {
+				batches <- b
+				return nil
+			}).Run(ctx)
+	}()
+
+	for _, v := range []int{1, 2, 3, 4, 5} {
+		if err := ch.Send(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	var got [][]int
+	for len(batches) > 0 {
+		got = append(got, <-batches)
+	}
+	if len(got) != 2 || len(got[0]) != 3 || len(got[1]) != 2 {
+		t.Errorf("batches: got %v", got)
+	}
+}
+
+func TestBatch_BatchMeasure(t *testing.T) {
+	ctx := context.Background()
+	ch := kitsune.NewChannel[string](10)
+	batches := make(chan []string, 10)
+	done := make(chan error, 1)
+	go func() {
+		// flush when total byte length >= 6
+		done <- kitsune.Batch(ch.Source(),
+			kitsune.BatchMeasure(func(s string) int { return len(s) }, 6),
+		).ForEach(func(_ context.Context, b []string) error {
+			batches <- b
+			return nil
+		}).Run(ctx)
+	}()
+
+	// "abc"=3, "def"=3 -> flush at 6; "gh"=2 -> partial on close
+	for _, s := range []string{"abc", "def", "gh"} {
+		if err := ch.Send(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ch.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	var got [][]string
+	for len(batches) > 0 {
+		got = append(got, <-batches)
+	}
+	if len(got) != 2 || len(got[0]) != 2 || got[0][0] != "abc" {
+		t.Errorf("batches: got %v", got)
+	}
+}
+
+func TestBatch_PanicIfNoTrigger(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when no flush trigger provided")
+		}
+	}()
+	ch := kitsune.NewChannel[int](1)
+	kitsune.Batch(ch.Source()) // no BatchCount, BatchMeasure, or BatchTimeout
 }
 
 func TestSlidingWindow(t *testing.T) {
@@ -922,11 +1000,114 @@ func TestDistinct(t *testing.T) {
 }
 
 func TestDedupe(t *testing.T) {
+	// DedupeWindow(1) = consecutive dedup only; preserves non-adjacent duplicates.
 	p := kitsune.FromSlice([]int{1, 1, 2, 2, 3, 1, 1})
-	got := collectAll(t, kitsune.Dedupe(p))
+	got := collectAll(t, kitsune.Dedupe(p, kitsune.DedupeWindow(1)))
 	want := []int{1, 2, 3, 1}
 	if !sliceEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestDedupe_GlobalDefault(t *testing.T) {
+	// Default (no options) must suppress all duplicates globally, not just consecutive.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 2, 1, 3, 2, 1})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3}
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
+	}
+}
+
+func TestDedupe_Consecutive(t *testing.T) {
+	// DedupeWindow(1) = consecutive dedup only.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 1, 2, 1, 2}),
+			kitsune.DedupeWindow(1)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 1, 2} // only adjacent dups removed
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
+	}
+}
+
+func TestDedupe_Window(t *testing.T) {
+	// DedupeWindow(3): remember last 3 items; drop if in window, advance window on emit.
+	ctx := context.Background()
+	items, err := kitsune.Collect(ctx,
+		kitsune.Dedupe(kitsune.FromSlice([]int{1, 2, 3, 1, 4}),
+			kitsune.DedupeWindow(3)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1 -> emit [1]; 2 -> emit [1,2]; 3 -> emit [1,2,3];
+	// 1 -> in window, drop; 4 -> not in window, emit (window evicts oldest: [2,3,4]).
+	want := []int{1, 2, 3, 4}
+	if !sliceEqual(items, want) {
+		t.Errorf("got %v, want %v", items, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Single
+// ---------------------------------------------------------------------------
+
+func TestSingle_OneItem(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.FromSlice([]int{42}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 42 {
+		t.Errorf("got %d, want 42", v)
+	}
+}
+
+func TestSingle_EmptyErrors(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Single(ctx, kitsune.Empty[int]())
+	if err == nil {
+		t.Error("expected error for empty pipeline")
+	}
+}
+
+func TestSingle_OrDefault(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.Empty[int](), kitsune.OrDefault(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != 99 {
+		t.Errorf("got %d, want 99", v)
+	}
+}
+
+func TestSingle_OrZero(t *testing.T) {
+	ctx := context.Background()
+	v, err := kitsune.Single(ctx, kitsune.Empty[string](), kitsune.OrZero[string]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "" {
+		t.Errorf("got %q, want empty string", v)
+	}
+}
+
+func TestSingle_TooManyErrors(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Single(ctx, kitsune.FromSlice([]int{1, 2}))
+	if err == nil {
+		t.Error("expected error for pipeline emitting more than one item")
 	}
 }
 
@@ -934,49 +1115,56 @@ func TestDedupe(t *testing.T) {
 // GroupBy / Frequencies
 // ---------------------------------------------------------------------------
 
-func TestGroupBy(t *testing.T) {
+func TestGroupBy_Basic(t *testing.T) {
 	ctx := context.Background()
-	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	byKey, err := kitsune.GroupBy(ctx, p, func(s string) string { return s })
+	type event struct{ kind, val string }
+	result, err := kitsune.Single(ctx,
+		kitsune.GroupBy(
+			kitsune.FromSlice([]event{
+				{"a", "1"}, {"b", "2"}, {"a", "3"},
+			}),
+			func(e event) string { return e.kind },
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(byKey["a"]) != 3 || len(byKey["b"]) != 2 || len(byKey["c"]) != 1 {
-		t.Fatalf("unexpected groups: %v", byKey)
+	if len(result["a"]) != 2 || len(result["b"]) != 1 {
+		t.Errorf("got %v", result)
+	}
+	// Arrival order preserved inside each group.
+	if result["a"][0].val != "1" || result["a"][1].val != "3" {
+		t.Errorf("arrival order not preserved: %v", result["a"])
 	}
 }
 
-func TestGroupByStream(t *testing.T) {
+func TestGroupBy_EmptySource(t *testing.T) {
 	ctx := context.Background()
-	p := kitsune.FromSlice([]string{"a", "b", "a", "c", "b", "a"})
-	groups, err := kitsune.Collect(ctx, kitsune.GroupByStream(p, func(s string) string { return s }))
+	result, err := kitsune.Single(ctx,
+		kitsune.GroupBy(kitsune.Empty[int](), func(v int) int { return v }),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expect three groups in first-seen order: a, b, c.
-	if len(groups) != 3 {
-		t.Fatalf("expected 3 groups, got %d: %v", len(groups), groups)
-	}
-	if groups[0].Key != "a" || len(groups[0].Items) != 3 {
-		t.Errorf("group[0]: got key=%q items=%v, want key=a items=[a a a]", groups[0].Key, groups[0].Items)
-	}
-	if groups[1].Key != "b" || len(groups[1].Items) != 2 {
-		t.Errorf("group[1]: got key=%q items=%v, want key=b items=[b b]", groups[1].Key, groups[1].Items)
-	}
-	if groups[2].Key != "c" || len(groups[2].Items) != 1 {
-		t.Errorf("group[2]: got key=%q items=%v, want key=c items=[c]", groups[2].Key, groups[2].Items)
+	if len(result) != 0 {
+		t.Errorf("expected empty map, got %v", result)
 	}
 }
 
-func TestGroupByStreamEmpty(t *testing.T) {
+func TestGroupBy_WithName(t *testing.T) {
 	ctx := context.Background()
-	p := kitsune.FromSlice([]string{})
-	groups, err := kitsune.Collect(ctx, kitsune.GroupByStream(p, func(s string) string { return s }))
+	result, err := kitsune.Single(ctx,
+		kitsune.GroupBy(kitsune.FromSlice([]int{1, 2}),
+			func(v int) int { return v % 2 },
+			kitsune.WithName("my_groupby"),
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 0 {
-		t.Fatalf("expected empty result, got %v", groups)
+	// input {1, 2}: group 0 has [2], group 1 has [1]
+	if len(result) != 2 {
+		t.Errorf("expected 2 groups, got %d: %v", len(result), result)
 	}
 }
 
@@ -1797,6 +1985,124 @@ func TestDropLast_One(t *testing.T) {
 	got := collectAll(t, kitsune.DropLast(kitsune.FromSlice([]int{10, 20, 30}), 1))
 	if !sliceEqual(got, []int{10, 20}) {
 		t.Errorf("got %v, want [10 20]", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Within
+// ---------------------------------------------------------------------------
+
+func TestWithin_SortEachChunk(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{3, 1, 2, 6, 4, 5})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Unbatch(
+			kitsune.Within(
+				kitsune.Batch(src, kitsune.BatchCount(3)),
+				func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+					return kitsune.Sort(w, func(a, b int) bool { return a < b })
+				},
+			),
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{1, 2, 3, 4, 5, 6}
+	if !slices.Equal(result, want) {
+		t.Errorf("got %v, want %v", result, want)
+	}
+}
+
+func TestWithin_FilterEachChunk(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Within(
+			kitsune.Batch(src, kitsune.BatchCount(3)),
+			func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+				return kitsune.Filter(w, func(_ context.Context, v int) (bool, error) {
+					return v%2 == 0, nil
+				})
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each chunk [1,2,3] -> [2], [4,5,6] -> [4,6]
+	want := [][]int{{2}, {4, 6}}
+	if len(result) != len(want) {
+		t.Errorf("got %v, want %v", result, want)
+		return
+	}
+	for i := range want {
+		if !slices.Equal(result[i], want[i]) {
+			t.Errorf("chunk %d: got %v, want %v", i, result[i], want[i])
+		}
+	}
+}
+
+func TestWithin_EmptyChunk(t *testing.T) {
+	ctx := context.Background()
+	// A chunk that filters to nothing should still emit an empty slice (one emission per input slice).
+	src := kitsune.FromSlice([]int{1, 3, 5})
+	result, err := kitsune.Collect(ctx,
+		kitsune.Within(
+			kitsune.Batch(src, kitsune.BatchCount(3)),
+			func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+				return kitsune.Filter(w, func(_ context.Context, v int) (bool, error) {
+					return v%2 == 0, nil // no evens -> empty
+				})
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 || len(result[0]) != 0 {
+		t.Errorf("expected one empty slice, got %v", result)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RandomSample
+// ---------------------------------------------------------------------------
+
+func TestRandomSample_RateZero(t *testing.T) {
+	ctx := context.Background()
+	result, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 0.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("rate=0: expected empty, got %v", result)
+	}
+}
+
+func TestRandomSample_RateOne(t *testing.T) {
+	ctx := context.Background()
+	src := []int{1, 2, 3, 4, 5}
+	result, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice(src), 1.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result, src) {
+		t.Errorf("rate=1: got %v, want %v", result, src)
+	}
+}
+
+func TestRandomSample_WithName(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice([]int{1}), 0.5, kitsune.WithName("sample")),
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

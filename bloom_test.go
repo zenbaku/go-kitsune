@@ -113,11 +113,11 @@ func TestBloomDedupSetConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestBloomDedupSetWithDistinctBy(t *testing.T) {
+func TestDedupeByWithBloom(t *testing.T) {
 	ctx := context.Background()
 	set := kitsune.BloomDedupSet(100, 0.01)
 	p := kitsune.FromSlice([]int{1, 2, 1, 3, 2, 4})
-	got, err := kitsune.Collect(ctx, kitsune.DistinctBy(p, func(v int) int { return v },
+	got, err := kitsune.Collect(ctx, kitsune.DedupeBy(p, func(v int) int { return v },
 		kitsune.WithDedupSet(set),
 	))
 	if err != nil {

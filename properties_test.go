@@ -1233,22 +1233,22 @@ func TestPropWithKeyTTLResetAfterEviction(t *testing.T) {
 	})
 }
 
-// TestPropTTLDedupSetDistinctDeduplication verifies the deduplication law:
-// DistinctBy with a TTLDedupSet produces exactly the set of first-seen keys
+// TestPropTTLDedupSetDeduplication verifies the deduplication law:
+// DedupeBy with a TTLDedupSet produces exactly the set of first-seen keys
 // from a finite input when the TTL is long enough not to expire during the run.
-func TestPropTTLDedupSetDistinctDeduplication(t *testing.T) {
+func TestPropTTLDedupSetDeduplication(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		ctx := context.Background()
 		in := rapid.SliceOfN(rapid.IntRange(0, 9), 0, 20).Draw(t, "in")
 
 		set := kitsune.TTLDedupSet(5 * time.Second)
-		got, err := kitsune.Collect(ctx, kitsune.DistinctBy(
+		got, err := kitsune.Collect(ctx, kitsune.DedupeBy(
 			kitsune.FromSlice(in),
 			func(v int) int { return v },
 			kitsune.WithDedupSet(set),
 		))
 		if err != nil {
-			t.Fatalf("DistinctBy error: %v", err)
+			t.Fatalf("DedupeBy error: %v", err)
 		}
 
 		// Build the expected first-seen set in order.
@@ -1279,7 +1279,7 @@ func TestPropBatchPartition(t *testing.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 		size := rapid.IntRange(1, 10).Draw(t, "size")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(size)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}
@@ -1302,7 +1302,7 @@ func TestPropBatchSizes(t *testing.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 		size := rapid.IntRange(1, 10).Draw(t, "size")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), size).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(size)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}
@@ -1330,7 +1330,7 @@ func TestPropBatchSizeOneIsIdentity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		src := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "src")
 
-		got, err := kitsune.Batch(kitsune.FromSlice(src), 1).Collect(context.Background())
+		got, err := kitsune.Batch(kitsune.FromSlice(src), kitsune.BatchCount(1)).Collect(context.Background())
 		if err != nil {
 			t.Fatalf("Batch error: %v", err)
 		}
@@ -1999,29 +1999,29 @@ func TestPropMinMax(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GroupByStream properties
+// GroupBy properties
 // ---------------------------------------------------------------------------
 
-// TestPropGroupByStreamPartition verifies that GroupByStream partitions the
-// input stream without loss or duplication: the concatenation of all group
-// Items slices is a multiset-equal to the original input.
-func TestPropGroupByStreamPartition(t *testing.T) {
+// TestPropGroupByPartition verifies that GroupBy partitions the input stream
+// without loss or duplication: the concatenation of all group value slices is
+// multiset-equal to the original input.
+func TestPropGroupByPartition(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
+			t.Fatalf("GroupBy error: %v", err)
 		}
 
-		// Flatten all group items.
+		// Flatten all group values.
 		var got []int
-		for _, g := range groups {
-			got = append(got, g.Items...)
+		for _, items := range result {
+			got = append(got, items...)
 		}
 
 		if !sameMultiset(got, in) {
@@ -2030,34 +2030,28 @@ func TestPropGroupByStreamPartition(t *testing.T) {
 	})
 }
 
-// TestPropGroupByStreamKeyOrder verifies two laws:
+// TestPropGroupByKeyOrder verifies two laws:
 //  1. Key correctness: every item in group K satisfies keyFn(item) == K.
 //  2. Relative ordering: items within each group appear in the same relative
 //     order as they did in the original input.
-func TestPropGroupByStreamKeyOrder(t *testing.T) {
+func TestPropGroupByKeyOrder(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
-		}
-
-		// Build a map from key to group for easy lookup.
-		byKey := make(map[int]kitsune.Group[int, int], len(groups))
-		for _, g := range groups {
-			byKey[g.Key] = g
+			t.Fatalf("GroupBy error: %v", err)
 		}
 
 		// Law 1: key correctness.
-		for _, g := range groups {
-			for _, item := range g.Items {
-				if item%3 != g.Key {
-					t.Fatalf("key mismatch: item %d in group %d", item, g.Key)
+		for k, items := range result {
+			for _, item := range items {
+				if item%3 != k {
+					t.Fatalf("key mismatch: item %d in group %d", item, k)
 				}
 			}
 		}
@@ -2070,7 +2064,7 @@ func TestPropGroupByStreamKeyOrder(t *testing.T) {
 			expected[k] = append(expected[k], v)
 		}
 		for k, want := range expected {
-			got := byKey[k].Items
+			got := result[k]
 			if len(got) != len(want) {
 				t.Fatalf("group %d: len mismatch got=%d want=%d", k, len(got), len(want))
 			}
@@ -2084,39 +2078,97 @@ func TestPropGroupByStreamKeyOrder(t *testing.T) {
 	})
 }
 
-// TestPropGroupByStreamGroupCount verifies:
-//  1. No cross-key contamination: no key appears in more than one group.
+// TestPropGroupByGroupCount verifies:
+//  1. No cross-key contamination: each key maps to exactly one entry (trivially
+//     true for map[K][]T).
 //  2. Group count equals the number of distinct keys in the input.
-func TestPropGroupByStreamGroupCount(t *testing.T) {
+func TestPropGroupByGroupCount(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(0, 4)).Draw(t, "in")
 
 		p := kitsune.FromSlice(in)
-		groups, err := kitsune.Collect(
+		result, err := kitsune.Single(
 			context.Background(),
-			kitsune.GroupByStream(p, func(v int) int { return v % 3 }),
+			kitsune.GroupBy(p, func(v int) int { return v % 3 }),
 		)
 		if err != nil {
-			t.Fatalf("GroupByStream error: %v", err)
+			t.Fatalf("GroupBy error: %v", err)
 		}
 
-		// Law 1: each key appears in exactly one group.
-		seen := make(map[int]bool)
-		for _, g := range groups {
-			if seen[g.Key] {
-				t.Fatalf("key %d appeared in more than one group", g.Key)
-			}
-			seen[g.Key] = true
-		}
-
-		// Law 2: group count equals distinct key count.
+		// Law: group count equals distinct key count.
 		distinctKeys := make(map[int]struct{})
 		for _, v := range in {
 			distinctKeys[v%3] = struct{}{}
 		}
-		if len(groups) != len(distinctKeys) {
+		if len(result) != len(distinctKeys) {
 			t.Fatalf("group count: got %d want %d (distinct keys in input: %v)",
-				len(groups), len(distinctKeys), distinctKeys)
+				len(result), len(distinctKeys), distinctKeys)
+		}
+	})
+}
+
+// TestPropWithinSortInChunks verifies that when Within sorts each chunk, the
+// total item count is preserved and each chunk ends up non-decreasing.
+func TestPropWithinSortInChunks(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		items := rapid.SliceOf(rapid.Int()).Draw(t, "items")
+		chunkSize := rapid.IntRange(1, 10).Draw(t, "chunkSize")
+
+		ctx := context.Background()
+		got, err := kitsune.Collect(ctx,
+			kitsune.Within(
+				kitsune.Batch(kitsune.FromSlice(items), kitsune.BatchCount(chunkSize)),
+				func(w *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+					return kitsune.Sort(w, func(a, b int) bool { return a < b })
+				},
+			),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Flattened count equals input count.
+		total := 0
+		for _, chunk := range got {
+			total += len(chunk)
+		}
+		if total != len(items) {
+			t.Fatalf("total items: got %d, want %d", total, len(items))
+		}
+
+		// Each chunk is non-decreasing.
+		for i, chunk := range got {
+			for j := 1; j < len(chunk); j++ {
+				if chunk[j-1] > chunk[j] {
+					t.Fatalf("chunk %d not sorted at position %d: %v", i, j, chunk)
+				}
+			}
+		}
+	})
+}
+
+// TestPropSingle verifies the three Single laws: empty -> error, one -> value,
+// more-than-one -> error.
+func TestPropSingle(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.Int()).Draw(t, "in")
+		got, err := kitsune.Single(context.Background(), kitsune.FromSlice(in))
+		switch len(in) {
+		case 0:
+			if err == nil {
+				t.Fatalf("expected error for empty pipeline, got %d", got)
+			}
+		case 1:
+			if err != nil {
+				t.Fatalf("unexpected error for single-item pipeline: %v", err)
+			}
+			if got != in[0] {
+				t.Fatalf("got %d, want %d", got, in[0])
+			}
+		default:
+			if err == nil {
+				t.Fatalf("expected error for %d-item pipeline, got %d", len(in), got)
+			}
 		}
 	})
 }

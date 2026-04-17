@@ -63,14 +63,14 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`FlatMapWith`](#flatmapwith) | Stateful | FlatMap with run-scoped state |
 | [`MapWithKey`](#mapwithkey) | Stateful | Sharded state by key |
 | [`FlatMapWithKey`](#flatmapwithkey) | Stateful | FlatMap with sharded state |
-| [`Batch`](#batch) | Batch | Collect N items (or timeout) |
+| [`Batch`](#batch) | Batch | Collect items by count, measure, or timeout |
+| [`Within`](#within) | Batch | Apply a pipeline stage to slice contents |
 | [`MapBatch`](#mapbatch) | Batch | Batch → fn → flatten |
 | [`Window`](#window) | Batch | Count-based tumbling window |
 | [`SlidingWindow`](#slidingwindow) | Batch | Overlapping sliding windows |
 | [`SessionWindow`](#sessionwindow) | Batch | Gap-based session window |
 | [`ChunkBy`](#chunkby) | Batch | Consecutive same-key grouping |
 | [`ChunkWhile`](#chunkwhile) | Batch | Consecutive predicate grouping |
-| [`GroupByStream`](#groupbystream) | Batch | Route items to per-key sub-pipelines |
 | [`Merge`](#merge) | Fan-in | N → 1 same-type streams |
 | [`Partition`](#partition) | Fan-out | 1 → 2 by predicate |
 | [`Broadcast`](#broadcast--broadcastn) | Fan-out | Copy to N branches |
@@ -92,11 +92,13 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`MinBy`](#minby--maxby) | Aggregate | Min by key function |
 | [`MaxBy`](#minby--maxby) | Aggregate | Max by key function |
 | [`ReduceWhile`](#reducewhile) | Aggregate | Fold until predicate fails |
-| [`TakeRandom`](#takerandom) | Aggregate | Random reservoir sample |
+| [`TakeRandom`](#takerandom) | Aggregate | Buffering random reservoir sample |
+| [`GroupBy`](#groupby) | Aggregate | Group items into a single map |
+| [`RandomSample`](#randomsample) | Filter | Streaming probabilistic sample |
 | [`Collect`](#collect--first--last--count--any--all--find--contains) | Terminal | Return `[]T` |
-| [`ToMap`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Collect to map |
-| [`GroupBy`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Collect to `map[K][]T` |
-| [`Frequencies`](#tomap--groupby--frequencies--frequenciesby) | Terminal | Count occurrences |
+| [`Single`](#single) | Terminal | Expect exactly one item |
+| [`ToMap`](#tomap--frequencies--frequenciesby) | Terminal | Collect to map |
+| [`Frequencies`](#tomap--frequencies--frequenciesby) | Terminal | Count occurrences |
 | [`Sort`](#sort--sortby) | Terminal | Sort and collect |
 | [`Iter`](#iter) | Terminal | `iter.Seq[T]` bridge |
 | [`ForEach`](#foreach) | Terminal | Run side-effect sink |
@@ -421,7 +423,7 @@ func Empty[T any]() *Pipeline[T]
 
 Returns a Pipeline that completes immediately with no items. Useful as an identity element in pipeline composition and as a base case in tests.
 
-`Merge(Empty[T](), p)` behaves identically to `p` for any pipeline `p`. `Amb(Empty[T](), p)` is not the same — `Amb` forwards whichever emits first, and `Empty` completes before emitting, so the winner is `p`.
+`Merge(Empty[T](), p)` behaves identically to `p` for any pipeline `p`. `Amb(Empty[T](), p)` is not the same: `Amb` forwards whichever emits first, and `Empty` completes before emitting, so the winner is `p`.
 
 **Options:** none.
 
@@ -870,7 +872,7 @@ The key property: `Materialize` never propagates pipeline errors. They are encod
 | `IsError()` | Re-inject `n.Err` as a pipeline error |
 | Upstream closed without terminal | Complete normally (defensive) |
 
-**When to use:** When you need to pass error events through operators that only handle `T` — for example, routing, logging, or filtering errors without halting the pipeline. The standard pattern:
+**When to use:** When you need to pass error events through operators that only handle `T`; for example, routing, logging, or filtering errors without halting the pipeline. The standard pattern:
 
 ```go
 // Classify notifications by outcome without halting on errors.
@@ -890,7 +892,7 @@ classified := kitsune.Map(
 
 **Options (`Dematerialize` only):** `Buffer`, `Overflow`, `WithName`.
 
-**Options (`Materialize`):** none — it wraps the upstream run internally and cannot accept per-stage options.
+**Options (`Materialize`):** none; it wraps the upstream run internally and cannot accept per-stage options.
 
 **See also:** [`MapResult`](#mapresult) (routes errors to a separate pipeline without materialization), [`TapError`](#tap--taperror--finally) (side-effect on terminal error), [`Catch`](#catch) (fallback pipeline on error).
 
@@ -1057,7 +1059,7 @@ BFS graph expansion. For each item, `fn` returns a child pipeline (or `nil` for 
 
 **Options:** `Buffer`, `WithName`, `MaxDepth`, `MaxItems`, `VisitedBy` (for cycle detection), `WithDedupSet`.
 
-> **Warning — unbounded by default.** Without `MaxDepth`, `MaxItems`, or a downstream `Take(n)`, `ExpandMap` will traverse the entire reachable graph. A graph with branching factor `fan` and depth `d` produces up to `fan^d` items, which can exhaust memory silently as the BFS queue grows. Always bound expansion on untrusted or potentially deep inputs.
+> **Warning: unbounded by default.** Without `MaxDepth`, `MaxItems`, or a downstream `Take(n)`, `ExpandMap` will traverse the entire reachable graph. A graph with branching factor `fan` and depth `d` produces up to `fan^d` items, which can exhaust memory silently as the BFS queue grows. Always bound expansion on untrusted or potentially deep inputs.
 
 ```go
 // Crawl a directory tree.
@@ -1079,7 +1081,7 @@ files := kitsune.ExpandMap(
 )
 ```
 
-Bounded expansion — cap both depth and total entries:
+Bounded expansion: cap both depth and total entries:
 
 ```go
 // Walk at most 4 levels deep and at most 10 000 entries total.
@@ -1103,7 +1105,7 @@ files := kitsune.ExpandMap(
 )
 ```
 
-When either bound is reached the stage stops enqueueing children and closes its output channel normally — no error is returned, matching the semantics of `Take(n)`. If both options are set, whichever limit fires first wins.
+When either bound is reached the stage stops enqueueing children and closes its output channel normally; no error is returned, matching the semantics of `Take(n)`. If both options are set, whichever limit fires first wins.
 
 ---
 
@@ -1337,7 +1339,7 @@ func Distinct[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T]
 
 Emits only items that have not been seen before in the entire stream, using `==` equality. Keeps an in-memory set of all seen values; memory usage grows with the number of unique items.
 
-**Options:** `WithDedupSet` (to use a Redis or Bloom filter backend), `Buffer`, `WithName`.
+**Options:** `Buffer`, `WithName`.
 
 ```go
 uniqueIDs := kitsune.Distinct(allIDs)
@@ -1353,7 +1355,7 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 
 Like [`Distinct`](#distinct) but uses `keyFn` to derive the comparison key, allowing deduplication of complex types by a single field.
 
-**Options:** `WithDedupSet`, `Buffer`, `WithName`.
+**Options:** `Buffer`, `WithName`.
 
 ```go
 // Deduplicate events by their ID field.
@@ -1369,24 +1371,36 @@ func Dedupe[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T]
 func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T]
 ```
 
-Drops consecutive duplicate items (adjacent-only deduplication). Unlike [`Distinct`](#distinct), non-adjacent duplicates are not suppressed. `Dedupe` uses `==` equality; `DedupeBy` uses a key function.
+Suppresses duplicate items. By default (without `DedupeWindow`), deduplication is global: any item whose key was already seen anywhere in the stream is dropped. `Dedupe` uses `==` equality; `DedupeBy` uses a key function.
 
-If a `WithDedupSet` backend is provided, deduplication becomes global (not just consecutive); any item whose key was seen anywhere in the stream is dropped.
+Use `DedupeWindow(n)` to change the deduplication scope:
 
-The method form `p.Dedupe(keyFn)` uses a `MemoryDedupSet` by default for global deduplication.
+- `DedupeWindow(0)`: global deduplication (default). All previously-seen keys are remembered.
+- `DedupeWindow(1)`: consecutive deduplication only. An item is dropped only if it is identical to the immediately preceding item. This is the classic "remove adjacent duplicates" behaviour.
+- `DedupeWindow(n)` where `n > 1`: sliding-window deduplication. An item is dropped if it appeared in the last `n` items.
 
-**Options:** `WithDedupSet`, `Buffer`, `WithName`.
+Use `WithDedupSet` to provide a custom backend (Redis, Bloom filter) for global deduplication instead of the default in-process `MemoryDedupSet`.
+
+**Options:** `DedupeWindow`, `WithDedupSet`, `Buffer`, `WithName`.
 
 ```go
-// Suppress consecutive duplicate status updates.
-changes := kitsune.DedupeBy(statusUpdates, func(s Status) string { return s.State })
+// Global dedup (default): drop any item seen previously in the stream.
+unique := kitsune.DedupeBy(events, func(e Event) string { return e.ID })
+
+// Consecutive-only: suppress adjacent duplicates.
+changes := kitsune.DedupeBy(statusUpdates, func(s Status) string { return s.State },
+    kitsune.DedupeWindow(1),
+)
+
+// Sliding window: drop any item seen in the last 50 items.
+recent := kitsune.Dedupe(values, kitsune.DedupeWindow(50))
 ```
 
 ---
 
 ### DedupSet backends
 
-`Distinct`, `DistinctBy`, `Dedupe`, `DedupeBy`, and `ExpandMap` all accept a `WithDedupSet(backend)` option to override their default in-process deduplication store. Three built-in backends are provided:
+`Dedupe`, `DedupeBy`, and `ExpandMap` all accept a `WithDedupSet(backend)` option to override their default in-process deduplication store. Three built-in backends are provided:
 
 #### MemoryDedupSet
 
@@ -1419,9 +1433,30 @@ In-process deduplication set that forgets keys `ttl` after they were last added.
 ```go
 // Suppress duplicate webhook deliveries within a 5-minute window.
 set := kitsune.TTLDedupSet(5 * time.Minute)
-unique := kitsune.DistinctBy(events, func(e Event) string { return e.ID },
+unique := kitsune.DedupeBy(events, func(e Event) string { return e.ID },
     kitsune.WithDedupSet(set),
 )
+```
+
+---
+
+### RandomSample
+
+```go
+func RandomSample[T any](p *Pipeline[T], rate float64, opts ...StageOption) *Pipeline[T]
+```
+
+Passes each item downstream with probability `rate` (in the range `[0.0, 1.0]`). Each item is evaluated independently; decisions are stateless. A `rate` of `1.0` passes all items; `0.0` drops all items.
+
+**When to use:** Streaming telemetry sampling, load-shedding under high throughput, approximate analysis where a random subset is sufficient.
+
+**Comparison with `TakeRandom`:** `RandomSample` is a streaming operator; it passes through items as they arrive and requires no buffering. `TakeRandom` buffers the entire stream and returns a fixed-size slice using reservoir sampling; use it when you need a precise count from a finite stream.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Forward roughly 5% of events to a debug trace topic.
+sample := kitsune.RandomSample(events, 0.05)
 ```
 
 ---
@@ -1630,27 +1665,39 @@ batches := kitsune.BufferWith(events, heartbeat)
 ### Batch
 
 ```go
-func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T]
+func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T]
 ```
 
-Collects items into `[]T` slices of up to `size` elements. When the source closes, any remaining items are flushed as a partial batch. An empty batch is never emitted.
+Collects items into `[]T` slices and flushes them according to one or more flush triggers. At least one of `BatchCount`, `BatchMeasure`, or `BatchTimeout` must be provided; the stage panics at construction time if none are set. Multiple triggers can be combined: the batch flushes as soon as any trigger fires.
 
-With `BatchTimeout(d)`, a partial batch is also flushed when the timeout elapses; this is useful for low-throughput streams where you do not want to wait for a full batch.
+When the source closes, any remaining items are flushed as a partial batch. An empty batch is never emitted. With `DropPartial()`, the final partial batch is discarded when the source closes.
+
+**Flush triggers:**
+
+- `BatchCount(n)`: flush when `n` items have accumulated.
+- `BatchMeasure(fn, n)`: flush when the cumulative measure (computed by `fn` for each item) reaches `n`.
+- `BatchTimeout(d)`: flush after `d` even if the count or measure threshold has not been reached.
 
 **When to use:** Bulk database inserts, batched API calls, reducing per-item overhead for expensive operations.
 
 **When not to use:** When you need overlapping windows; use [`SlidingWindow`](#slidingwindow) or `SessionWindow`.
 
-With `DropPartial()`, the final partial batch is discarded when the source closes; only full batches are emitted.
-
-**Options:** `BatchTimeout`, `DropPartial`, `WithClock`, `Buffer`, `WithName`.
+**Options:** `BatchCount`, `BatchMeasure`, `BatchTimeout`, `DropPartial`, `WithClock`, `Buffer`, `WithName`.
 
 ```go
 // Flush up to 100 items at a time, or after 500ms.
-batches := kitsune.Batch(events, 100, kitsune.BatchTimeout(500*time.Millisecond))
+batches := kitsune.Batch(events,
+    kitsune.BatchCount(100),
+    kitsune.BatchTimeout(500*time.Millisecond),
+)
+
+// Flush when cumulative byte size reaches 64 KiB.
+chunks := kitsune.Batch(messages,
+    kitsune.BatchMeasure(func(m Message) int { return len(m.Payload) }, 64*1024),
+)
 
 // Emit only full batches of 10; drop any trailing items.
-chunks := kitsune.Batch(items, 10, kitsune.DropPartial())
+chunks := kitsune.Batch(items, kitsune.BatchCount(10), kitsune.DropPartial())
 ```
 
 ---
@@ -1678,6 +1725,32 @@ enriched := kitsune.MapBatch(userIDs, 200,
         return db.BulkFetchUsers(ctx, ids)
     },
 )
+```
+
+---
+
+### Within
+
+```go
+func Within[T any, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O]
+```
+
+Applies a pipeline stage to the contents of each incoming slice, collecting the results back into a slice. Each `[]T` item is unwound into a sub-pipeline, the `stage` function is applied, and the output items are gathered into a `[]O` before being emitted downstream.
+
+**When to use:** Transforming or filtering the elements inside batches produced by `Batch`, `SlidingWindow`, `ChunkBy`, or similar slice-emitting operators, without unwinding to individual items and re-batching.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Sort each batch before forwarding.
+sorted := kitsune.Within(batches, func(p *kitsune.Pipeline[Event]) *kitsune.Pipeline[Event] {
+    return kitsune.Sort(p, func(a, b Event) bool { return a.Time.Before(b.Time) })
+})
+
+// Filter items within each chunk and keep non-empty chunks.
+filtered := kitsune.Within(chunks, func(p *kitsune.Pipeline[Record]) *kitsune.Pipeline[Record] {
+    return kitsune.Filter(p, func(r Record) bool { return r.Valid })
+})
 ```
 
 ---
@@ -1752,30 +1825,6 @@ Groups consecutive items into chunks while `pred(prev, current)` returns `true`.
 ```go
 // Group ascending runs: [1,2,3,1,2] → [[1,2,3],[1,2]]
 kitsune.ChunkWhile(nums, func(prev, curr int) bool { return curr > prev })
-```
-
----
-
-### GroupByStream
-
-```go
-func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]]
-```
-
-Partitions items by key and emits one `Group[K, T]` per distinct key when the source completes, in first-seen key order. For a terminal map result use [`GroupBy`](#tomap-groupby-frequencies-frequenciesby).
-
-```go
-type Group[K comparable, V any] struct {
-    Key   K
-    Items []V
-}
-```
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-grouped := kitsune.GroupByStream(events, func(e Event) string { return e.Type })
-// emits one Group per distinct e.Type, with all matching events
 ```
 
 ---
@@ -2093,6 +2142,10 @@ enriched := kitsune.Enrich(events, cfg)
 
 ## :material-sigma: Aggregation & Collection { #aggregation }
 
+#### Running aggregates
+
+Running aggregates emit a new value after each input item without waiting for the source to close.
+
 ### Scan
 
 ```go
@@ -2187,16 +2240,49 @@ partial, _ := kitsune.ReduceWhile(ctx, prices, 0.0,
 
 ---
 
+#### Buffering aggregates
+
+Buffering aggregates consume the entire stream before emitting their result. The source pipeline must be finite; use [`Single`](#single) to extract the single emitted value.
+
+### GroupBy
+
+```go
+func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T]
+```
+
+Buffers all input and emits a single `map[K][]T` when the source closes. Items are grouped by the key returned by `keyFn`; items with the same key appear in arrival order within their slice.
+
+This is a buffering pipeline operator, not a terminal. The entire stream must fit in memory. Combine with [`Single`](#single) to collect the result, or use downstream operators to process the map.
+
+**When to use:** Partitioning a finite stream into named groups for further processing, batch reports, or building lookup tables.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Group events by type, then collect with Single.
+grouped, err := kitsune.Single(ctx, kitsune.GroupBy(events,
+    func(e Event) string { return e.Type },
+))
+// grouped is map[string][]Event
+```
+
+---
+
 ### TakeRandom
 
 ```go
-func TakeRandom[T any](ctx context.Context, p *Pipeline[T], n int, opts ...RunOption) ([]T, error)
+func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T]
 ```
 
-Returns a random sample of up to `n` items using reservoir sampling (Algorithm R). Each item has an equal probability of being selected. The returned slice has `min(n, pipelineSize)` items. Order of the returned items is not guaranteed.
+Buffers all input and emits a single `[]T` containing a random sample of up to `n` items using reservoir sampling (Algorithm R). Each item has an equal probability of being selected. The emitted slice has `min(n, pipelineSize)` items. Order within the slice is not guaranteed.
+
+This is a pipeline (buffering) operator, not a terminal. Combine with [`Single`](#single) to extract the result.
+
+**Options:** `Buffer`, `WithName`.
 
 ```go
-sample, err := kitsune.TakeRandom(ctx, users, 100)
+// Get 100 random users.
+sample, err := kitsune.Single(ctx, kitsune.TakeRandom(users, 100))
 ```
 
 ---
@@ -2227,20 +2313,20 @@ found, err  := kitsune.Any(ctx, p, func(v int) bool { return v > 0 })
 
 ---
 
-### ToMap / GroupBy / Frequencies / FrequenciesBy
+### ToMap / Frequencies / FrequenciesBy
 
 ```go
 func ToMap[T any, K comparable, V any](ctx context.Context, p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...RunOption) (map[K]V, error)
-func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K][]T, error)
 func Frequencies[T comparable](ctx context.Context, p *Pipeline[T], opts ...RunOption) (map[T]int, error)
 func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K]int, error)
 ```
 
-Terminal aggregators that return maps. `ToMap` uses last-writer-wins for duplicate keys. [`Frequencies`](#tomap-groupby-frequencies-frequenciesby) and `FrequenciesBy` count occurrences.
+Terminal aggregators that return maps. `ToMap` uses last-writer-wins for duplicate keys. `Frequencies` and `FrequenciesBy` count occurrences.
+
+For grouping into `map[K][]T`, use the pipeline operator [`GroupBy`](#groupby) combined with [`Single`](#single).
 
 ```go
 byID, err   := kitsune.ToMap(ctx, users, func(u User) int { return u.ID }, func(u User) User { return u })
-groups, err := kitsune.GroupBy(ctx, events, func(e Event) string { return e.Type })
 counts, err := kitsune.Frequencies(ctx, kitsune.Map(events, extractType))
 ```
 
@@ -2253,7 +2339,7 @@ func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipe
 func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
 ```
 
-Like [`Frequencies`](#tomap-groupby-frequencies-frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single terminal map use [`Frequencies`](#tomap-groupby-frequencies-frequenciesby).
+Like [`Frequencies`](#tomap--frequencies--frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single terminal map use [`Frequencies`](#tomap--frequencies--frequenciesby).
 
 **Options:** `Buffer`, `WithName`.
 
@@ -2379,7 +2465,7 @@ Unlike [`Sample`](#sample) (driven by a fixed wall-clock interval) and [`Throttl
 
 The pipeline completes when the sampler closes. If the source closes and its last item has already been emitted, the pipeline also completes early.
 
-**When to use:** Polling a high-frequency stream at an externally defined rate — for example, sampling sensor readings on each heartbeat, or snapshotting the latest price whenever a timer ticks.
+**When to use:** Polling a high-frequency stream at an externally defined rate; for example, sampling sensor readings on each heartbeat, or snapshotting the latest price whenever a timer ticks.
 
 **Options:** `Buffer`, `WithName`.
 
@@ -2579,6 +2665,35 @@ err := events.ForEach(func(ctx context.Context, e Event) error {
     return db.Insert(ctx, e)
 }, kitsune.Concurrency(8), kitsune.OnError(kitsune.RetryMax(3, kitsune.FixedBackoff(100*time.Millisecond)))).
     Run(ctx)
+```
+
+---
+
+### Single
+
+```go
+func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T, error)
+```
+
+Runs the pipeline and expects it to emit exactly one item. Returns that item on success. Returns an error if:
+
+- The pipeline emits zero items (plain error, unless `OrDefault` or `OrZero` is supplied).
+- The pipeline emits more than one item (plain error, always).
+- The pipeline itself returns an error.
+
+Use `OrDefault(v)` to return a default value instead of an error on empty input, and `OrZero[T]()` to return the zero value of `T` instead.
+
+**When to use:** Collecting the single output of a buffering aggregator such as [`GroupBy`](#groupby), [`TakeRandom`](#takerandom), or [`Reduce`](#reduce), where you expect exactly one output item.
+
+```go
+// Collect a grouped map.
+grouped, err := kitsune.Single(ctx, kitsune.GroupBy(events, keyFn))
+
+// With a default if the pipeline is empty.
+val, err := kitsune.Single(ctx, maybeEmpty, kitsune.OrDefault(0))
+
+// With zero value instead of ErrEmpty.
+val, err := kitsune.Single(ctx, maybeEmpty, kitsune.OrZero[int]())
 ```
 
 ---
@@ -2812,10 +2927,13 @@ See the [Error Handling guide](error-handling.md) for the full evaluation model,
 | `WithName(s)` | `StageOption` | All operators | Label the stage for metrics, traces, and `Pipeline.Describe()`. |
 | `Timeout(d)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `FlatMapWith` | Per-item deadline. Cancels the item's context after `d`. |
 | `Supervise(policy)` | `StageOption` | `Map`, `FlatMap`, `MapWith`, `ForEach` | Restart the stage on error or panic. See `RestartOnError`, `RestartOnPanic`, `RestartAlways`. |
+| `BatchCount(n)` | `StageOption` | `Batch` | Flush when `n` items have accumulated. Required if neither `BatchMeasure` nor `BatchTimeout` is set. |
+| `BatchMeasure(fn, n)` | `StageOption` | `Batch` | Flush when the cumulative measure across buffered items reaches `n`. |
 | `BatchTimeout(d)` | `StageOption` | `Batch`, `MapBatch` | Flush a partial batch after `d` even if it is not full. |
+| `DedupeWindow(n)` | `StageOption` | `Dedupe`, `DedupeBy` | Deduplication scope: `0` = global (default), `1` = consecutive only, `n > 1` = sliding window of last n items. |
 | `WithClock(c)` | `StageOption` | `Ticker`, `Timer`, `Batch`, `Throttle`, `Debounce`, `Sample`, `SessionWindow`, `Timestamp`, `TimeInterval` | Substitute a deterministic clock for testing. |
 | `CacheBy(keyFn)` | `StageOption` | `Map` only | Enable TTL-based result caching. On a hit, `fn` is skipped. Requires `WithCache` at run time or `CacheBackend`. |
-| `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `Distinct`, `DistinctBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
+| `WithDedupSet(s)` | `StageOption` | `Dedupe`, `DedupeBy`, `ExpandMap` | External deduplication backend (Redis, Bloom filter). |
 | `VisitedBy(keyFn)` | `StageOption` | `ExpandMap` | Enable cycle detection by key during graph walks. |
 | `MaxDepth(n int)` | `StageOption` | `ExpandMap` | Cap BFS depth to `n` levels below roots. `0` = roots only; default unlimited. |
 | `MaxItems(n int)` | `StageOption` | `ExpandMap` | Cap total items emitted to `n`. Stage closes normally when cap is hit. Default unlimited. |

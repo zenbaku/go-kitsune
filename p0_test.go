@@ -102,60 +102,6 @@ func TestCacheByNoopWhenNoCacheBackend(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithDedupSet wired into DistinctBy
-// ---------------------------------------------------------------------------
-
-func TestDistinctByWithExternalDedupSet(t *testing.T) {
-	ctx := context.Background()
-	set := kitsune.MemoryDedupSet()
-	p := kitsune.FromSlice([]int{1, 2, 1, 3, 2, 4})
-	got, err := kitsune.Collect(ctx, kitsune.DistinctBy(p, func(v int) int { return v },
-		kitsune.WithDedupSet(set),
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []int{1, 2, 3, 4}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i, w := range want {
-		if got[i] != w {
-			t.Fatalf("got[%d]=%d, want %d", i, got[i], w)
-		}
-	}
-}
-
-func TestDistinctByExternalSetPersistsAcrossRuns(t *testing.T) {
-	ctx := context.Background()
-	// The same set is shared across two runs — items seen in run 1 are filtered in run 2.
-	set := kitsune.MemoryDedupSet()
-	keyFn := func(v int) int { return v }
-
-	p1 := kitsune.FromSlice([]int{1, 2, 3})
-	_, err := kitsune.Collect(ctx, kitsune.DistinctBy(p1, keyFn, kitsune.WithDedupSet(set)))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	p2 := kitsune.FromSlice([]int{2, 3, 4, 5})
-	got, err := kitsune.Collect(ctx, kitsune.DistinctBy(p2, keyFn, kitsune.WithDedupSet(set)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 2 and 3 were seen in run 1 → only 4 and 5 pass through.
-	want := []int{4, 5}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i, w := range want {
-		if got[i] != w {
-			t.Fatalf("got[%d]=%d, want %d", i, got[i], w)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // WithDedupSet wired into DedupeBy (upgrades to global dedup)
 // ---------------------------------------------------------------------------
 

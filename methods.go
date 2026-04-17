@@ -14,7 +14,7 @@ import (
 //
 // Note: Go does not allow methods with their own type parameters, so the
 // following terminals must remain free functions only:
-//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, TakeRandom, SequenceEqual
+//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, SequenceEqual
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.
@@ -129,21 +129,7 @@ func (p *Pipeline[T]) IgnoreElements() *Pipeline[T] {
 }
 
 // Dedupe drops items whose key (returned by keyFn) has already been seen.
-// Uses a global in-process [MemoryDedupSet] unless [WithDedupSet] is provided.
+// Global in-memory dedup by default; see [Dedupe] for options.
 func (p *Pipeline[T]) Dedupe(keyFn func(T) string, opts ...StageOption) *Pipeline[T] {
-	// Inject a MemoryDedupSet for global dedup semantics (matching v1 behavior)
-	// unless the caller already supplied one via WithDedupSet.
-	hasSet := false
-	for _, opt := range opts {
-		cfg := &stageConfig{}
-		opt(cfg)
-		if cfg.dedupSet != nil {
-			hasSet = true
-			break
-		}
-	}
-	if !hasSet {
-		opts = append([]StageOption{WithDedupSet(MemoryDedupSet())}, opts...)
-	}
 	return DedupeBy(p, keyFn, opts...)
 }

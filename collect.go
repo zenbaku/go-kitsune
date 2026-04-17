@@ -3,6 +3,7 @@ package kitsune
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 	"math/rand"
 	"sync"
@@ -12,7 +13,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Collect — gather all items into a slice
+// Collect: gather all items into a slice
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.
@@ -73,6 +74,71 @@ func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, boo
 		return zero, false, err
 	}
 	return result, found, nil
+}
+
+// ---------------------------------------------------------------------------
+// Single
+// ---------------------------------------------------------------------------
+
+// SingleOption configures [Single] behaviour for empty pipelines.
+type SingleOption func(*singleConfig)
+
+type singleConfig struct {
+	hasDefault bool
+	defaultVal any
+}
+
+// OrDefault returns v when the pipeline emits no items, instead of an error.
+func OrDefault[T any](v T) SingleOption {
+	return func(cfg *singleConfig) {
+		cfg.hasDefault = true
+		cfg.defaultVal = v
+	}
+}
+
+// OrZero returns the zero value of T when the pipeline emits no items,
+// instead of an error. Equivalent to [OrDefault] with the zero value.
+func OrZero[T any]() SingleOption {
+	var zero T
+	return OrDefault[T](zero)
+}
+
+// Single drains p and returns the single item it emits. It returns an error
+// if the pipeline emits zero items (unless [OrDefault] or [OrZero] is
+// provided) or more than one item (always an error).
+func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T, error) {
+	cfg := &singleConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	var result T
+	count := 0
+	err := p.ForEach(func(_ context.Context, v T) error {
+		count++
+		if count > 1 {
+			return fmt.Errorf("kitsune: Single: pipeline emitted more than one item")
+		}
+		result = v
+		return nil
+	}).Run(ctx)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	if count == 0 {
+		if cfg.hasDefault {
+			v, ok := cfg.defaultVal.(T)
+			if !ok {
+				var zero T
+				return zero, fmt.Errorf("kitsune: Single: OrDefault value type does not match Single[T] type parameter")
+			}
+			return v, nil
+		}
+		var zero T
+		return zero, fmt.Errorf("kitsune: Single: pipeline emitted no items")
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -269,36 +335,74 @@ func ReduceWhile[T, S any](ctx context.Context, p *Pipeline[T], initial S, fn fu
 }
 
 // ---------------------------------------------------------------------------
-// TakeRandom — reservoir sampling
+// TakeRandom: reservoir sampling
 // ---------------------------------------------------------------------------
 
-// TakeRandom returns a random sample of up to n items from the pipeline using
+// TakeRandom returns a pipeline that buffers all items from p and emits a
+// single []T containing a random sample of up to n items, selected using
 // reservoir sampling (Algorithm R). Each item has an equal probability of
-// being selected. The returned slice has min(n, pipelineSize) items.
-// Order of the returned items is not guaranteed.
-func TakeRandom[T any](ctx context.Context, p *Pipeline[T], n int, opts ...RunOption) ([]T, error) {
-	if n <= 0 {
-		err := p.ForEach(func(_ context.Context, _ T) error { return nil }).Run(ctx, opts...)
-		return nil, err
+// being selected. The emitted slice has min(n, sourceSize) items. Order is
+// not guaranteed. Use [Single] to collect the result.
+func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "take_random",
+		name:   orDefault(cfg.name, "take_random"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
 	}
+	build := func(rc *runCtx) chan []T {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan []T)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan []T, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
 
-	reservoir := make([]T, 0, n)
-	i := 0
+			if n <= 0 {
+				return outbox.Send(ctx, []T{})
+			}
 
-	err := p.ForEach(func(_ context.Context, v T) error {
-		i++
-		if len(reservoir) < n {
-			reservoir = append(reservoir, v)
-		} else {
-			// Algorithm R: replace a random element with decreasing probability.
-			j := rand.Intn(i)
-			if j < n {
-				reservoir[j] = v
+			reservoir := make([]T, 0, n)
+			i := 0
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						result := make([]T, len(reservoir))
+						copy(result, reservoir)
+						return outbox.Send(ctx, result)
+					}
+					i++
+					if len(reservoir) < n {
+						reservoir = append(reservoir, item)
+					} else {
+						j := rand.Intn(i)
+						if j < n {
+							reservoir[j] = item
+						}
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 		}
-		return nil
-	}).Run(ctx, opts...)
-	return reservoir, err
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +461,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 				}
 
 				if !aok && !bok {
-					return nil // both exhausted simultaneously — lengths match
+					return nil // both exhausted simultaneously; lengths match
 				}
 				if !aok || !bok || av != bv {
 					equal = false
@@ -377,7 +481,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 }
 
 // ---------------------------------------------------------------------------
-// Iter — Go 1.23 range-over-func
+// Iter: Go 1.23 range-over-func
 // ---------------------------------------------------------------------------
 
 // Iter returns an iterator over all items emitted by the pipeline.
@@ -385,8 +489,8 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 // error function. The iterator is suitable for use with range-over-func
 // (Go 1.23+).
 //
-// The error function must be called after iteration completes — or after
-// breaking out of the loop — to retrieve any pipeline execution error. It
+// The error function must be called after iteration completes, or after
+// breaking out of the loop, to retrieve any pipeline execution error. It
 // blocks until the pipeline finishes and is safe to call multiple times.
 //
 // If the caller breaks out of the loop early, the pipeline context is

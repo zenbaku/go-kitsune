@@ -11,19 +11,32 @@ import (
 // Batch
 // ---------------------------------------------------------------------------
 
-// Batch collects items into slices of up to size items. If BatchTimeout is set,
-// a partial batch is flushed when the timeout elapses even if size is not reached.
-// An empty batch is never emitted.
-func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] {
+// Batch collects items into slices and emits each slice when a flush trigger
+// fires. At least one of [BatchCount], [BatchMeasure], or [BatchTimeout] must
+// be provided; Batch panics at construction if none are set.
+//
+// Flush triggers (any combination):
+//   - [BatchCount](n): flush when n items have accumulated
+//   - [BatchMeasure](fn, n): flush when sum of fn across buffered items >= n
+//   - [BatchTimeout](d): flush when d elapses since last flush
+//
+// A partial batch remaining when the source closes is flushed unless
+// [DropPartial] is set.
+func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T] {
 	track(p)
 	cfg := buildStageConfig(opts)
+
+	if cfg.batchCount == 0 && cfg.batchMeasureFn == nil && cfg.batchTimeout == 0 {
+		panic("kitsune: Batch requires at least one flush trigger: BatchCount, BatchMeasure, or BatchTimeout")
+	}
+
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:        id,
 		kind:      "batch",
 		name:      orDefault(cfg.name, "batch"),
 		buffer:    cfg.buffer,
-		batchSize: size,
+		batchSize: cfg.batchCount,
 		inputs:    []int64{p.id},
 	}
 	build := func(rc *runCtx) chan []T {
@@ -44,6 +57,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 
 			outbox := internal.NewBlockingOutbox(ch)
 			var buf []T
+			var measure int // running measure total for current buffer
 
 			flush := func() error {
 				if len(buf) == 0 {
@@ -52,6 +66,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 				batch := make([]T, len(buf))
 				copy(batch, buf)
 				buf = buf[:0]
+				measure = 0
 				return outbox.Send(ctx, batch)
 			}
 
@@ -62,16 +77,28 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 				return flush()
 			}
 
+			shouldFlush := func() bool {
+				if cfg.batchCount > 0 && len(buf) >= cfg.batchCount {
+					return true
+				}
+				if cfg.batchMeasureFn != nil && measure >= cfg.batchMeasureMax {
+					return true
+				}
+				return false
+			}
+
 			if cfg.batchTimeout == 0 {
-				// No timeout: collect exactly size items per batch.
 				for {
 					select {
 					case item, ok := <-inCh:
 						if !ok {
 							return flushOnClose()
 						}
+						if cfg.batchMeasureFn != nil {
+							measure += cfg.batchMeasureFn(item)
+						}
 						buf = append(buf, item)
-						if len(buf) >= size {
+						if shouldFlush() {
 							if err := flush(); err != nil {
 								return err
 							}
@@ -82,7 +109,7 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 				}
 			}
 
-			// With timeout: flush when size reached OR timer fires.
+			// With timeout: flush when a count/measure trigger fires OR timer fires.
 			clk := cfg.clock
 			if clk == nil {
 				clk = internal.RealClock{}
@@ -97,8 +124,11 @@ func Batch[T any](p *Pipeline[T], size int, opts ...StageOption) *Pipeline[[]T] 
 					if !ok {
 						return flushOnClose()
 					}
+					if cfg.batchMeasureFn != nil {
+						measure += cfg.batchMeasureFn(item)
+					}
 					buf = append(buf, item)
-					if len(buf) >= size {
+					if shouldFlush() {
 						if err := flush(); err != nil {
 							return err
 						}
@@ -605,7 +635,7 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 //	    return db.BulkLookup(ctx, batch)
 //	})
 func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) ([]O, error), opts ...StageOption) *Pipeline[O] {
-	batched := Batch(p, size, batchCollectOpts(opts)...)
+	batched := Batch(p, append([]StageOption{BatchCount(size)}, batchCollectOpts(opts)...)...)
 	return FlatMap(batched, func(ctx context.Context, batch []I, yield func(O) error) error {
 		results, err := fn(ctx, batch)
 		if err != nil {
@@ -618,6 +648,74 @@ func MapBatch[I, O any](p *Pipeline[I], size int, fn func(context.Context, []I) 
 		}
 		return nil
 	}, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// Within
+// ---------------------------------------------------------------------------
+
+// Within applies stage to the items within each slice emitted by p,
+// collecting the stage's output into a new slice. The output pipeline emits
+// one []O per input []T slice.
+//
+// All existing pipeline operators work unchanged inside the stage function.
+// Use [Unbatch] to flatten the result back to *Pipeline[O] when the slice
+// structure is no longer needed.
+//
+// Example:
+//
+//	kitsune.Unbatch(kitsune.Within(chunks, func(w *kitsune.Pipeline[T]) *kitsune.Pipeline[T] {
+//	    return kitsune.Sort(w, less)
+//	}))
+func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "within",
+		name:   orDefault(cfg.name, "within"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan []O {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan []O)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan []O, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stageFunc := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			for {
+				select {
+				case items, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					transformed, err := Collect(ctx, stage(FromSlice(items)))
+					if err != nil {
+						return err
+					}
+					if err := outbox.Send(ctx, transformed); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stageFunc, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // batchCollectOpts extracts only the BatchTimeout option for the Batch stage;

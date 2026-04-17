@@ -128,7 +128,9 @@ func Distinct[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T] {
 }
 
 // DistinctBy emits only items whose key (returned by keyFn) has not been seen
-// before. Items with duplicate keys are silently dropped.
+// before. Items with duplicate keys are silently dropped. An in-memory map
+// is used as the dedup backend; external backends (WithDedupSet) are not
+// supported here: use Dedupe or DedupeBy if you need a custom backend.
 func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := buildStageConfig(opts)
@@ -152,61 +154,27 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
-		var stage stageFunc
-		if cfg.dedupSet != nil {
-			set := cfg.dedupSet
-			stage = func(ctx context.Context) error {
-				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
-				outbox := internal.NewBlockingOutbox(ch)
-				for {
-					select {
-					case item, ok := <-inCh:
-						if !ok {
-							return nil
-						}
-						k := fmt.Sprintf("%v", keyFn(item))
-						dup, err := set.Contains(ctx, k)
-						if err != nil {
-							return err
-						}
-						if dup {
-							continue
-						}
-						if err := set.Add(ctx, k); err != nil {
-							return err
-						}
-						if err := outbox.Send(ctx, item); err != nil {
-							return err
-						}
-					case <-ctx.Done():
-						return ctx.Err()
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			seen := make(map[K]struct{})
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
 					}
-				}
-			}
-		} else {
-			stage = func(ctx context.Context) error {
-				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
-				outbox := internal.NewBlockingOutbox(ch)
-				seen := make(map[K]struct{})
-				for {
-					select {
-					case item, ok := <-inCh:
-						if !ok {
-							return nil
-						}
-						k := keyFn(item)
-						if _, dup := seen[k]; dup {
-							continue
-						}
-						seen[k] = struct{}{}
-						if err := outbox.Send(ctx, item); err != nil {
-							return err
-						}
-					case <-ctx.Done():
-						return ctx.Err()
+					k := keyFn(item)
+					if _, dup := seen[k]; dup {
+						continue
 					}
+					seen[k] = struct{}{}
+					if err := outbox.Send(ctx, item); err != nil {
+						return err
+					}
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 		}
@@ -220,14 +188,17 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 // Dedupe
 // ---------------------------------------------------------------------------
 
-// Dedupe drops consecutive duplicate items using == equality.
-// Unlike [Distinct], it only suppresses adjacent duplicates.
+// Dedupe drops duplicate items using == equality. By default, duplicates
+// are suppressed globally for the lifetime of the pipeline. Use
+// [DedupeWindow] to restrict suppression to a sliding window, or
+// [WithDedupSet] to plug in an external backend with expiry or
+// probabilistic semantics.
 func Dedupe[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[T] {
 	return DedupeBy(p, func(v T) T { return v }, opts...)
 }
 
-// DedupeBy drops consecutive items whose key (returned by keyFn) equals the
-// previous item's key. Non-consecutive duplicates are NOT suppressed.
+// DedupeBy drops items whose key (returned by keyFn) duplicates a
+// previously seen key. See [Dedupe] for the default and option behaviour.
 func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[T] {
 	track(p)
 	cfg := buildStageConfig(opts)
@@ -252,9 +223,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
 		var stage stageFunc
-		if cfg.dedupSet != nil {
-			// When an external DedupSet is provided, switch to global dedup:
-			// drop any item whose key was seen at any point, not just the last.
+		switch {
+		case cfg.dedupSet != nil:
+			// External backend: global semantics with a custom set (e.g. TTL, Bloom, Redis).
 			set := cfg.dedupSet
 			stage = func(ctx context.Context) error {
 				defer close(ch)
@@ -285,7 +256,36 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 					}
 				}
 			}
-		} else {
+
+		case cfg.dedupeWindow == 0:
+			// Global in-memory: never re-emit a seen key (new default).
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				defer func() { go internal.DrainChan(inCh) }()
+				outbox := internal.NewBlockingOutbox(ch)
+				seen := make(map[K]struct{})
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						k := keyFn(item)
+						if _, dup := seen[k]; dup {
+							continue
+						}
+						seen[k] = struct{}{}
+						if err := outbox.Send(ctx, item); err != nil {
+							return err
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
+
+		case cfg.dedupeWindow == 1:
+			// Consecutive: suppress only adjacent duplicates.
 			stage = func(ctx context.Context) error {
 				defer close(ch)
 				defer func() { go internal.DrainChan(inCh) }()
@@ -312,6 +312,45 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 					}
 				}
 			}
+
+		default:
+			// Sliding window of size cfg.dedupeWindow (n > 1).
+			n := cfg.dedupeWindow
+			stage = func(ctx context.Context) error {
+				defer close(ch)
+				defer func() { go internal.DrainChan(inCh) }()
+				outbox := internal.NewBlockingOutbox(ch)
+				window := make([]K, 0, n)
+				inWindow := func(k K) bool {
+					for _, w := range window {
+						if w == k {
+							return true
+						}
+					}
+					return false
+				}
+				for {
+					select {
+					case item, ok := <-inCh:
+						if !ok {
+							return nil
+						}
+						k := keyFn(item)
+						if inWindow(k) {
+							continue
+						}
+						if len(window) >= n {
+							window = window[1:]
+						}
+						window = append(window, k)
+						if err := outbox.Send(ctx, item); err != nil {
+							return err
+						}
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			}
 		}
 		rc.add(stage, m)
 		return ch
@@ -323,46 +362,30 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 // GroupBy
 // ---------------------------------------------------------------------------
 
-// Group holds all items sharing a common key.
-type Group[K comparable, V any] struct {
-	Key   K
-	Items []V
-}
-
-// GroupBy runs the pipeline and returns a map from key to slice of items.
-// For a streaming variant that keeps the result in-pipeline, use [GroupByStream].
-func GroupBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K][]T, error) {
-	groups := make(map[K][]T)
-	err := p.ForEach(func(_ context.Context, v T) error {
-		k := keyFn(v)
-		groups[k] = append(groups[k], v)
-		return nil
-	}).Run(ctx, opts...)
-	return groups, err
-}
-
-// GroupByStream partitions items by key and emits one [Group] per distinct key
-// when the source completes, in first-seen key order. Use this when you need to
-// pipeline the grouped results into further stages; for a terminal map result
-// use [GroupBy].
-func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[Group[K, T]] {
+// GroupBy buffers all items from p, groups them by the key returned by keyFn,
+// and emits a single map[K][]T when the source closes. Use [Single] (once
+// available) to collect the result, or pipe the map into further stages.
+//
+// Items within each group preserve arrival order. Empty input produces a
+// single emission of an empty map.
+func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "group_by_stream",
-		name:   orDefault(cfg.name, "group_by_stream"),
+		kind:   "group_by",
+		name:   orDefault(cfg.name, "group_by"),
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
-	build := func(rc *runCtx) chan Group[K, T] {
+	build := func(rc *runCtx) chan map[K][]T {
 		if existing := rc.getChan(id); existing != nil {
-			return existing.(chan Group[K, T])
+			return existing.(chan map[K][]T)
 		}
 		inCh := p.build(rc)
 		buf := rc.effectiveBufSize(cfg)
-		ch := make(chan Group[K, T], buf)
+		ch := make(chan map[K][]T, buf)
 		m := meta
 		m.buffer = buf
 		m.getChanLen = func() int { return len(ch) }
@@ -371,30 +394,16 @@ func GroupByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 		stage := func(ctx context.Context) error {
 			defer close(ch)
 			defer func() { go internal.DrainChan(inCh) }()
-
 			outbox := internal.NewBlockingOutbox(ch)
-			groups := make(map[K]*Group[K, T])
-			var order []K // preserve insertion order
-
+			groups := make(map[K][]T)
 			for {
 				select {
 				case item, ok := <-inCh:
 					if !ok {
-						// Emit all groups in first-seen order.
-						for _, k := range order {
-							if err := outbox.Send(ctx, *groups[k]); err != nil {
-								return err
-							}
-						}
-						return nil
+						return outbox.Send(ctx, groups)
 					}
 					k := keyFn(item)
-					if g, exists := groups[k]; exists {
-						g.Items = append(g.Items, item)
-					} else {
-						groups[k] = &Group[K, T]{Key: k, Items: []T{item}}
-						order = append(order, k)
-					}
+					groups[k] = append(groups[k], item)
 				case <-ctx.Done():
 					return ctx.Err()
 				}
