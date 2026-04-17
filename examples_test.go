@@ -42,13 +42,16 @@ func TestExamples(t *testing.T) {
 		"materialize",
 		"perkeyratelimit",
 		"ratelimit",
+		"randomsample",
 		"runningtotal",
+		"single",
 		"stages",
 		"switchmap",
 		"ticker",
 		"timeout",
 		"ttldedup",
 		"typedreturn",
+		"within",
 	}
 	for _, name := range examples {
 		t.Run(name, func(t *testing.T) {
