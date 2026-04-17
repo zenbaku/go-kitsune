@@ -24,7 +24,7 @@ go get github.com/zenbaku/go-kitsune
 - **Automatic backpressure:** bounded channels between every stage; slow consumers block upstream, nothing is dropped silently
 - **Compile-time type safety:** `Pipeline[T]` carries its element type; every stage transition checked at compile time via generics
 - **Per-stage concurrency:** `Concurrency(n)` spins up parallel workers; `Ordered()` preserves arrival order with a slot-based resequencer
-- **Fan-out & fan-in:** `Partition`, `Broadcast`, `Share`, `Balance`, `KeyedBalance`, `Merge`, `Zip`, `WithLatestFrom`
+- **Fan-out & fan-in:** `Partition`, `Broadcast`, `Share`, `Balance`, `KeyedBalance`, `Merge`, `Zip`, `LatestFrom`
 - **Batching & windowing:** `Batch`, `MapBatch`, `Window`, `SlidingWindow`, `SessionWindow`, `ChunkBy`; by count, timeout, gap, or key
 - **Stateful processing:** `MapWith` / `MapWithKey` with typed `Ref` per run; key-sharded concurrency gives each entity its own goroutine (in-process actor model, lock-free)
 - **Error routing:** per-stage `Skip`, `Retry` (exponential backoff), `RetryThen`, `Return`, `DeadLetter`; errors are values, not panics
@@ -176,7 +176,7 @@ The [`examples/`](examples/) directory contains standalone programs. Run any wit
 | `pairwise` | Pairwise, SlidingWindow |
 | `concatmap` | ConcatMap vs FlatMap: ordered sequential expansion |
 | `mapresult` | MapResult: route errors to a separate pipeline |
-| `withlatestfrom` | WithLatestFrom: combine stream with latest secondary value |
+| `latestfrom` | LatestFrom: combine stream with latest secondary value |
 | `zipwith` | ZipWith: combine two branches into a custom type |
 
 Six additional examples live in their own modules (they import tail packages):

@@ -81,7 +81,7 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`KeyedBalance`](#keyedbalance) | Fan-out | Hash-key consistent fan-out |
 | [`Zip`](#zip--zipwith) | Fan-in | Pairwise combine two streams |
 | [`Unzip`](#unzip) | Fan-out | Split pairs into two pipelines |
-| [`WithLatestFrom`](#withlatestfrom--withlatestfromwith) | Fan-in | Primary + latest secondary value |
+| [`LatestFrom`](#latestfrom--latestfromwith) | Fan-in | Primary + latest secondary value |
 | [`CombineLatest`](#combinelatest--combinelatestwith) | Fan-in | Symmetric latest-pair emission |
 | [`SampleWith`](#samplewith) | Fan-in | Emit latest on external pipeline signal |
 | [`LookupBy`](#lookupby) | Enrichment | Batched key lookup |
@@ -2023,12 +2023,12 @@ aP, bP := kitsune.Unzip(pairs)
 
 ---
 
-### WithLatestFrom / WithLatestFromWith
+### LatestFrom / LatestFromWith
 
 ```go
-func WithLatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[Pair[A, B]]
+func LatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[Pair[A, B]]
 
-func WithLatestFromWith[A, B, O any](
+func LatestFromWith[A, B, O any](
     main *Pipeline[A],
     other *Pipeline[B],
     fn func(context.Context, A, B) (O, error),
@@ -2042,11 +2042,11 @@ This models a "sample the latest state of other on each main event" pattern: `ma
 
 **When to use:** Combining a high-frequency event stream with a low-frequency configuration or rate stream, e.g., apply the latest exchange rate to each transaction.
 
-**Options (WithLatestFromWith):** `Buffer`, `WithName`.
+**Options (LatestFromWith):** `Buffer`, `WithName`.
 
 ```go
 // Apply the latest config to each incoming request.
-processed := kitsune.WithLatestFrom(requests, configUpdates)
+processed := kitsune.LatestFrom(requests, configUpdates)
 // Each Pair has: First=request, Second=most-recent config
 ```
 
@@ -2065,7 +2065,7 @@ func CombineLatestWith[A, B, O any](
 ) *Pipeline[O]
 ```
 
-Emits a new value whenever either `a` or `b` emits, combining the latest values from each. Emitting begins only after both pipelines have emitted at least one item. Unlike [`WithLatestFrom`](#withlatestfrom-withlatestfromwith), both pipelines drive the output.
+Emits a new value whenever either `a` or `b` emits, combining the latest values from each. Emitting begins only after both pipelines have emitted at least one item. Unlike [`LatestFrom`](#latestfrom--latestfromwith), both pipelines drive the output.
 
 **When to use:** UI state combinations, sensor fusion where you want a new output whenever either reading changes, e.g., combine temperature and humidity sensors into a comfort index.
 

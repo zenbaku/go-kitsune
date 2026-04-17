@@ -240,30 +240,30 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 }
 
 // ---------------------------------------------------------------------------
-// WithLatestFrom
+// LatestFrom
 // ---------------------------------------------------------------------------
 
-// WithLatestFrom combines each item from main with the most recent item from
+// LatestFrom combines each item from main with the most recent item from
 // other. Items from main are only emitted after other has emitted at least one
 // item. Items from other that arrive between main items are not independently
 // emitted.
-func WithLatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[Pair[A, B]] {
-	return WithLatestFromWith(main, other, func(_ context.Context, a A, b B) (Pair[A, B], error) {
+func LatestFrom[A, B any](main *Pipeline[A], other *Pipeline[B]) *Pipeline[Pair[A, B]] {
+	return LatestFromWith(main, other, func(_ context.Context, a A, b B) (Pair[A, B], error) {
 		return Pair[A, B]{First: a, Second: b}, nil
 	})
 }
 
-// WithLatestFromWith combines each item from main with the most recent item from
+// LatestFromWith combines each item from main with the most recent item from
 // other using fn. Emitting starts after other has provided at least one item.
-func WithLatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
+func LatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(context.Context, A, B) (O, error), opts ...StageOption) *Pipeline[O] {
 	track(main)
 	track(other)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "with_latest_from",
-		name:   orDefault(cfg.name, "with_latest_from"),
+		kind:   "latest_from",
+		name:   orDefault(cfg.name, "latest_from"),
 		buffer: cfg.buffer,
 		inputs: []int64{main.id, other.id},
 	}

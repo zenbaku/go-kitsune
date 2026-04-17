@@ -359,7 +359,7 @@ func TestZip_IndependentGraphs(t *testing.T) {
 	}
 }
 
-func TestWithLatestFrom_IndependentGraphs(t *testing.T) {
+func TestLatestFrom_IndependentGraphs(t *testing.T) {
 	// other emits values; main waits so other has emitted before main items arrive.
 	other := kitsune.Generate(func(_ context.Context, yield func(string) bool) error {
 		yield("latest")
@@ -375,7 +375,7 @@ func TestWithLatestFrom_IndependentGraphs(t *testing.T) {
 		return nil
 	})
 
-	got, err := kitsune.WithLatestFrom(main, other).Collect(context.Background())
+	got, err := kitsune.LatestFrom(main, other).Collect(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

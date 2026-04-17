@@ -170,13 +170,13 @@ Documents every exported operator and which `StageOption` features each one actu
 | `Unzip` | `Unzip[A,B](p, opts...)` → `(*Pipeline[A], *Pipeline[B])` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `CombineLatest` | `CombineLatest[A,B](a, b)` → `*Pipeline[Pair[A,B]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
 | `CombineLatestWith` | `CombineLatestWith[A,B,O](a, b, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `WithLatestFrom` | `WithLatestFrom[T,U](p, other)` → `*Pipeline[Pair[T,U]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
-| `WithLatestFromWith` | `WithLatestFromWith[T,U,O](p, other, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `LatestFrom` | `LatestFrom[T,U](p, other)` → `*Pipeline[Pair[T,U]]` | – | – | – | – | – | – | – | – | – | – | – | – | – |
+| `LatestFromWith` | `LatestFromWith[T,U,O](p, other, fn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `Enrich` | `Enrich[T,K,V,O](p, keyFn, fetch, join, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
 | `LookupBy` | `LookupBy[T,K,V](p, keyFn, fetch, opts...)` → `*Pipeline[Enriched[T,V]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | ✓ | – |
 
 **Notes**
-- `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
+- `Merge`, `Zip`, `CombineLatest`, `LatestFrom` create no buffered output channel of their own, so `Buffer` does not apply.
 - The `*With` variants run a user fn and do produce a buffered output channel; `Buffer` and `Name` apply.
 - `Broadcast` requires `n ≥ 2`.
 - `Share` returns a factory; call the factory once per desired branch before building the runner. At least one subscribe call is required. `Buffer` and `WithName` can be set on each individual subscribe call (per-subscribe opts override factory opts). Calling the factory after `Run()` has started panics. Unlike `Broadcast`, `Share` allows a single subscriber.

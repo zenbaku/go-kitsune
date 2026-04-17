@@ -96,7 +96,7 @@ runCtx {
 
 `inputs []int` on `stageMeta` lists the upstream stage IDs this stage reads
 from. It is almost always a single element; the exceptions are multi-input nodes
-(`Zip`, `WithLatestFrom`, `Merge`). Multi-output nodes (`Partition`, `MapResult`)
+(`Zip`, `LatestFrom`, `Merge`). Multi-output nodes (`Partition`, `MapResult`)
 are implemented as two independent `Pipeline` values that share the same build
 closure and memoisation ID: the second call to `build` returns the already-
 memoised channel immediately.
@@ -124,7 +124,7 @@ kind corresponds to a stage runner function:
 | `"broadcast"` | `runBroadcast` | N |
 | `"merge"` | `runMerge` | 1 |
 | `"zip"` | `runZip` | 1 |
-| `"withlatestfrom"` | `runWithLatestFrom` | 1 |
+| `"latest_from"` | `runLatestFrom` | 1 |
 | `"sink"` / `"foreach"` | `runSink` | 0 (terminal) |
 
 ---
@@ -544,9 +544,9 @@ rates.
 
 ---
 
-## WithLatestFrom
+## LatestFrom
 
-`runWithLatestFrom` maintains a mutex-protected "latest secondary value" that is
+`runLatestFrom` maintains a mutex-protected "latest secondary value" that is
 updated by a background goroutine, while the main loop combines primary items
 with that value:
 
@@ -564,7 +564,7 @@ Primary items that arrive before the secondary has emitted a single value are
 silently dropped: this matches RxJS semantics. The background goroutine exits
 when `secondaryCh` is closed or `ctx` is cancelled.
 
-**Independent-graph support**: `WithLatestFrom` (like `Merge` and `Zip`) works
+**Independent-graph support**: `LatestFrom` (like `Merge` and `Zip`) works
 with pipelines from separate graphs. When the two pipelines share a graph the
 engine-native node is used; otherwise the secondary pipeline drains into a
 mutex-protected `latest` value in a background goroutine while the primary is
@@ -576,7 +576,7 @@ and primary events are multiplexed into the same source channel:
 cfgBranch, reqBranch := kitsune.Partition(src.Source(), func(e Event) bool {
     return e.IsConfig
 })
-combined := kitsune.WithLatestFrom(reqBranch, cfgBranch)
+combined := kitsune.LatestFrom(reqBranch, cfgBranch)
 ```
 
 ---

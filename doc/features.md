@@ -54,7 +54,7 @@ Split a stream into multiple branches or merge multiple streams into one.
 | [`KeyedBalance(n, keyFn)`](operators.md#keyedbalance) | Route by `hash(key) % n` for stable per-key assignment |
 | [`Merge(...)`](operators.md#merge) | Fan N same-type pipelines back into one |
 | [`Zip / ZipWith`](operators.md#zip--zipwith) | Pairwise combine two streams into one |
-| [`WithLatestFrom`](operators.md#withlatestfrom--withlatestfromwith) | Combine a primary stream with the latest value from a secondary |
+| [`LatestFrom`](operators.md#latestfrom--latestfromwith) | Combine a primary stream with the latest value from a secondary |
 
 All fan-out operators integrate with `MergeRunners` so every branch shares the same source and runs within a single `Run` call. [See the operator catalog →](operators.md#fan-out--fan-in)
 

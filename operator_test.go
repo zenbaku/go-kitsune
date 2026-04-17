@@ -1443,13 +1443,13 @@ func TestCombineLatest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithLatestFrom
+// LatestFrom
 // ---------------------------------------------------------------------------
 
-func TestWithLatestFrom(t *testing.T) {
+func TestLatestFrom(t *testing.T) {
 	// other emits two values; main waits 20ms so the background goroutine in
-	// WithLatestFrom has time to consume at least one value from other before
-	// main items arrive (WithLatestFrom drops main items until other has emitted).
+	// LatestFrom has time to consume at least one value from other before
+	// main items arrive (LatestFrom drops main items until other has emitted).
 	other := kitsune.Generate(func(ctx context.Context, yield func(string) bool) error {
 		yield("v1")
 		yield("v2")
@@ -1465,7 +1465,7 @@ func TestWithLatestFrom(t *testing.T) {
 		return nil
 	})
 
-	got := collectAll(t, kitsune.WithLatestFrom(main, other))
+	got := collectAll(t, kitsune.LatestFrom(main, other))
 	if len(got) != 3 {
 		t.Fatalf("expected 3 pairs (main has 3 items), got %d: %v", len(got), got)
 	}
