@@ -2,6 +2,7 @@ package kitsune
 
 import (
 	"context"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -479,6 +480,20 @@ func MapIntersperse[T, O any](p *Pipeline[T], sep O, fn func(context.Context, T)
 			return err
 		}
 		return yield(out)
+	}, opts...)
+}
+
+// ---------------------------------------------------------------------------
+// RandomSample
+// ---------------------------------------------------------------------------
+
+// RandomSample passes each item with independent probability rate (0.0-1.0).
+// Unlike [TakeRandom], which buffers the entire stream for reservoir
+// sampling, RandomSample makes a per-item decision as items arrive. It is
+// a streaming (non-barrier) operator.
+func RandomSample[T any](p *Pipeline[T], rate float64, opts ...StageOption) *Pipeline[T] {
+	return Filter(p, func(_ context.Context, _ T) (bool, error) {
+		return rand.Float64() < rate, nil
 	}, opts...)
 }
 

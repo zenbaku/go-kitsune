@@ -2065,6 +2065,47 @@ func TestWithin_EmptyChunk(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// RandomSample
+// ---------------------------------------------------------------------------
+
+func TestRandomSample_RateZero(t *testing.T) {
+	ctx := context.Background()
+	result, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice([]int{1, 2, 3, 4, 5}), 0.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("rate=0: expected empty, got %v", result)
+	}
+}
+
+func TestRandomSample_RateOne(t *testing.T) {
+	ctx := context.Background()
+	src := []int{1, 2, 3, 4, 5}
+	result, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice(src), 1.0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(result, src) {
+		t.Errorf("rate=1: got %v, want %v", result, src)
+	}
+}
+
+func TestRandomSample_WithName(t *testing.T) {
+	ctx := context.Background()
+	_, err := kitsune.Collect(ctx,
+		kitsune.RandomSample(kitsune.FromSlice([]int{1}), 0.5, kitsune.WithName("sample")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func sliceEqual[T comparable](a, b []T) bool {
 	if len(a) != len(b) {
 		return false
