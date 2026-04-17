@@ -44,6 +44,15 @@ type stageConfig struct {
 	expandMaxDepthExplicit bool // true when MaxDepth was called explicitly; distinguishes MaxDepth(0) from default
 	expandMaxItems         int  // MaxItems: total emission cap for ExpandMap; 0 = unlimited
 	dropPartial            bool // DropPartial: discard the final partial batch when source closes
+
+	// Batch flush triggers (BatchCount / BatchMeasure options).
+	batchCount      int          // flush when len(buf) >= batchCount; 0 = no count trigger
+	batchMeasureFn  func(any) int // type-erased measure function; nil = no measure trigger
+	batchMeasureMax int          // flush when cumulative measure >= batchMeasureMax
+
+	// Dedupe sliding window (DedupeWindow option).
+	// 0 = global in-memory (default); 1 = consecutive; n > 1 = sliding window of n items.
+	dedupeWindow int
 }
 
 // stageCacheConfig holds cache settings for a single Map stage.
@@ -152,6 +161,38 @@ func BatchTimeout(d time.Duration) StageOption {
 // Only meaningful when used with [Batch].
 func DropPartial() StageOption {
 	return func(c *stageConfig) { c.dropPartial = true }
+}
+
+// BatchCount flushes a [Batch] stage when the buffer accumulates n items.
+// At least one of BatchCount or BatchMeasure must be set; otherwise Batch
+// panics at construction.
+func BatchCount(n int) StageOption {
+	return func(cfg *stageConfig) {
+		cfg.batchCount = n
+	}
+}
+
+// BatchMeasure flushes a [Batch] stage when the sum of measureFn across all
+// buffered items reaches or exceeds max. measureFn is called once per item on
+// arrival and must return a non-negative integer (e.g. byte length).
+// At least one of BatchCount or BatchMeasure must be set; otherwise Batch
+// panics at construction.
+func BatchMeasure[T any](measureFn func(T) int, max int) StageOption {
+	return func(cfg *stageConfig) {
+		cfg.batchMeasureFn = func(v any) int { return measureFn(v.(T)) }
+		cfg.batchMeasureMax = max
+	}
+}
+
+// DedupeWindow sets the sliding-window size for [Dedupe] and [DedupeBy].
+// n=0 (default) means global in-memory dedup: items are never re-emitted.
+// n=1 means consecutive dedup: only adjacent duplicates are suppressed.
+// n>1 means the last n items are remembered; an item is re-emitted once it
+// leaves the window.
+func DedupeWindow(n int) StageOption {
+	return func(cfg *stageConfig) {
+		cfg.dedupeWindow = n
+	}
 }
 
 // WithClock sets the time source for time-sensitive stages (Batch, Throttle, Debounce)
