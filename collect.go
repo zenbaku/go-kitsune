@@ -128,7 +128,12 @@ func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T
 	}
 	if count == 0 {
 		if cfg.hasDefault {
-			return cfg.defaultVal.(T), nil
+			v, ok := cfg.defaultVal.(T)
+			if !ok {
+				var zero T
+				return zero, fmt.Errorf("kitsune: Single: OrDefault value type does not match Single[T] type parameter")
+			}
+			return v, nil
 		}
 		var zero T
 		return zero, fmt.Errorf("kitsune: Single: pipeline emitted no items")

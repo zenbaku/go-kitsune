@@ -2106,3 +2106,29 @@ func TestPropGroupByGroupCount(t *testing.T) {
 		}
 	})
 }
+
+// TestPropSingle verifies the three Single laws: empty -> error, one -> value,
+// more-than-one -> error.
+func TestPropSingle(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.Int()).Draw(t, "in")
+		got, err := kitsune.Single(context.Background(), kitsune.FromSlice(in))
+		switch len(in) {
+		case 0:
+			if err == nil {
+				t.Fatalf("expected error for empty pipeline, got %d", got)
+			}
+		case 1:
+			if err != nil {
+				t.Fatalf("unexpected error for single-item pipeline: %v", err)
+			}
+			if got != in[0] {
+				t.Fatalf("got %d, want %d", got, in[0])
+			}
+		default:
+			if err == nil {
+				t.Fatalf("expected error for %d-item pipeline, got %d", len(in), got)
+			}
+		}
+	})
+}
