@@ -24,7 +24,7 @@ Every operator fits one of four behaviors:
 |---|---|---|
 | **Streaming** | Emits output for each input item; no barrier | `Map`, `Filter`, `FlatMap`, `Tap` |
 | **Running** | Maintains accumulating state; emits an updated snapshot on every item | `Scan`, `RunningFrequencies`, `CombineLatest` |
-| **Buffering** | Must consume all input before emitting; returns `*Pipeline[T]` | `Sort`, `TakeRandom` (after §4.3), `GroupByStream` |
+| **Buffering** | Must consume all input before emitting; returns `*Pipeline[T]` | `Sort`, `TakeRandom` (after §4.2), `GroupBy` |
 | **Terminal** | Drains the pipeline; returns a plain Go value | `Collect`, `Single`, `Count`, `Sum`, `Any`, `All` |
 
 The key distinction users care about is: **does output appear as items arrive, or only after the source closes?** Documentation should use "buffers all input" as a callout on buffering operators rather than inventing a separate category.
@@ -44,7 +44,7 @@ Operators that maintain accumulating state and emit a snapshot per item use the 
 | `CountBy` (compat.go) | `RunningCountBy` |
 | `SumBy` (compat.go) | `RunningSumBy` |
 
-`GroupByStream` is **not** renamed. It is a buffering operator (emits after source closes, not per item) so `Running*` would be wrong. It also cannot take the name `GroupBy` because a terminal `GroupBy` already exists. The `Stream` suffix here means "pipeline-returning version," which is accurate and distinct from the `Running*` convention.
+`GroupByStream` and the terminal `GroupBy(ctx, p, keyFn)` are both removed and replaced by a new buffering pipeline operator `GroupBy` (see §7).
 
 ### 1.2 `Drop*` prefix consistency
 
@@ -214,9 +214,6 @@ cfg, err   := Single(ctx, configs, OrDefault(defaultCfg))   // fallback if empty
 | `ConsecutiveDedup` / `ConsecutiveDedupBy` | Remove. Use `Dedupe`/`DedupeBy` with `DedupeWindow(1)`. |
 | `DeadLetter` / `DeadLetterSink` | Remove. Use `MapResult` directly. |
 | `WindowByTime` | Remove. Has a bug: ignores `WithClock` and calls `time.NewTicker` directly. Replaced by `BufferWith(p, Ticker(d))`. |
-| `ConsecutiveDedup` / `ConsecutiveDedupBy` | Remove. Use `Dedupe`/`DedupeBy` with `DedupeWindow(1)`. |
-| `DeadLetter` / `DeadLetterSink` | Remove. Use `MapResult` directly. |
-| `WindowByTime` | Remove. Has a bug: ignores `WithClock` and calls `time.NewTicker` directly. Replaced by `BufferWith(p, Ticker(d))`. |
 | `MapBatch` | Move to `batch.go`. |
 | `MapIntersperse` | Move to `misc.go`. |
 | `EndWith` | Move to `misc.go` alongside `StartWith` (natural companions). |
@@ -229,6 +226,59 @@ After these moves, `compat.go` is deleted.
 ---
 
 ## 7. New Operators
+
+### `GroupBy` (redesigned)
+
+The existing terminal `GroupBy(ctx, p, keyFn)` and `GroupByStream` are both removed and replaced by a single buffering pipeline operator:
+
+```go
+func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T]
+```
+
+Buffers all input, groups items by key, and emits a single `map[K][]T` when the source closes. Use `Single` to collect the result, or pipe the map into further stages.
+
+```go
+// Collect the grouped map
+groups, err := kitsune.Single(ctx, kitsune.GroupBy(orders, byRegion))
+
+// Pipe into further processing
+kitsune.Map(kitsune.GroupBy(orders, byRegion), summariseRegions)
+```
+
+**Category:** Buffering (emits one item on close).
+
+---
+
+### `InWindow`
+
+```go
+func InWindow[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], opts ...StageOption) *Pipeline[[]O]
+```
+
+Applies a pipeline transformation to the contents of each window. The `stage` parameter is a `Stage[T,O]` — it receives a mini-pipeline of the window's items and returns a transformed pipeline. All existing operators (`Sort`, `Filter`, `Map`, etc.) work inside `InWindow` without modification.
+
+Use `Unbatch` to flatten the output back to `*Pipeline[O]` when the windowed structure is no longer needed.
+
+```go
+// Sort items within each chunk, then flatten back to a stream
+result := kitsune.Unbatch(
+    kitsune.InWindow(
+        kitsune.Batch(p, kitsune.BatchCount(100)),
+        func(w *Pipeline[int]) *Pipeline[int] {
+            return kitsune.Sort(w, func(a, b int) bool { return a < b })
+        },
+    ),
+)
+
+// Filter within each session window
+kitsune.InWindow(sessions, func(w *Pipeline[Event]) *Pipeline[Event] {
+    return kitsune.Filter(w, isRelevant)
+})
+```
+
+**Category:** Windowing (operates on `*Pipeline[[]T]`).
+
+---
 
 ### `RandomSample`
 
@@ -272,9 +322,8 @@ sampled := kitsune.RandomSample(arms[1], 0.10)
 | Operator | Current category | Correct category | Note |
 |---|---|---|---|
 | `Sort` / `SortBy` | Terminal | Transformation | Returns `*Pipeline[T]`; add "buffers all input" callout |
-| `TakeRandom` | Terminal | Buffering pipeline operator | Signature changes (see §4.2); add "buffers all input — emits single []T on close" callout |
-| `GroupByStream` | (unlabeled) | Transformation | Add "buffers all input — emits one Group per key on close" callout |
-| `ElementAt` | Filtering | — | Removed (see §7) |
+| `TakeRandom` | Terminal | Buffering pipeline operator | Signature changes (see §4.2); add "buffers all input — emits single `[]T` on close" callout |
+| `ElementAt` | Filtering | — | Removed (see §8) |
 
 ### Aggregate section split
 
@@ -283,8 +332,10 @@ The aggregate section in `doc/operators.md` is split into two subsections:
 **Running aggregates** (emit per item):
 `RunningFrequencies`, `RunningFrequenciesBy`, `RunningCountBy`, `RunningSumBy`
 
-**Barrier aggregates** (emit after source closes):
-`GroupByStream`, `Frequencies`, `FrequenciesBy`, `GroupBy` (terminal), `Reduce`, `Scan`
+**Buffering aggregates** (emit after source closes):
+`GroupBy`, `Frequencies`, `FrequenciesBy`, `Reduce`
+
+Note: `Scan` is a running aggregate (emits per item) and belongs in the first subsection.
 
 ### `BufferWith` / `Ticker` as `WindowByTime` replacement
 
@@ -313,6 +364,8 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 - `BroadcastN`
 - `Window` (already done)
 - `WindowByTime`
+- `GroupByStream`
+- `GroupBy(ctx, p, keyFn)` (terminal variant)
 - `ConsecutiveDedup` / `ConsecutiveDedupBy`
 - `DeadLetter` / `DeadLetterSink`
 - `ElementAt`
@@ -323,11 +376,14 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 ### Signature changes
 - `Batch(p, size, opts...)` → `Batch(p, opts...)` with `BatchCount(n)` / `BatchMeasure(fn, max)`
 - `TakeRandom(ctx, p, n, ...RunOption) ([]T, error)` → `TakeRandom(p, n, ...StageOption) *Pipeline[[]T]`
+- `GroupBy` redesigned: terminal + `GroupByStream` → single buffering pipeline operator returning `*Pipeline[map[K][]T]`
 - `Distinct`/`DistinctBy`: remove `WithDedupSet` code path
 - `Dedupe`/`DedupeBy`: change default to global in-memory; add `DedupeWindow(n)`
 - `RunningCountBy` / `RunningSumBy`: key type generalized from `string` to `K comparable`
 
 ### Additions
+- `GroupBy[T, K](p, keyFn, ...StageOption) *Pipeline[map[K][]T]` (buffering pipeline operator)
+- `InWindow[T, O](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], ...StageOption) *Pipeline[[]O]`
 - `Single[T](ctx, p, ...SingleOption) (T, error)` with `OrDefault` / `OrZero` options
 - `RandomSample[T](p, rate float64) *Pipeline[T]`
 - `BatchCount(n int) StageOption`
