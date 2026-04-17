@@ -164,8 +164,8 @@ func DropPartial() StageOption {
 }
 
 // BatchCount flushes a [Batch] stage when the buffer accumulates n items.
-// At least one of BatchCount or BatchMeasure must be set; otherwise Batch
-// panics at construction.
+// At least one of BatchCount, BatchMeasure, or BatchTimeout must be set;
+// otherwise Batch panics at construction.
 func BatchCount(n int) StageOption {
 	return func(cfg *stageConfig) {
 		cfg.batchCount = n
@@ -175,8 +175,8 @@ func BatchCount(n int) StageOption {
 // BatchMeasure flushes a [Batch] stage when the sum of measureFn across all
 // buffered items reaches or exceeds n. measureFn is called once per item on
 // arrival and must return a non-negative integer (e.g. byte length).
-// At least one of BatchCount or BatchMeasure must be set; otherwise Batch
-// panics at construction.
+// At least one of BatchCount, BatchMeasure, or BatchTimeout must be set;
+// otherwise Batch panics at construction.
 func BatchMeasure[T any](measureFn func(T) int, n int) StageOption {
 	return func(cfg *stageConfig) {
 		cfg.batchMeasureFn = func(v any) int { return measureFn(v.(T)) }
