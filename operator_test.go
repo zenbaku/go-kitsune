@@ -992,6 +992,41 @@ func TestFrequencies(t *testing.T) {
 	}
 }
 
+func TestRunningFrequencies(t *testing.T) {
+	ctx := context.Background()
+	p := kitsune.FromSlice([]string{"a", "b", "a"})
+	snapshots, err := kitsune.Collect(ctx, kitsune.RunningFrequencies(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 3 {
+		t.Fatalf("expected 3 running snapshots, got %d", len(snapshots))
+	}
+	last := snapshots[len(snapshots)-1]
+	if last["a"] != 2 || last["b"] != 1 {
+		t.Fatalf("final snapshot: got %v, want {a:2, b:1}", last)
+	}
+}
+
+func TestRunningFrequenciesBy(t *testing.T) {
+	ctx := context.Background()
+	type item struct{ key string }
+	p := kitsune.FromSlice([]item{{"x"}, {"y"}, {"x"}, {"x"}})
+	snapshots, err := kitsune.Collect(ctx,
+		kitsune.RunningFrequenciesBy(p, func(i item) string { return i.key }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 4 {
+		t.Fatalf("expected 4 running snapshots, got %d", len(snapshots))
+	}
+	last := snapshots[len(snapshots)-1]
+	if last["x"] != 3 || last["y"] != 1 {
+		t.Fatalf("final snapshot: got %v, want {x:3, y:1}", last)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Merge
 // ---------------------------------------------------------------------------

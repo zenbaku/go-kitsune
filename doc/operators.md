@@ -2308,14 +2308,14 @@ counts, err := kitsune.Frequencies(ctx, kitsune.Map(events, extractType))
 
 ---
 
-### FrequenciesStream / FrequenciesByStream
+### RunningFrequencies / RunningFrequenciesBy
 
 ```go
-func FrequenciesStream[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64]
-func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
+func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64]
+func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
 ```
 
-Like [`Frequencies`](#tomap-groupby-frequencies-frequenciesby)/`FrequenciesBy` but emits a single `map` snapshot when the source completes, as a pipeline item. Use this when you want to pipeline the counts into further stages.
+Like [`Frequencies`](#tomap-groupby-frequencies-frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single terminal map use [`Frequencies`](#tomap-groupby-frequencies-frequenciesby).
 
 **Options:** `Buffer`, `WithName`.
 

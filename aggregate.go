@@ -427,23 +427,24 @@ func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], key
 	return counts, err
 }
 
-// FrequenciesStream counts how many times each item appears and emits a single
-// map[T]int64 snapshot when the source completes. Use this when you need to
-// pipeline the result further; for a direct map result use [Frequencies].
-func FrequenciesStream[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64] {
-	return FrequenciesByStream(p, func(v T) T { return v }, opts...)
+// RunningFrequencies emits a running count-per-item snapshot after each item.
+// The emitted map is a new copy on each item: safe to retain across iterations.
+// For a single terminal result use [Frequencies].
+func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64] {
+	return RunningFrequenciesBy(p, func(v T) T { return v }, opts...)
 }
 
-// FrequenciesByStream counts how many times each key (returned by keyFn) appears
-// and emits a single map[K]int64 snapshot when the source completes.
-func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64] {
+// RunningFrequenciesBy emits a running count-per-key snapshot after each item.
+// The map key type K is determined by keyFn. The emitted map is a new copy
+// on each item: safe to retain across iterations.
+func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64] {
 	track(p)
 	cfg := buildStageConfig(opts)
 	id := nextPipelineID()
 	meta := stageMeta{
 		id:     id,
-		kind:   "frequencies_by_stream",
-		name:   orDefault(cfg.name, "frequencies_by_stream"),
+		kind:   "running_frequencies_by",
+		name:   orDefault(cfg.name, "running_frequencies_by"),
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
@@ -470,9 +471,16 @@ func FrequenciesByStream[T any, K comparable](p *Pipeline[T], keyFn func(T) K, o
 				select {
 				case item, ok := <-inCh:
 					if !ok {
-						return outbox.Send(ctx, counts)
+						return nil
 					}
 					counts[keyFn(item)]++
+					snapshot := make(map[K]int64, len(counts))
+					for k, v := range counts {
+						snapshot[k] = v
+					}
+					if err := outbox.Send(ctx, snapshot); err != nil {
+						return err
+					}
 				case <-ctx.Done():
 					return ctx.Err()
 				}

@@ -143,14 +143,14 @@ Documents every exported operator and which `StageOption` features each one actu
 | `GroupByStream` | `GroupByStream[T,K](p, keyFn, opts...)` → `*Pipeline[Group[K,T]]` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `CountBy` *(compat)* | `CountBy[T,K](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 | `SumBy` *(compat)* | `SumBy[T,K,V](p, keyFn, valFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `FrequenciesStream` | `FrequenciesStream[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
-| `FrequenciesByStream` | `FrequenciesByStream[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `RunningFrequencies` | `RunningFrequencies[T comparable](p, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
+| `RunningFrequenciesBy` | `RunningFrequenciesBy[T,K comparable](p, keyFn, opts...)` | – | – | ✓ | ✓ | – | – | – | – | – | – | – | – | – |
 
 **Notes**
 - `GroupBy` is a terminal function returning `(map[K][]T, error)`. Use `GroupByStream` for mid-pipeline grouping.
 - `GroupByStream` emits one `Group[K,T]{Key, Items}` per distinct key in first-seen order when the source closes.
 - `Dedupe` is identity-based (`T comparable`). `DedupeBy` is key-based. When `WithDedupSet` is provided to either, deduplication becomes global (set-backed) rather than consecutive.
-- `FrequenciesStream` / `FrequenciesByStream` emit an updated count-map after each item.
+- `RunningFrequencies` / `RunningFrequenciesBy` emit a fresh count-map snapshot after each item.
 - `CountBy` / `SumBy` run at `Concurrency(1)` and emit a full snapshot after each item.
 
 ---
