@@ -13,6 +13,7 @@ package kitsune
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,6 +98,10 @@ type drainEntry struct {
 	ch   chan struct{}
 	refs atomic.Int32
 }
+
+// errDrained is returned by a source's send helper when the cooperative drain
+// fires. sourceStage converts this to nil so it does not propagate as an error.
+var errDrained = errors.New("kitsune: cooperative drain")
 
 // runCtx is created fresh on every Runner.Run call.
 // As build functions are called recursively from the terminal back to sources,
@@ -195,6 +200,23 @@ func (rc *runCtx) initDrainNotify(producerID int64, consumerCount int32) {
 	}
 	e.refs.Store(n)
 	rc.drainNotify[producerID] = e
+}
+
+// initMultiOutputDrainNotify registers ONE shared drainEntry for a fan-out stage.
+// All outputIDs map to the same entry with refs = totalConsumers (the sum of
+// out[i].consumerCount.Load() across all output pipelines).
+// When any consumer calls signalDrain(outputID), the shared counter decrements.
+// When it reaches zero the drain channel closes, unblocking the stage's select.
+func (rc *runCtx) initMultiOutputDrainNotify(outputIDs []int64, totalConsumers int32) {
+	e := &drainEntry{ch: make(chan struct{})}
+	n := totalConsumers
+	if n < 1 {
+		n = 1
+	}
+	e.refs.Store(n)
+	for _, id := range outputIDs {
+		rc.drainNotify[id] = e
+	}
 }
 
 // signalDrain decrements the ref count for producerID. When the count
