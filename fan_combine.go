@@ -39,6 +39,7 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 		buffer: cfg.buffer,
 		inputs: []int64{a.id, b.id},
 	}
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -52,12 +53,19 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(aCh)
-				go internal.DrainChan(bCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(aCh)
+					go internal.DrainChan(bCh)
+				}
 			}()
+			defer func() { rc.signalDrain(a.id) }()
+			defer func() { rc.signalDrain(b.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 
@@ -72,6 +80,9 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 					av = v
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 
 				// Then read from b.
@@ -84,6 +95,9 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 					bv = v
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 
 				result, err := fn(ctx, av, bv)
@@ -98,7 +112,8 @@ func ZipWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(context.Contex
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +144,7 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 		buffer: cfg.buffer,
 		inputs: []int64{a.id, b.id},
 	}
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -142,12 +158,19 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(aCh)
-				go internal.DrainChan(bCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(aCh)
+					go internal.DrainChan(bCh)
+				}
 			}()
+			defer func() { rc.signalDrain(a.id) }()
+			defer func() { rc.signalDrain(b.id) }()
 
 			// outbox is called outside any mutex (see CombineLatest deadlock analysis).
 			outbox := internal.NewBlockingOutbox(ch)
@@ -188,6 +211,10 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 					case <-ctx.Done():
 						errCh <- ctx.Err()
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						errCh <- nil
+						return
 					}
 				}
 			}()
@@ -221,6 +248,10 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 					case <-ctx.Done():
 						errCh <- ctx.Err()
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						errCh <- nil
+						return
 					}
 				}
 			}()
@@ -236,7 +267,8 @@ func CombineLatestWith[A, B, O any](a *Pipeline[A], b *Pipeline[B], fn func(cont
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +299,7 @@ func LatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(
 		buffer: cfg.buffer,
 		inputs: []int64{main.id, other.id},
 	}
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -280,12 +313,19 @@ func LatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(mainCh)
-				go internal.DrainChan(otherCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(mainCh)
+					go internal.DrainChan(otherCh)
+				}
 			}()
+			defer func() { rc.signalDrain(main.id) }()
+			defer func() { rc.signalDrain(other.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 
@@ -306,6 +346,8 @@ func LatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(
 						hasOther = true
 						mu.Unlock()
 					case <-ctx.Done():
+						return
+					case <-drainCh:
 						return
 					}
 				}
@@ -333,13 +375,17 @@ func LatestFromWith[A, B, O any](main *Pipeline[A], other *Pipeline[B], fn func(
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +424,7 @@ func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOpt
 		buffer: cfg.buffer,
 		inputs: []int64{p.id, sampler.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -391,12 +438,19 @@ func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOpt
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(srcCh)
-				go internal.DrainChan(samCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(srcCh)
+					go internal.DrainChan(samCh)
+				}
 			}()
+			defer func() { rc.signalDrain(p.id) }()
+			defer func() { rc.signalDrain(sampler.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 
@@ -423,6 +477,8 @@ func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOpt
 						hasLatest = true
 						mu.Unlock()
 					case <-ctx.Done():
+						return
+					case <-drainCh:
 						return
 					}
 				}
@@ -459,11 +515,15 @@ func SampleWith[T, S any](p *Pipeline[T], sampler *Pipeline[S], opts ...StageOpt
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }

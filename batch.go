@@ -195,6 +195,7 @@ func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...
 		buffer: cfg.buffer,
 		inputs: []int64{p.id, closingSelector.id},
 	}
+	var out *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -208,12 +209,19 @@ func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(srcCh)
-				go internal.DrainChan(selCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(srcCh)
+					go internal.DrainChan(selCh)
+				}
 			}()
+			defer func() { rc.signalDrain(p.id) }()
+			defer func() { rc.signalDrain(closingSelector.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			var buf []T
@@ -244,13 +252,17 @@ func BufferWith[T, S any](p *Pipeline[T], closingSelector *Pipeline[S], opts ...
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
