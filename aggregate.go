@@ -24,6 +24,7 @@ func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOpt
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var scanOut *Pipeline[S]
 	build := func(rc *runCtx) chan S {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan S)
@@ -36,9 +37,17 @@ func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOpt
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, scanOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			state := initial
@@ -55,13 +64,17 @@ func Scan[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageOpt
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	scanOut = newPipeline(id, meta, build)
+	return scanOut
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +94,7 @@ func Reduce[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageO
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var reduceOut *Pipeline[S]
 	build := func(rc *runCtx) chan S {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan S)
@@ -93,9 +107,17 @@ func Reduce[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageO
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, reduceOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			state := initial
@@ -109,13 +131,17 @@ func Reduce[T, S any](p *Pipeline[T], initial S, fn func(S, T) S, opts ...StageO
 					state = fn(state, item)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	reduceOut = newPipeline(id, meta, build)
+	return reduceOut
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +168,7 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var distinctByOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -154,9 +181,17 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, distinctByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			seen := make(map[K]struct{})
 			for {
@@ -175,13 +210,17 @@ func DistinctBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...St
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	distinctByOut = newPipeline(id, meta, build)
+	return distinctByOut
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +249,7 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var dedupeByOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -222,6 +262,8 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, dedupeByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		var stage stageFunc
 		switch {
 		case cfg.dedupSet != nil:
@@ -229,7 +271,13 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 			set := cfg.dedupSet
 			stage = func(ctx context.Context) error {
 				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 				outbox := internal.NewBlockingOutbox(ch)
 				for {
 					select {
@@ -253,6 +301,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -261,7 +312,13 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 			// Global in-memory: never re-emit a seen key (new default).
 			stage = func(ctx context.Context) error {
 				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 				outbox := internal.NewBlockingOutbox(ch)
 				seen := make(map[K]struct{})
 				for {
@@ -280,6 +337,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -288,7 +348,13 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 			// Consecutive: suppress only adjacent duplicates.
 			stage = func(ctx context.Context) error {
 				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 				outbox := internal.NewBlockingOutbox(ch)
 				var lastKey K
 				first := true
@@ -309,6 +375,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -318,7 +387,13 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 			n := cfg.dedupeWindow
 			stage = func(ctx context.Context) error {
 				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 				outbox := internal.NewBlockingOutbox(ch)
 				window := make([]K, 0, n)
 				inWindow := func(k K) bool {
@@ -348,6 +423,9 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -355,7 +433,8 @@ func DedupeBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stag
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	dedupeByOut = newPipeline(id, meta, build)
+	return dedupeByOut
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +458,7 @@ func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var groupByOut *Pipeline[map[K][]T]
 	build := func(rc *runCtx) chan map[K][]T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K][]T)
@@ -391,9 +471,17 @@ func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, groupByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			groups := make(map[K][]T)
 			for {
@@ -406,13 +494,17 @@ func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 					groups[k] = append(groups[k], item)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	groupByOut = newPipeline(id, meta, build)
+	return groupByOut
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +532,7 @@ func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var freqByOut *Pipeline[map[K]int]
 	build := func(rc *runCtx) chan map[K]int {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K]int)
@@ -452,9 +545,17 @@ func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, freqByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			counts := make(map[K]int)
 			for {
@@ -466,13 +567,17 @@ func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ..
 					counts[keyFn(item)]++
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	freqByOut = newPipeline(id, meta, build)
+	return freqByOut
 }
 
 // RunningFrequencies emits a running count-per-item snapshot after each item.
@@ -496,6 +601,7 @@ func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, 
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var runFreqByOut *Pipeline[map[K]int64]
 	build := func(rc *runCtx) chan map[K]int64 {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K]int64)
@@ -508,9 +614,17 @@ func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, 
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, runFreqByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			counts := make(map[K]int64)
@@ -531,13 +645,17 @@ func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, 
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	runFreqByOut = newPipeline(id, meta, build)
+	return runFreqByOut
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +676,7 @@ func RunningCountBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts .
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var runCountByOut *Pipeline[map[K]int64]
 	build := func(rc *runCtx) chan map[K]int64 {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K]int64)
@@ -570,9 +689,17 @@ func RunningCountBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts .
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, runCountByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			counts := make(map[K]int64)
 			for {
@@ -591,13 +718,17 @@ func RunningCountBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts .
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	runCountByOut = newPipeline(id, meta, build)
+	return runCountByOut
 }
 
 // RunningSumBy emits a running sum-per-key snapshot after each item.
@@ -614,6 +745,7 @@ func RunningSumBy[T any, K comparable, V Numeric](p *Pipeline[T], keyFn func(T) 
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var runSumByOut *Pipeline[map[K]V]
 	build := func(rc *runCtx) chan map[K]V {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K]V)
@@ -626,9 +758,17 @@ func RunningSumBy[T any, K comparable, V Numeric](p *Pipeline[T], keyFn func(T) 
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, runSumByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			sums := make(map[K]V)
 			for {
@@ -647,11 +787,15 @@ func RunningSumBy[T any, K comparable, V Numeric](p *Pipeline[T], keyFn func(T) 
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	runSumByOut = newPipeline(id, meta, build)
+	return runSumByOut
 }
