@@ -85,22 +85,34 @@ Jump directly to any operator. See [Contents](#contents) for a grouped view.
 | [`LookupBy`](#lookupby) | Enrichment | Batched key lookup |
 | [`Enrich`](#enrich) | Enrichment | LookupBy + join function |
 | [`Scan`](#scan) | Aggregate | Running fold, emits each step |
-| [`Reduce`](#reduce) | Aggregate | Fold to single terminal result |
-| [`Sum`](#sum--min--max--minmax) | Aggregate | Numeric sum |
-| [`Min`](#sum--min--max--minmax) | Aggregate | Numeric minimum |
-| [`Max`](#sum--min--max--minmax) | Aggregate | Numeric maximum |
-| [`MinBy`](#minby--maxby) | Aggregate | Min by key function |
-| [`MaxBy`](#minby--maxby) | Aggregate | Max by key function |
+| [`RunningFrequencies`](#runningfrequencies--runningfrequenciesby) | Aggregate | Running frequency map, emits each step |
+| [`RunningFrequenciesBy`](#runningfrequencies--runningfrequenciesby) | Aggregate | Running frequency map by key function |
+| [`GroupBy`](#groupby) | Aggregate | Group items into a single map |
+| [`Reduce`](#reduce) | Aggregate | Fold to single buffered result |
 | [`ReduceWhile`](#reducewhile) | Aggregate | Fold until predicate fails |
 | [`TakeRandom`](#takerandom) | Aggregate | Buffering random reservoir sample |
-| [`GroupBy`](#groupby) | Aggregate | Group items into a single map |
-| [`RandomSample`](#randomsample) | Filter | Streaming probabilistic sample |
-| [`Collect`](#collect--first--last--count--any--all--find--contains) | Terminal | Return `[]T` |
+| [`ToMap`](#tomap--frequencies--frequenciesby) | Aggregate | Collect to map |
+| [`Frequencies`](#tomap--frequencies--frequenciesby) | Aggregate | Count occurrences |
+| [`FrequenciesBy`](#tomap--frequencies--frequenciesby) | Aggregate | Count occurrences by key function |
+| [`Sort`](#sort--sortby) | Aggregate | Sort and re-emit in order |
+| [`SortBy`](#sort--sortby) | Aggregate | Sort by key function |
+| [`Collect`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Return `[]T` |
+| [`First`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | First item or zero |
+| [`Last`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Last item or zero |
+| [`Count`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Item count |
+| [`Any`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Predicate: any match |
+| [`All`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Predicate: all match |
+| [`Find`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | First matching item |
+| [`Contains`](#collect--first--last--count--any--all--find--contains) | Scalar terminal | Membership test |
+| [`Sum`](#sum--min--max--minmax) | Scalar terminal | Numeric sum |
+| [`Min`](#sum--min--max--minmax) | Scalar terminal | Numeric minimum |
+| [`Max`](#sum--min--max--minmax) | Scalar terminal | Numeric maximum |
+| [`MinMax`](#sum--min--max--minmax) | Scalar terminal | Numeric minimum and maximum |
+| [`MinBy`](#minby--maxby) | Scalar terminal | Min by key function |
+| [`MaxBy`](#minby--maxby) | Scalar terminal | Max by key function |
+| [`SequenceEqual`](#sequenceequal) | Scalar terminal | Element-wise equality check |
+| [`Iter`](#iter) | Scalar terminal | `iter.Seq[T]` bridge |
 | [`Single`](#single) | Terminal | Expect exactly one item |
-| [`ToMap`](#tomap--frequencies--frequenciesby) | Terminal | Collect to map |
-| [`Frequencies`](#tomap--frequencies--frequenciesby) | Terminal | Count occurrences |
-| [`Sort`](#sort--sortby) | Terminal | Sort and collect |
-| [`Iter`](#iter) | Terminal | `iter.Seq[T]` bridge |
 | [`ForEach`](#foreach) | Terminal | Run side-effect sink |
 | [`Drain`](#drain) | Terminal | Consume and discard |
 | [`Runner`](#runner--runasync) | Terminal | Explicit run handle |
@@ -2165,6 +2177,47 @@ runningTotal := kitsune.Scan(prices, 0.0, func(acc float64, p float64) float64 {
 
 ---
 
+### RunningFrequencies / RunningFrequenciesBy
+
+```go
+func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64]
+func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
+```
+
+Like [`Frequencies`](#tomap--frequencies--frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single buffered map use [`Frequencies`](#tomap--frequencies--frequenciesby) with `Single`.
+
+**Options:** `Buffer`, `WithName`.
+
+---
+
+#### Buffering aggregates
+
+Buffering aggregates consume the entire stream before emitting their result. The source pipeline must be finite; use [`Single`](#single) to extract the single emitted value.
+
+### GroupBy
+
+```go
+func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T]
+```
+
+Buffers all input and emits a single `map[K][]T` when the source closes. Items are grouped by the key returned by `keyFn`; items with the same key appear in arrival order within their slice.
+
+This is a buffering pipeline operator, not a terminal. The entire stream must fit in memory. Combine with [`Single`](#single) to collect the result, or use downstream operators to process the map.
+
+**When to use:** Partitioning a finite stream into named groups for further processing, batch reports, or building lookup tables.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Group events by type, then collect with Single.
+grouped, err := kitsune.Single(ctx, kitsune.GroupBy(events,
+    func(e Event) string { return e.Type },
+))
+// grouped is map[string][]Event
+```
+
+---
+
 ### Reduce
 
 ```go
@@ -2178,6 +2231,117 @@ Folds all items into a single value using `fn`. The result is emitted exactly on
 ```go
 total := kitsune.Reduce(prices, 0.0, func(acc, p float64) float64 { return acc + p })
 // emits one value: the sum of all prices
+```
+
+---
+
+### ReduceWhile
+
+```go
+func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...StageOption) *Pipeline[S]
+```
+
+Folds items until `fn` signals stop by returning `(state, false)`. The current state is emitted exactly once and no further items are consumed. If the source closes without `fn` returning false, the accumulated state is emitted on close. Empty input emits `initial` once.
+
+This is a buffering pipeline operator. Use [Single] to extract the result.
+
+```go
+// Sum until we exceed 1000.
+partial, _ := kitsune.Single(ctx, kitsune.ReduceWhile(prices, 0.0,
+    func(acc float64, p float64) (float64, bool) {
+        next := acc + p
+        return next, next <= 1000.0
+    },
+))
+```
+
+---
+
+### TakeRandom
+
+```go
+func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T]
+```
+
+Buffers all input and emits a single `[]T` containing a random sample of up to `n` items using reservoir sampling (Algorithm R). Each item has an equal probability of being selected. The emitted slice has `min(n, pipelineSize)` items. Order within the slice is not guaranteed.
+
+This is a pipeline (buffering) operator, not a terminal. Combine with [`Single`](#single) to extract the result.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+// Get 100 random users.
+sample, err := kitsune.Single(ctx, kitsune.TakeRandom(users, 100))
+```
+
+---
+
+### ToMap / Frequencies / FrequenciesBy
+
+```go
+func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V]
+func Frequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int]
+func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int]
+```
+
+Buffering pipeline operators that emit a single map on close. `ToMap` uses last-writer-wins for duplicate keys. `Frequencies` and `FrequenciesBy` count occurrences. Empty input emits one empty map.
+
+These are pipeline operators: use [`Single`](#single) to extract the result, or pipe the map into further stages.
+
+For grouping into `map[K][]T`, use [`GroupBy`](#groupby).
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+byID, err   := kitsune.Single(ctx, kitsune.ToMap(users, func(u User) int { return u.ID }, func(u User) User { return u }))
+counts, err := kitsune.Single(ctx, kitsune.Frequencies(kitsune.Map(events, extractType)))
+```
+
+---
+
+### Sort / SortBy
+
+```go
+func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *Pipeline[T]
+func SortBy[T any, K any](p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...StageOption) *Pipeline[T]
+```
+
+Collects all items, sorts them, then emits in sorted order. The source pipeline must be finite. This is a blocking, memory-intensive operation; the entire stream is buffered before any output is emitted.
+
+**Options:** `Buffer`, `WithName`.
+
+```go
+sorted := kitsune.Sort(items, func(a, b Item) bool { return a.Timestamp.Before(b.Timestamp) })
+```
+
+---
+
+#### Scalar terminals
+
+Scalar terminals run the pipeline and return a plain Go value directly; they are not `Pipeline[T]` values and cannot be composed further.
+
+### Collect / First / Last / Count / Any / All / Find / Contains
+
+```go
+func Collect[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) ([]T, error)
+func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error)
+func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error)
+func Count[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (int64, error)
+func Any[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (bool, error)
+func All[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (bool, error)
+func Find[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (T, bool, error)
+func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error)
+```
+
+Terminal collectors. All run the pipeline and block until completion. `First`, `Any`, `All`, `Find`, and `Contains` short-circuit; they stop the pipeline as soon as the answer is known. `First` and `Last` return `(zero, false, nil)` if the pipeline is empty.
+
+All are also available as methods on `*Pipeline[T]` (except `Find` and `Contains`, which require type parameters).
+
+```go
+items, err  := kitsune.Collect(ctx, p)
+first, ok, err := kitsune.First(ctx, p)
+n, err      := kitsune.Count(ctx, p)
+found, err  := kitsune.Any(ctx, p, func(v int) bool { return v > 0 })
 ```
 
 ---
@@ -2218,137 +2382,6 @@ cheapest, ok, err := kitsune.MinBy(ctx, products,
 
 ---
 
-### ReduceWhile
-
-```go
-func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), opts ...StageOption) *Pipeline[S]
-```
-
-Folds items until `fn` signals stop by returning `(state, false)`. The current state is emitted exactly once and no further items are consumed. If the source closes without `fn` returning false, the accumulated state is emitted on close. Empty input emits `initial` once.
-
-This is a buffering pipeline operator. Use [Single] to extract the result.
-
-```go
-// Sum until we exceed 1000.
-partial, _ := kitsune.Single(ctx, kitsune.ReduceWhile(prices, 0.0,
-    func(acc float64, p float64) (float64, bool) {
-        next := acc + p
-        return next, next <= 1000.0
-    },
-))
-```
-
----
-
-#### Buffering aggregates
-
-Buffering aggregates consume the entire stream before emitting their result. The source pipeline must be finite; use [`Single`](#single) to extract the single emitted value.
-
-### GroupBy
-
-```go
-func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K][]T]
-```
-
-Buffers all input and emits a single `map[K][]T` when the source closes. Items are grouped by the key returned by `keyFn`; items with the same key appear in arrival order within their slice.
-
-This is a buffering pipeline operator, not a terminal. The entire stream must fit in memory. Combine with [`Single`](#single) to collect the result, or use downstream operators to process the map.
-
-**When to use:** Partitioning a finite stream into named groups for further processing, batch reports, or building lookup tables.
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-// Group events by type, then collect with Single.
-grouped, err := kitsune.Single(ctx, kitsune.GroupBy(events,
-    func(e Event) string { return e.Type },
-))
-// grouped is map[string][]Event
-```
-
----
-
-### TakeRandom
-
-```go
-func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T]
-```
-
-Buffers all input and emits a single `[]T` containing a random sample of up to `n` items using reservoir sampling (Algorithm R). Each item has an equal probability of being selected. The emitted slice has `min(n, pipelineSize)` items. Order within the slice is not guaranteed.
-
-This is a pipeline (buffering) operator, not a terminal. Combine with [`Single`](#single) to extract the result.
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-// Get 100 random users.
-sample, err := kitsune.Single(ctx, kitsune.TakeRandom(users, 100))
-```
-
----
-
-### Collect / First / Last / Count / Any / All / Find / Contains
-
-```go
-func Collect[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) ([]T, error)
-func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error)
-func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error)
-func Count[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (int64, error)
-func Any[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (bool, error)
-func All[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (bool, error)
-func Find[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...RunOption) (T, bool, error)
-func Contains[T comparable](ctx context.Context, p *Pipeline[T], value T, opts ...RunOption) (bool, error)
-```
-
-Terminal collectors. All run the pipeline and block until completion. `First`, `Any`, `All`, `Find`, and `Contains` short-circuit; they stop the pipeline as soon as the answer is known. `First` and `Last` return `(zero, false, nil)` if the pipeline is empty.
-
-All are also available as methods on `*Pipeline[T]` (except `Find` and `Contains`, which require type parameters).
-
-```go
-items, err  := kitsune.Collect(ctx, p)
-first, ok, err := kitsune.First(ctx, p)
-n, err      := kitsune.Count(ctx, p)
-found, err  := kitsune.Any(ctx, p, func(v int) bool { return v > 0 })
-```
-
----
-
-### ToMap / Frequencies / FrequenciesBy
-
-```go
-func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn func(T) V, opts ...StageOption) *Pipeline[map[K]V]
-func Frequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int]
-func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int]
-```
-
-Buffering pipeline operators that emit a single map on close. `ToMap` uses last-writer-wins for duplicate keys. `Frequencies` and `FrequenciesBy` count occurrences. Empty input emits one empty map.
-
-These are pipeline operators: use [`Single`](#single) to extract the result, or pipe the map into further stages.
-
-For grouping into `map[K][]T`, use [`GroupBy`](#groupby).
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-byID, err   := kitsune.Single(ctx, kitsune.ToMap(users, func(u User) int { return u.ID }, func(u User) User { return u }))
-counts, err := kitsune.Single(ctx, kitsune.Frequencies(kitsune.Map(events, extractType)))
-```
-
----
-
-### RunningFrequencies / RunningFrequenciesBy
-
-```go
-func RunningFrequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int64]
-func RunningFrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int64]
-```
-
-Like [`Frequencies`](#tomap--frequencies--frequenciesby)/`FrequenciesBy` but emits a fresh count snapshot after each input item, as a pipeline. Each emitted map is a copy: safe to retain across iterations. Use this when downstream stages need to react to evolving counts; for a single buffered map use [`Frequencies`](#tomap--frequencies--frequenciesby) with `Single`.
-
-**Options:** `Buffer`, `WithName`.
-
----
-
 ### SequenceEqual
 
 ```go
@@ -2377,23 +2410,6 @@ for item := range seq {
 if err := errFn(); err != nil {
     log.Fatal(err)
 }
-```
-
----
-
-### Sort / SortBy
-
-```go
-func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *Pipeline[T]
-func SortBy[T any, K any](p *Pipeline[T], keyFn func(T) K, less func(a, b K) bool, opts ...StageOption) *Pipeline[T]
-```
-
-Collects all items, sorts them, then emits in sorted order. The source pipeline must be finite. This is a blocking, memory-intensive operation; the entire stream is buffered before any output is emitted.
-
-**Options:** `Buffer`, `WithName`.
-
-```go
-sorted := kitsune.Sort(items, func(a, b Item) bool { return a.Timestamp.Before(b.Timestamp) })
 ```
 
 ---
