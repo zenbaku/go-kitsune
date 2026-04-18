@@ -151,13 +151,30 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 			}
 			// Base: use upstream channel with micro-batching.
 			inCh := p0.build(rc)
+			rc.initDrainNotify(p0.id, 1)
+			drainCh := rc.drainCh(p0.id)
 			return func(ctx context.Context) error {
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p0.id) }()
 				var buf [internal.ReceiveBatchSize]I
 				for {
-					item, ok := <-inCh
-					if !ok {
+					var item I
+					var ok bool
+					select {
+					case item, ok = <-inCh:
+						if !ok {
+							return nil
+						}
+					case <-drainCh:
+						cooperativeDrain = true
 						return nil
+					case <-ctx.Done():
+						return ctx.Err()
 					}
 					buf[0] = item
 					n := 1
@@ -193,6 +210,12 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 					}
 					if ctx.Err() != nil {
 						return ctx.Err()
+					}
+					select {
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
+					default:
 					}
 				}
 			}

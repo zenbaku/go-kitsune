@@ -126,13 +126,30 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 				})
 			}
 			inCh := p0.build(rc)
+			rc.initDrainNotify(p0.id, 1)
+			drainCh := rc.drainCh(p0.id)
 			return func(ctx context.Context) error {
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p0.id) }()
 				var buf [internal.ReceiveBatchSize]T
 				for {
-					item, ok := <-inCh
-					if !ok {
+					var item T
+					var ok bool
+					select {
+					case item, ok = <-inCh:
+						if !ok {
+							return nil
+						}
+					case <-drainCh:
+						cooperativeDrain = true
 						return nil
+					case <-ctx.Done():
+						return ctx.Err()
 					}
 					buf[0] = item
 					n := 1
@@ -170,6 +187,12 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 					}
 					if ctx.Err() != nil {
 						return ctx.Err()
+					}
+					select {
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
+					default:
 					}
 				}
 			}
