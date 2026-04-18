@@ -32,6 +32,7 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 		overflow:    cfg.overflow,
 		inputs:      []int64{p.id},
 	}
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -44,6 +45,9 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		fmHook := rc.hook
 		if fmHook == nil {
 			fmHook = internal.NoopHook{}
@@ -54,26 +58,33 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 		var stage stageFunc
 		switch {
 		case cfg.concurrency > 1 && cfg.ordered:
-			stage = flatMapOrdered(inCh, ch, fn, cfg, fmHook)
+			stage = flatMapOrdered(inCh, ch, fn, cfg, fmHook, drainFn, drainCh)
 		case cfg.concurrency > 1:
-			stage = flatMapConcurrent(inCh, ch, fn, cfg, fmHook)
+			stage = flatMapConcurrent(inCh, ch, fn, cfg, fmHook, drainFn, drainCh)
 		case isFastPathEligible(cfg, fmHook):
-			stage = flatMapSerialFastPath(inCh, ch, fn, cfg.name)
+			stage = flatMapSerialFastPath(inCh, ch, fn, cfg.name, drainFn, drainCh)
 		default:
-			stage = flatMapSerial(inCh, ch, fn, cfg, fmHook)
+			stage = flatMapSerial(inCh, ch, fn, cfg, fmHook, drainFn, drainCh)
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // flatMapSerialFastPath is the drain-protocol + micro-batching fast path for serial FlatMap.
 // The yield closure is allocated once outside the loop — zero allocs per item.
-func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, name string) stageFunc {
+func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, name string, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		// yield is allocated once; outCh <- v is a plain send (drain protocol).
 		yield := func(v O) error {
@@ -83,7 +94,16 @@ func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(contex
 
 		var buf [internal.ReceiveBatchSize]I
 		for {
-			item, ok := <-inCh
+			var item I
+			var ok bool
+			select {
+			case item, ok = <-inCh:
+			case <-drainCh:
+				cooperativeDrain = true
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			if !ok {
 				return nil
 			}
@@ -118,18 +138,30 @@ func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(contex
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			select {
+			case <-drainCh:
+				cooperativeDrain = true
+				return nil
+			default:
+			}
 		}
 	}
 }
 
-func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var processed, errs int64
@@ -162,6 +194,9 @@ func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 					hook.OnItem(ctx, cfg.name, dur, nil)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -171,14 +206,20 @@ func flatMapSerial[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 
 // flatMapConcurrent does not support supervision (Supervise stage option is silently
 // ignored when Concurrency > 1). Use Concurrency(1) to enable supervision on FlatMap.
-func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -244,6 +285,10 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 						}(item, outbox)
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 				}
 			}()
@@ -262,7 +307,7 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 	}
 }
 
-func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
@@ -275,7 +320,13 @@ func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Conte
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -336,6 +387,10 @@ func flatMapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Conte
 							return
 						}
 					case <-innerCtx.Done():
+						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
 						return
 					}
 
