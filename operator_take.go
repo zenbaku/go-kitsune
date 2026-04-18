@@ -378,6 +378,7 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		buffer: cfg.buffer,
 		inputs: []int64{p.id, boundary.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -391,11 +392,20 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
-			defer func() { go internal.DrainChan(boundaryCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+					go internal.DrainChan(boundaryCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
+			defer func() { rc.signalDrain(boundary.id) }()
 			defer signalDone()
 
 			outbox := internal.NewBlockingOutbox(ch)
@@ -407,6 +417,7 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 				case <-boundaryCh:
 					close(stopCh)
 				case <-ctx.Done():
+				case <-drainCh:
 				}
 			}()
 
@@ -423,13 +434,17 @@ func TakeUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 					return nil
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // DropUntil suppresses all items from p until the boundary pipeline emits its
@@ -450,6 +465,7 @@ func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		buffer: cfg.buffer,
 		inputs: []int64{p.id, boundary.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -463,11 +479,20 @@ func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
-			defer func() { go internal.DrainChan(boundaryCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+					go internal.DrainChan(boundaryCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
+			defer func() { rc.signalDrain(boundary.id) }()
 			defer signalDone() // stop boundary and any infinite upstream sources when p closes
 
 			outbox := internal.NewBlockingOutbox(ch)
@@ -479,6 +504,7 @@ func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 				case <-boundaryCh:
 					close(gateCh)
 				case <-ctx.Done():
+				case <-drainCh:
 				}
 			}()
 
@@ -511,11 +537,15 @@ func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 					gateChRef = nil
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }

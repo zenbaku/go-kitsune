@@ -37,6 +37,7 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: inputs,
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -52,15 +53,26 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			cooperativeDrain := false
 			defer func() {
-				for _, ic := range inChans {
-					go internal.DrainChan(ic)
+				if !cooperativeDrain {
+					for _, ic := range inChans {
+						go internal.DrainChan(ic)
+					}
 				}
 			}()
+			for _, p := range pipelines {
+				p := p
+				defer func() { rc.signalDrain(p.id) }()
+			}
 
 			outbox := internal.NewBlockingOutbox(ch)
+			innerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 			var wg sync.WaitGroup
 
 			for _, ic := range inChans {
@@ -74,27 +86,45 @@ func Merge[T any](pipelines ...*Pipeline[T]) *Pipeline[T] {
 							if !ok {
 								return
 							}
-							if err := outbox.Send(ctx, item); err != nil {
+							if err := outbox.Send(innerCtx, item); err != nil {
 								return
 							}
-						case <-ctx.Done():
+						case <-innerCtx.Done():
 							return
 						}
 					}
 				}()
 			}
 
-			wg.Wait()
-			// If the context was cancelled externally (e.g. user called cancel()),
-			// return the context error so callers see a non-nil result. When
-			// upstream sources finished naturally or rc.done was closed by a
-			// downstream Take, ctx.Err() is nil and we return nil as before.
-			return ctx.Err()
+			// Wait for drainCh or all inputs to close.
+			doneCh := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(doneCh)
+			}()
+			select {
+			case <-doneCh:
+				// If the context was cancelled externally (e.g. user called cancel()),
+				// return the context error so callers see a non-nil result. When
+				// upstream sources finished naturally or rc.done was closed by a
+				// downstream Take, ctx.Err() is nil and we return nil as before.
+				return ctx.Err()
+			case <-drainCh:
+				cooperativeDrain = true
+				cancel() // stop worker goroutines
+				wg.Wait()
+				return nil
+			case <-ctx.Done():
+				cancel()
+				wg.Wait()
+				return ctx.Err()
+			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------

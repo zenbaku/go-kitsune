@@ -550,10 +550,15 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 		aCh := a.build(rc)
 		bCh := b.build(rc)
 		stage := func(stageCtx context.Context) error {
+			cooperativeDrain := false
 			defer func() {
-				go internal.DrainChan(aCh)
-				go internal.DrainChan(bCh)
+				if !cooperativeDrain {
+					go internal.DrainChan(aCh)
+					go internal.DrainChan(bCh)
+				}
 			}()
+			defer func() { rc.signalDrain(a.id) }()
+			defer func() { rc.signalDrain(b.id) }()
 			for {
 				var av T
 				var aok bool
