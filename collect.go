@@ -329,6 +329,7 @@ func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), o
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[S]
 	build := func(rc *runCtx) chan S {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan S)
@@ -341,9 +342,17 @@ func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), o
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			state := initial
 			for {
@@ -359,13 +368,17 @@ func ReduceWhile[T, S any](p *Pipeline[T], initial S, fn func(S, T) (S, bool), o
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +401,7 @@ func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -400,9 +414,17 @@ func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 
 			if n <= 0 {
@@ -430,13 +452,17 @@ func TakeRandom[T any](p *Pipeline[T], n int, opts ...StageOption) *Pipeline[[]T
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +483,7 @@ func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn 
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[map[K]V]
 	build := func(rc *runCtx) chan map[K]V {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan map[K]V)
@@ -469,9 +496,17 @@ func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn 
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			result := make(map[K]V)
 			for {
@@ -483,13 +518,17 @@ func ToMap[T any, K comparable, V any](p *Pipeline[T], keyFn func(T) K, valueFn 
 					result[keyFn(item)] = valueFn(item)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
