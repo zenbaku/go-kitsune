@@ -3,6 +3,7 @@ package kitsune_test
 import (
 	"context"
 	"flag"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -2279,6 +2280,66 @@ func TestPropRandomSample_Boundaries(t *testing.T) {
 		}
 		if !slices.Equal(all, in) {
 			t.Fatalf("rate=1.0: got %v, want %v", all, in)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Frequencies properties
+// ---------------------------------------------------------------------------
+
+// TestPropFrequenciesCountsCorrectly verifies Frequencies produces the exact
+// multiset count for every input item.
+func TestPropFrequenciesCountsCorrectly(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		in := rapid.SliceOf(rapid.IntRange(0, 9)).Draw(t, "in")
+		got, err := kitsune.Single(context.Background(),
+			kitsune.Frequencies(kitsune.FromSlice(in)),
+		)
+		if err != nil {
+			t.Fatalf("Frequencies error: %v", err)
+		}
+		want := make(map[int]int)
+		for _, v := range in {
+			want[v]++
+		}
+		if !maps.Equal(got, want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// ToMap properties
+// ---------------------------------------------------------------------------
+
+// TestPropToMapLastWriterWins verifies ToMap builds the same map as a direct
+// loop with last-writer-wins semantics.
+func TestPropToMapLastWriterWins(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		type pair struct{ K, V int }
+		ps := rapid.SliceOf(rapid.Custom(func(t *rapid.T) pair {
+			return pair{
+				K: rapid.IntRange(0, 5).Draw(t, "k"),
+				V: rapid.Int().Draw(t, "v"),
+			}
+		})).Draw(t, "ps")
+
+		got, err := kitsune.Single(context.Background(),
+			kitsune.ToMap(kitsune.FromSlice(ps),
+				func(p pair) int { return p.K },
+				func(p pair) int { return p.V },
+			),
+		)
+		if err != nil {
+			t.Fatalf("ToMap error: %v", err)
+		}
+		want := make(map[int]int)
+		for _, p := range ps {
+			want[p.K] = p.V
+		}
+		if !maps.Equal(got, want) {
+			t.Fatalf("got %v want %v", got, want)
 		}
 	})
 }

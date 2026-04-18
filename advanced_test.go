@@ -119,15 +119,59 @@ func TestSum(t *testing.T) {
 
 func TestToMap(t *testing.T) {
 	ctx := context.Background()
-	m, err := kitsune.ToMap(ctx, kitsune.FromSlice([]string{"a", "bb", "ccc"}),
+	m, err := kitsune.Single(ctx, kitsune.ToMap(kitsune.FromSlice([]string{"a", "bb", "ccc"}),
 		func(s string) int { return len(s) },
 		func(s string) string { return s },
-	)
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m[1] != "a" || m[2] != "bb" || m[3] != "ccc" {
 		t.Fatalf("ToMap: %v", m)
+	}
+}
+
+func TestToMap_EmptySource(t *testing.T) {
+	ctx := context.Background()
+	m, err := kitsune.Single(ctx, kitsune.ToMap(kitsune.Empty[string](),
+		func(s string) int { return len(s) },
+		func(s string) string { return s },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 0 {
+		t.Errorf("expected empty map, got %v", m)
+	}
+}
+
+func TestToMap_LastWriterWins(t *testing.T) {
+	ctx := context.Background()
+	// Two items with the same key: the second should win.
+	m, err := kitsune.Single(ctx, kitsune.ToMap(kitsune.FromSlice([]string{"a", "b"}),
+		func(s string) int { return len(s) }, // both have len 1
+		func(s string) string { return s },
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[1] != "b" {
+		t.Errorf("expected last-writer-wins ('b'), got %v", m)
+	}
+}
+
+func TestToMap_WithName(t *testing.T) {
+	ctx := context.Background()
+	m, err := kitsune.Single(ctx, kitsune.ToMap(kitsune.FromSlice([]int{1, 2}),
+		func(v int) int { return v },
+		func(v int) int { return v * 10 },
+		kitsune.WithName("my_tomap"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[1] != 10 || m[2] != 20 {
+		t.Errorf("unexpected: %v", m)
 	}
 }
 

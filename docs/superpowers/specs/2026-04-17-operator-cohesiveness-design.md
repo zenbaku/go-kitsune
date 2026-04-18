@@ -401,3 +401,20 @@ kitsune.BufferWith(p, kitsune.Ticker(5*time.Second))
 - `EndWith` → `misc.go`
 - `Stage.Or` → `pipeline.go`
 - `RunningCountBy` / `RunningSumBy` → `aggregate.go`
+
+---
+
+## Addendum: 2026-04-17 — Buffering principle applied uniformly
+
+The original spec (above) named `GroupBy` and `TakeRandom` as the buffering-pipeline conversions in §4.2 and §7, but did not apply the rule to other terminals that buffer the entire source to produce a collection. A follow-up pass applied the same principle to four additional operators:
+
+| Operator | Before | After |
+|---|---|---|
+| `ToMap` | `(ctx, p, keyFn, valueFn, opts ...RunOption) (map[K]V, error)` | `(p, keyFn, valueFn, opts ...StageOption) *Pipeline[map[K]V]` |
+| `Frequencies` | `(ctx, p, opts ...RunOption) (map[T]int, error)` | `(p, opts ...StageOption) *Pipeline[map[T]int]` |
+| `FrequenciesBy` | `(ctx, p, keyFn, opts ...RunOption) (map[K]int, error)` | `(p, keyFn, opts ...StageOption) *Pipeline[map[K]int]` |
+| `ReduceWhile` | `(ctx, p, initial, fn, opts ...RunOption) (S, error)` | `(p, initial, fn, opts ...StageOption) *Pipeline[S]` |
+
+Each buffers the entire source and emits exactly one value on close (or on the early-stop signal in `ReduceWhile`'s case). Users extract with `Single(ctx, p)`.
+
+**Rule (canonical):** an operator whose essential work is to consume a finite source and produce a single aggregated value (a collection or a fold) is a **buffering pipeline operator** returning `*Pipeline[...]`, not a terminal. Scalar short-circuiting terminals (`First`, `Any`, `All`, `Count`, `Find`, `Contains`, `Sum`, `Min`, `Max`, `Single`, `SequenceEqual`, `Iter`) remain terminals because they either return scalars or can early-exit. `Collect` is an exception and remains terminal: it is the explicit materialization primitive that the whole pipeline-to-Go boundary is built on, and users already know its shape.

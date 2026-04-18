@@ -556,14 +556,14 @@ func TestReduceWhile(t *testing.T) {
 	ctx := context.Background()
 	// Sum until running total exceeds 10.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5, 6})
-	sum, err := kitsune.ReduceWhile(ctx, p, 0, func(acc, v int) (int, bool) {
+	sum, err := kitsune.Single(ctx, kitsune.ReduceWhile(p, 0, func(acc, v int) (int, bool) {
 		next := acc + v
 		return next, next <= 10
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 1+2+3+4=10 (continue), 10+5=15 (stop) → returns 15
+	// 1+2+3+4=10 (continue), 10+5=15 (stop) -> emits 15
 	if sum != 15 {
 		t.Fatalf("got %d, want 15", sum)
 	}
@@ -572,14 +572,43 @@ func TestReduceWhile(t *testing.T) {
 func TestReduceWhileNeverStops(t *testing.T) {
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{1, 2, 3})
-	sum, err := kitsune.ReduceWhile(ctx, p, 0, func(acc, v int) (int, bool) {
+	sum, err := kitsune.Single(ctx, kitsune.ReduceWhile(p, 0, func(acc, v int) (int, bool) {
 		return acc + v, true
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sum != 6 {
 		t.Fatalf("got %d, want 6", sum)
+	}
+}
+
+func TestReduceWhile_EmptySource(t *testing.T) {
+	ctx := context.Background()
+	result, err := kitsune.Single(ctx, kitsune.ReduceWhile(kitsune.Empty[int](), 42, func(acc, v int) (int, bool) {
+		return acc + v, true
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty source: emits the initial value.
+	if result != 42 {
+		t.Fatalf("got %d, want 42", result)
+	}
+}
+
+func TestReduceWhile_WithName(t *testing.T) {
+	ctx := context.Background()
+	result, err := kitsune.Single(ctx, kitsune.ReduceWhile(
+		kitsune.FromSlice([]int{1, 2, 3}), 0,
+		func(acc, v int) (int, bool) { return acc + v, true },
+		kitsune.WithName("my_reduce_while"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != 6 {
+		t.Fatalf("got %d, want 6", result)
 	}
 }
 

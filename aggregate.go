@@ -419,21 +419,60 @@ func GroupBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 // Frequencies / FrequenciesBy
 // ---------------------------------------------------------------------------
 
-// Frequencies runs the pipeline and returns a count of how many times each
-// item appeared.
-func Frequencies[T comparable](ctx context.Context, p *Pipeline[T], opts ...RunOption) (map[T]int, error) {
-	return FrequenciesBy(ctx, p, func(v T) T { return v }, opts...)
+// Frequencies buffers all items and emits a single map[T]int counting how many
+// times each item appeared. Use [Single] to extract the result.
+// Empty input emits one empty map.
+func Frequencies[T comparable](p *Pipeline[T], opts ...StageOption) *Pipeline[map[T]int] {
+	return FrequenciesBy(p, func(v T) T { return v }, opts...)
 }
 
-// FrequenciesBy runs the pipeline and returns a count of how many times each
-// key (returned by keyFn) appeared.
-func FrequenciesBy[T any, K comparable](ctx context.Context, p *Pipeline[T], keyFn func(T) K, opts ...RunOption) (map[K]int, error) {
-	counts := make(map[K]int)
-	err := p.ForEach(func(_ context.Context, v T) error {
-		counts[keyFn(v)]++
-		return nil
-	}).Run(ctx, opts...)
-	return counts, err
+// FrequenciesBy buffers all items and emits a single map[K]int counting how
+// many times each key (returned by keyFn) appeared. Use [Single] to extract
+// the result. Empty input emits one empty map.
+func FrequenciesBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...StageOption) *Pipeline[map[K]int] {
+	track(p)
+	cfg := buildStageConfig(opts)
+	id := nextPipelineID()
+	meta := stageMeta{
+		id:     id,
+		kind:   "frequencies_by",
+		name:   orDefault(cfg.name, "frequencies_by"),
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	build := func(rc *runCtx) chan map[K]int {
+		if existing := rc.getChan(id); existing != nil {
+			return existing.(chan map[K]int)
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		ch := make(chan map[K]int, buf)
+		m := meta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(ch) }
+		m.getChanCap = func() int { return cap(ch) }
+		rc.setChan(id, ch)
+		stage := func(ctx context.Context) error {
+			defer close(ch)
+			defer func() { go internal.DrainChan(inCh) }()
+			outbox := internal.NewBlockingOutbox(ch)
+			counts := make(map[K]int)
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return outbox.Send(ctx, counts)
+					}
+					counts[keyFn(item)]++
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		}
+		rc.add(stage, m)
+		return ch
+	}
+	return newPipeline(id, meta, build)
 }
 
 // RunningFrequencies emits a running count-per-item snapshot after each item.

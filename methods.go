@@ -13,8 +13,8 @@ import (
 // the canonical implementation; these methods simply delegate to them.
 //
 // Note: Go does not allow methods with their own type parameters, so the
-// following terminals must remain free functions only:
-//   ToMap, GroupBy, FrequenciesBy, MinBy, MaxBy, SequenceEqual
+// following operators must remain free functions only:
+//   ToMap, GroupBy, FrequenciesBy, ReduceWhile, MinBy, MaxBy, SequenceEqual
 // ---------------------------------------------------------------------------
 
 // Collect runs the pipeline and returns all emitted items as a slice.
@@ -52,11 +52,6 @@ func (p *Pipeline[T]) All(ctx context.Context, pred func(T) bool, opts ...RunOpt
 // Find returns the first item satisfying pred, or (zero, false, nil) if none.
 func (p *Pipeline[T]) Find(ctx context.Context, pred func(T) bool, opts ...RunOption) (T, bool, error) {
 	return Find(ctx, p, pred, opts...)
-}
-
-// ReduceWhile folds items until fn signals stop.
-func (p *Pipeline[T]) ReduceWhile(ctx context.Context, initial T, fn func(T, T) (T, bool), opts ...RunOption) (T, error) {
-	return ReduceWhile(ctx, p, initial, fn, opts...)
 }
 
 // Iter returns a Go 1.23 iterator over the pipeline's items.
