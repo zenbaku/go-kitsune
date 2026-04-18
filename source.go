@@ -17,11 +17,11 @@ import (
 
 // sourceStage builds a stageFunc that closes ch on exit and respects cancellation.
 // itemFn is called to produce items; it receives:
-//   - a send helper that delivers an item to ch (blocking, respects ctx and gate)
+//   - a send helper that delivers an item to ch (blocking, respects ctx, gate, and drainCh)
 //   - the run context
 //
 // This helper exists so every source shares the same close logic.
-func sourceStage[T any](ch chan T, gate *internal.Gate, itemFn func(ctx context.Context, send func(T) error) error) stageFunc {
+func sourceStage[T any](ch chan T, gate *internal.Gate, drainCh <-chan struct{}, itemFn func(ctx context.Context, send func(T) error) error) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(ch)
 
@@ -34,11 +34,17 @@ func sourceStage[T any](ch chan T, gate *internal.Gate, itemFn func(ctx context.
 			select {
 			case ch <- item:
 				return nil
+			case <-drainCh:
+				return errDrained
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-		return itemFn(ctx, send)
+		err := itemFn(ctx, send)
+		if err == errDrained {
+			return nil
+		}
+		return err
 	}
 }
 
@@ -57,6 +63,7 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 		concurrency: 1,
 		buffer:      cfg.buffer,
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -68,23 +75,26 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		gate := rc.gate
 		var stage stageFunc
 		if internal.IsNoopHook(rc.hook) && gate == nil {
-			// Fast path: plain sends, no select per item. The downstream drain
-			// goroutine unblocks this send if the pipeline exits early.
 			stage = func(ctx context.Context) error {
 				defer close(ch)
 				for _, item := range items {
-					ch <- item
-					if ctx.Err() != nil {
+					select {
+					case ch <- item:
+					case <-drainCh:
+						return nil
+					case <-ctx.Done():
 						return ctx.Err()
 					}
 				}
 				return nil
 			}
 		} else {
-			stage = sourceStage(ch, gate, func(ctx context.Context, send func(T) error) error {
+			stage = sourceStage(ch, gate, drainCh, func(ctx context.Context, send func(T) error) error {
 				for _, item := range items {
 					if err := send(item); err != nil {
 						return err
@@ -96,7 +106,8 @@ func FromSlice[T any](items []T) *Pipeline[T] {
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +126,7 @@ func From[T any](src <-chan T) *Pipeline[T] {
 		concurrency: 1,
 		buffer:      cfg.buffer,
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -126,7 +138,9 @@ func From[T any](src <-chan T) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
-		stage := sourceStage(ch, rc.gate, func(ctx context.Context, send func(T) error) error {
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		stage := sourceStage(ch, rc.gate, drainCh, func(ctx context.Context, send func(T) error) error {
 			for {
 				select {
 				case item, ok := <-src:
@@ -136,6 +150,8 @@ func From[T any](src <-chan T) *Pipeline[T] {
 					if err := send(item); err != nil {
 						return err
 					}
+				case <-drainCh:
+					return errDrained
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -144,7 +160,8 @@ func From[T any](src <-chan T) *Pipeline[T] {
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +199,7 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		concurrency: 1,
 		buffer:      cfg.buffer,
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -193,6 +211,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		gate := rc.gate
 		var stage stageFunc
 		done := rc.done
@@ -215,6 +235,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 					select {
 					case <-done:
 						cancelStage()
+					case <-drainCh:
+						cancelStage()
 					case <-stageCtx.Done():
 					}
 				}()
@@ -223,12 +245,14 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 					select {
 					case ch <- item:
 						return stageCtx.Err() == nil
+					case <-drainCh:
+						return false
 					case <-done:
 						return false
 					}
 				})
 				if errors.Is(err, context.Canceled) && ctx.Err() == nil {
-					return nil // cancelled by done signal, not by parent context
+					return nil // cancelled by done signal or drain, not by parent context
 				}
 				return err
 			}
@@ -239,6 +263,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 				go func() {
 					select {
 					case <-done:
+						cancelStage()
+					case <-drainCh:
 						cancelStage()
 					case <-stageCtx.Done():
 					}
@@ -253,6 +279,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 					select {
 					case ch <- item:
 						return true
+					case <-drainCh:
+						return false
 					case <-stageCtx.Done():
 						return false
 					case <-done:
@@ -260,7 +288,7 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 					}
 				})
 				if errors.Is(err, context.Canceled) && ctx.Err() == nil {
-					return nil // cancelled by done signal, not by parent context
+					return nil // cancelled by done signal or drain, not by parent context
 				}
 				return err
 			}
@@ -268,7 +296,8 @@ func Generate[T any](fn func(ctx context.Context, yield func(T) bool) error) *Pi
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
