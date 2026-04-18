@@ -446,6 +446,9 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 		inputs: []int64{p.id},
 	}
 
+	var aP *Pipeline[A]
+	var bP *Pipeline[B]
+
 	// sharedBuild creates both channels and the stage on the first call.
 	sharedBuild := func(rc *runCtx) (chan A, chan B) {
 		if existing := rc.getChan(aID); existing != nil {
@@ -461,10 +464,19 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 		m.getChanCap = func() int { return cap(aCh) }
 		rc.setChan(aID, aCh)
 		rc.setChan(bID, bCh)
+		totalConsumers := aP.consumerCount.Load() + bP.consumerCount.Load()
+		rc.initMultiOutputDrainNotify([]int64{aID, bID}, totalConsumers)
+		drainCh := rc.drainCh(aID)
 		stage := func(ctx context.Context) error {
 			defer close(aCh)
 			defer close(bCh)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			aBox := internal.NewBlockingOutbox(aCh)
 			bBox := internal.NewBlockingOutbox(bCh)
@@ -483,6 +495,9 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -490,11 +505,11 @@ func Unzip[A, B any](p *Pipeline[Pair[A, B]], opts ...StageOption) (*Pipeline[A]
 		return aCh, bCh
 	}
 
-	aP := newPipeline(aID, aMeta, func(rc *runCtx) chan A {
+	aP = newPipeline(aID, aMeta, func(rc *runCtx) chan A {
 		a, _ := sharedBuild(rc)
 		return a
 	})
-	bP := newPipeline(bID, bMeta, func(rc *runCtx) chan B {
+	bP = newPipeline(bID, bMeta, func(rc *runCtx) chan B {
 		_, b := sharedBuild(rc)
 		return b
 	})

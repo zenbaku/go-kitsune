@@ -354,6 +354,9 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 		inputs: []int64{p.id},
 	}
 
+	var okP *Pipeline[O]
+	var errP *Pipeline[ErrItem[I]]
+
 	sharedBuild := func(rc *runCtx) (chan O, chan ErrItem[I]) {
 		if existing := rc.getChan(okID); existing != nil {
 			return existing.(chan O), rc.getChan(errID).(chan ErrItem[I])
@@ -368,12 +371,21 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 		m.getChanCap = func() int { return cap(okC) }
 		rc.setChan(okID, okC)
 		rc.setChan(errID, errC)
+		totalConsumers := okP.consumerCount.Load() + errP.consumerCount.Load()
+		rc.initMultiOutputDrainNotify([]int64{okID, errID}, totalConsumers)
+		drainCh := rc.drainCh(okID)
 		okBox := internal.NewBlockingOutbox(okC)
 		errBox := internal.NewBlockingOutbox(errC)
 		stage := func(ctx context.Context) error {
 			defer close(okC)
 			defer close(errC)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			for {
 				select {
 				case item, ok := <-inCh:
@@ -394,6 +406,9 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -401,11 +416,11 @@ func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error),
 		return okC, errC
 	}
 
-	okP := newPipeline(okID, okMeta, func(rc *runCtx) chan O {
+	okP = newPipeline(okID, okMeta, func(rc *runCtx) chan O {
 		o, _ := sharedBuild(rc)
 		return o
 	})
-	errP := newPipeline(errID, errMeta, func(rc *runCtx) chan ErrItem[I] {
+	errP = newPipeline(errID, errMeta, func(rc *runCtx) chan ErrItem[I] {
 		_, e := sharedBuild(rc)
 		return e
 	})
