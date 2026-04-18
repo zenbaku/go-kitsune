@@ -141,7 +141,7 @@ func TestBatchInsertSink(t *testing.T) {
 	}
 
 	input := kitsune.FromSlice(users)
-	batched := kitsune.Batch(input, 15)
+	batched := kitsune.Batch(input, kitsune.BatchCount(15))
 
 	err := batched.ForEach(ksqlite.BatchInsert(db, "users", []string{"id", "name", "age"}, func(u User) []any {
 		return []any{u.ID, u.Name, u.Age}

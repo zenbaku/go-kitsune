@@ -17,7 +17,7 @@
 //
 // Batch insert:
 //
-//	kitsune.Batch(pipe, 100).
+//	kitsune.Batch(pipe, kitsune.BatchCount(100)).
 //	    ForEach(ksqlite.BatchInsert(db, "results", []string{"id", "val"},
 //	        func(u User) []any { return []any{u.ID, u.Name} },
 //	    )).Run(ctx)
@@ -100,7 +100,7 @@ func Insert[T any](db *sql.DB, table string, columns []string, values func(T) []
 // BatchInsert returns a sink function for batched inserts. Use with
 // [kitsune.Batch] to group items into slices first.
 //
-//	batched := kitsune.Batch(items, 100)
+//	batched := kitsune.Batch(items, kitsune.BatchCount(100))
 //	batched.ForEach(ksqlite.BatchInsert(db, "users", cols, valsFn))
 func BatchInsert[T any](db *sql.DB, table string, columns []string, values func(T) []any) func(context.Context, []T) error {
 	return func(ctx context.Context, batch []T) error {

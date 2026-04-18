@@ -19,7 +19,7 @@
 //
 // Batch produce:
 //
-//	kitsune.Batch(events, 500).
+//	kitsune.Batch(events, kitsune.BatchCount(500)).
 //	    ForEach(kkinesis.Produce(client, "my-stream", func(e Event) (types.PutRecordsRequestEntry, error) {
 //	        b, err := json.Marshal(e)
 //	        return types.PutRecordsRequestEntry{Data: b, PartitionKey: aws.String(e.ID)}, err

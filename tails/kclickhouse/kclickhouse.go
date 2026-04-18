@@ -18,7 +18,7 @@
 //
 // Batch insert (native protocol, much faster than individual INSERTs):
 //
-//	kitsune.Batch(pipe, 1000).
+//	kitsune.Batch(pipe, kitsune.BatchCount(1000)).
 //	    ForEach(kclickhouse.Insert(conn, "events", func(e Event) []any {
 //	        return []any{e.ID, e.Name, e.Timestamp}
 //	    })).Run(ctx)

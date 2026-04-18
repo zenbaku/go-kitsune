@@ -51,7 +51,7 @@ Go's type system requires a specific code style. **Methods** preserve the elemen
 lines    := kitsune.FromSlice(rawLines)     // *Pipeline[string]
 parsed   := kitsune.Map(lines, parseLog)    // *Pipeline[LogEntry]   — type changed: free function
 critical := parsed.Filter(isCritical)       // *Pipeline[LogEntry]   — type preserved: method
-batched  := kitsune.Batch(critical, 100)    // *Pipeline[[]LogEntry] — type changed: free function
+batched  := kitsune.Batch(critical, kitsune.BatchCount(100))    // *Pipeline[[]LogEntry]; type changed: free function
 err      := batched.ForEach(store).Run(ctx)
 ```
 

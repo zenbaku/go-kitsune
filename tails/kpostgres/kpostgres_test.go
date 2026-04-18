@@ -87,7 +87,7 @@ func TestCopyFrom(t *testing.T) {
 	for i := range rows {
 		rows[i] = Row{i, "v"}
 	}
-	if err := kitsune.Batch(kitsune.FromSlice(rows), 25).ForEach(sink).Run(ctx); err != nil {
+	if err := kitsune.Batch(kitsune.FromSlice(rows), kitsune.BatchCount(25)).ForEach(sink).Run(ctx); err != nil {
 		t.Fatalf("pipeline: %v", err)
 	}
 

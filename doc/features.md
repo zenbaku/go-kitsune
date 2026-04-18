@@ -19,7 +19,7 @@ Buffer size is configurable per stage with [`Buffer(n)`](options.md#buffern-int)
 ```go
 orders   := kitsune.Map(raw, parseOrder)      // Pipeline[Order]
 enriched := kitsune.Map(orders, enrich)        // Pipeline[EnrichedOrder]
-batched  := kitsune.Batch(enriched, 500)       // Pipeline[[]EnrichedOrder]
+batched  := kitsune.Batch(enriched, kitsune.BatchCount(500))       // Pipeline[[]EnrichedOrder]
 ```
 
 ---

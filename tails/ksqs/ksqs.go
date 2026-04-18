@@ -16,7 +16,7 @@
 //
 // Batch sink (up to 10 messages per request):
 //
-//	kitsune.Batch(pipe, 10).
+//	kitsune.Batch(pipe, kitsune.BatchCount(10)).
 //	    ForEach(ksqs.SendBatch(client, queueURL, marshal)).
 //	    Run(ctx)
 //

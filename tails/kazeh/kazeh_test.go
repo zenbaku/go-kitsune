@@ -164,7 +164,7 @@ func TestProduceBatchIntegration(t *testing.T) {
 	producer, _ := integrationClients(t)
 	defer producer.Close(context.Background())
 
-	err := kitsune.Batch(kitsune.FromSlice([]string{"a", "b", "c"}), 10).
+	err := kitsune.Batch(kitsune.FromSlice([]string{"a", "b", "c"}), kitsune.BatchCount(10)).
 		ForEach(kazeh.ProduceBatch(producer, func(s string) (*azeventhubs.EventData, error) {
 			return &azeventhubs.EventData{Body: []byte(s)}, nil
 		})).

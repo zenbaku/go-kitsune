@@ -18,7 +18,7 @@
 //
 // Batch write sink (up to 25 items per request):
 //
-//	kitsune.Batch(pipe, 25).
+//	kitsune.Batch(pipe, kitsune.BatchCount(25)).
 //	    ForEach(kdynamo.BatchWrite(client, "events", func(e Event) (types.WriteRequest, error) {
 //	        item, err := attributevalue.MarshalMap(e)
 //	        return types.WriteRequest{PutRequest: &types.PutRequest{Item: item}}, err

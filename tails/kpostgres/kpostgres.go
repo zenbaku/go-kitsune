@@ -24,7 +24,7 @@
 //	    []string{"id", "name"},
 //	    func(r Row) []any { return []any{r.ID, r.Name} },
 //	)
-//	kitsune.Batch(pipe, 500).ForEach(sink).Run(ctx)
+//	kitsune.Batch(pipe, kitsune.BatchCount(500)).ForEach(sink).Run(ctx)
 //
 // Delivery semantics: Listen is at-most-once; notifications are not persisted
 // and will not redeliver after a disconnect. Insert and CopyFrom are
@@ -92,7 +92,7 @@ func Insert[T any](pool *pgxpool.Pool, sql string, args func(T) []any) func(cont
 //	    []string{"id", "name"},
 //	    func(r Row) []any { return []any{r.ID, r.Name} },
 //	)
-//	kitsune.Batch(pipe, 500).ForEach(sink).Run(ctx)
+//	kitsune.Batch(pipe, kitsune.BatchCount(500)).ForEach(sink).Run(ctx)
 func CopyFrom[T any](pool *pgxpool.Pool, table string, columns []string, row func(T) []any) func(context.Context, []T) error {
 	pgColumns := make(pgx.Identifier, len(columns))
 	copy(pgColumns, columns)

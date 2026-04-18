@@ -18,7 +18,7 @@
 //
 // Bulk index sink:
 //
-//	kitsune.Batch(pipe, 1000).
+//	kitsune.Batch(pipe, kitsune.BatchCount(1000)).
 //	    ForEach(kes.Bulk(client, "my-index", func(e Event) (id string, doc []byte, err error) {
 //	        b, err := json.Marshal(e)
 //	        return e.ID, b, err

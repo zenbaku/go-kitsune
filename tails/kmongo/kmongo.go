@@ -26,7 +26,7 @@
 //
 // Bulk insert:
 //
-//	kitsune.Batch(pipe, 100).
+//	kitsune.Batch(pipe, kitsune.BatchCount(100)).
 //	    ForEach(kmongo.InsertMany(coll, func(e Event) (any, error) { return e, nil })).
 //	    Run(ctx)
 //

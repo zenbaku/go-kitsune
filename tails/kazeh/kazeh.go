@@ -31,7 +31,7 @@
 //
 // Publish events in batches (respects 1 MB limit automatically):
 //
-//	kitsune.Batch(pipe, 100).ForEach(kazeh.ProduceBatch(producerClient, marshal)).Run(ctx)
+//	kitsune.Batch(pipe, kitsune.BatchCount(100)).ForEach(kazeh.ProduceBatch(producerClient, marshal)).Run(ctx)
 //
 // Delivery semantics: at-least-once. Azure Event Hubs does not have
 // consumer-side acks; the partition client tracks the offset and redelivers
