@@ -39,6 +39,7 @@ func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T] {
 		batchSize: cfg.batchCount,
 		inputs:    []int64{p.id},
 	}
+	var out *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -51,9 +52,17 @@ func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			var buf []T
@@ -105,6 +114,9 @@ func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T] {
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -139,13 +151,17 @@ func Batch[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[[]T] {
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +269,7 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var unbatchOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -265,9 +282,17 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, unbatchOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 
@@ -284,13 +309,17 @@ func Unbatch[T any](p *Pipeline[[]T], opts ...StageOption) *Pipeline[T] {
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	unbatchOut = newPipeline(id, meta, build)
+	return unbatchOut
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +345,7 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 		batchSize: size,
 		inputs:    []int64{p.id},
 	}
+	var slidingOut *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -328,9 +358,17 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, slidingOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			buf := make([]T, 0, size)
@@ -353,13 +391,17 @@ func SlidingWindow[T any](p *Pipeline[T], size, step int, opts ...StageOption) *
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	slidingOut = newPipeline(id, meta, build)
+	return slidingOut
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +426,7 @@ func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var sessionOut *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -396,9 +439,17 @@ func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, sessionOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -461,13 +512,17 @@ func SessionWindow[T any](p *Pipeline[T], gap time.Duration, opts ...StageOption
 
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	sessionOut = newPipeline(id, meta, build)
+	return sessionOut
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +546,7 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var chunkByOut *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -503,9 +559,17 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, chunkByOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			var buf []T
@@ -539,13 +603,17 @@ func ChunkBy[T any, K comparable](p *Pipeline[T], keyFn func(T) K, opts ...Stage
 					buf = append(buf, item)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	chunkByOut = newPipeline(id, meta, build)
+	return chunkByOut
 }
 
 // ---------------------------------------------------------------------------
@@ -568,6 +636,7 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var chunkWhileOut *Pipeline[[]T]
 	build := func(rc *runCtx) chan []T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []T)
@@ -580,9 +649,17 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, chunkWhileOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			var buf []T
@@ -611,13 +688,17 @@ func ChunkWhile[T any](p *Pipeline[T], pred func(prev, curr T) bool, opts ...Sta
 					buf = append(buf, item)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	chunkWhileOut = newPipeline(id, meta, build)
+	return chunkWhileOut
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +759,7 @@ func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], o
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var withinOut *Pipeline[[]O]
 	build := func(rc *runCtx) chan []O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan []O)
@@ -690,9 +772,17 @@ func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], o
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
-		stageFunc := func(ctx context.Context) error {
+		rc.initDrainNotify(id, withinOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		sf := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 			outbox := internal.NewBlockingOutbox(ch)
 			for {
 				select {
@@ -709,13 +799,17 @@ func Within[T, O any](p *Pipeline[[]T], stage func(*Pipeline[T]) *Pipeline[O], o
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
-		rc.add(stageFunc, m)
+		rc.add(sf, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	withinOut = newPipeline(id, meta, build)
+	return withinOut
 }
 
 // batchCollectOpts extracts only the BatchTimeout option for the Batch stage;
