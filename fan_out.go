@@ -155,6 +155,9 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 		inputs: []int64{p.id},
 	}
 
+	var trueP *Pipeline[T]
+	var falseP *Pipeline[T]
+
 	// sharedBuild creates both channels and the stage on the first call.
 	// Subsequent calls return the already-built channels.
 	sharedBuild := func(rc *runCtx) (chan T, chan T) {
@@ -171,10 +174,19 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 		m.getChanCap = func() int { return cap(trueC) }
 		rc.setChan(id, trueC)
 		rc.setChan(falseID, falseC)
+		totalConsumers := trueP.consumerCount.Load() + falseP.consumerCount.Load()
+		rc.initMultiOutputDrainNotify([]int64{id, falseID}, totalConsumers)
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(trueC)
 			defer close(falseC)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			trueBox := internal.NewBlockingOutbox(trueC)
 			falseBox := internal.NewBlockingOutbox(falseC)
@@ -196,6 +208,9 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -203,11 +218,11 @@ func Partition[T any](p *Pipeline[T], pred func(T) bool, opts ...StageOption) (*
 		return trueC, falseC
 	}
 
-	trueP := newPipeline(id, trueMeta, func(rc *runCtx) chan T {
+	trueP = newPipeline(id, trueMeta, func(rc *runCtx) chan T {
 		t, _ := sharedBuild(rc)
 		return t
 	})
-	falseP := newPipeline(falseID, falseMeta, func(rc *runCtx) chan T {
+	falseP = newPipeline(falseID, falseMeta, func(rc *runCtx) chan T {
 		_, f := sharedBuild(rc)
 		return f
 	})
@@ -249,6 +264,8 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 		}
 	}
 
+	out := make([]*Pipeline[T], n)
+
 	// sharedBuild creates all channels and the stage on the first call.
 	sharedBuild := func(rc *runCtx) []chan T {
 		if existing := rc.getChan(ids[0]); existing != nil {
@@ -271,13 +288,25 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 		for i, id := range ids {
 			rc.setChan(id, chans[i])
 		}
+		totalConsumers := int32(0)
+		for _, op := range out {
+			totalConsumers += op.consumerCount.Load()
+		}
+		rc.initMultiOutputDrainNotify(ids, totalConsumers)
+		drainCh := rc.drainCh(ids[0])
 		stage := func(ctx context.Context) error {
 			defer func() {
 				for _, c := range chans {
 					close(c)
 				}
 			}()
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outboxes := make([]internal.Outbox[T], len(chans))
 			for i, c := range chans {
@@ -297,6 +326,9 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -304,7 +336,6 @@ func Broadcast[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T]
 		return chans
 	}
 
-	out := make([]*Pipeline[T], n)
 	for i := range out {
 		i := i
 		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
@@ -345,6 +376,8 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 		}
 	}
 
+	out := make([]*Pipeline[T], n)
+
 	// sharedBuild creates all channels and the stage on the first call.
 	sharedBuild := func(rc *runCtx) []chan T {
 		if existing := rc.getChan(ids[0]); existing != nil {
@@ -367,13 +400,25 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 		for i, id := range ids {
 			rc.setChan(id, chans[i])
 		}
+		totalConsumers := int32(0)
+		for _, op := range out {
+			totalConsumers += op.consumerCount.Load()
+		}
+		rc.initMultiOutputDrainNotify(ids, totalConsumers)
+		drainCh := rc.drainCh(ids[0])
 		stage := func(ctx context.Context) error {
 			defer func() {
 				for _, c := range chans {
 					close(c)
 				}
 			}()
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outboxes := make([]internal.Outbox[T], len(chans))
 			for i, c := range chans {
@@ -393,6 +438,9 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 					idx++
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -400,7 +448,6 @@ func Balance[T any](p *Pipeline[T], n int, opts ...StageOption) []*Pipeline[T] {
 		return chans
 	}
 
-	out := make([]*Pipeline[T], n)
 	for i := range out {
 		i := i
 		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
@@ -448,6 +495,8 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 		}
 	}
 
+	out := make([]*Pipeline[T], n)
+
 	// sharedBuild creates all channels and the stage on the first call.
 	sharedBuild := func(rc *runCtx) []chan T {
 		if existing := rc.getChan(ids[0]); existing != nil {
@@ -470,13 +519,25 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 		for i, id := range ids {
 			rc.setChan(id, chans[i])
 		}
+		totalConsumers := int32(0)
+		for _, op := range out {
+			totalConsumers += op.consumerCount.Load()
+		}
+		rc.initMultiOutputDrainNotify(ids, totalConsumers)
+		drainCh := rc.drainCh(ids[0])
 		stage := func(ctx context.Context) error {
 			defer func() {
 				for _, c := range chans {
 					close(c)
 				}
 			}()
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outboxes := make([]internal.Outbox[T], len(chans))
 			for i, c := range chans {
@@ -495,6 +556,9 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -502,7 +566,6 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 		return chans
 	}
 
-	out := make([]*Pipeline[T], n)
 	for i := range out {
 		i := i
 		out[i] = newPipeline(ids[i], metas[i], func(rc *runCtx) chan T {
@@ -577,9 +640,10 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 	}
 
 	var (
-		mu       sync.Mutex
-		branches []branchInfo
-		frozen   bool
+		mu              sync.Mutex
+		branches        []branchInfo
+		branchPipelines []*Pipeline[T]
+		frozen          bool
 	)
 
 	var once sync.Once
@@ -590,6 +654,8 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 			frozen = true
 			bs := make([]branchInfo, len(branches))
 			copy(bs, branches)
+			bps := make([]*Pipeline[T], len(branchPipelines))
+			copy(bps, branchPipelines)
 			mu.Unlock()
 
 			if len(bs) == 0 {
@@ -616,13 +682,30 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 			m.getChanLen = func() int { return len(firstCh) }
 			m.getChanCap = func() int { return cap(firstCh) }
 
+			branchIDs := make([]int64, len(bs))
+			for i, b := range bs {
+				branchIDs[i] = b.id
+			}
+			totalConsumers := int32(0)
+			for _, bp := range bps {
+				totalConsumers += bp.consumerCount.Load()
+			}
+			rc.initMultiOutputDrainNotify(branchIDs, totalConsumers)
+			drainCh := rc.drainCh(branchIDs[0])
+
 			stage := func(ctx context.Context) error {
 				defer func() {
 					for _, c := range chans {
 						close(c)
 					}
 				}()
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 
 				outboxes := make([]internal.Outbox[T], len(chans))
 				for i, c := range chans {
@@ -642,6 +725,9 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -652,6 +738,16 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 
 	return func(subOpts ...StageOption) *Pipeline[T] {
 		cfg := buildStageConfig(append(append([]StageOption{}, opts...), subOpts...))
+
+		id := nextPipelineID()
+		// Build the pipeline first (safe outside the lock; newPipeline is a pure constructor).
+		branchPl := newPipeline(id, stageMeta{}, func(rc *runCtx) chan T {
+			if existing := rc.getChan(id); existing != nil {
+				return existing.(chan T)
+			}
+			sharedBuild(rc)
+			return rc.getChan(id).(chan T)
+		})
 
 		mu.Lock()
 		if frozen {
@@ -667,7 +763,6 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 				name = "share_" + strconv.Itoa(idx)
 			}
 		}
-		id := nextPipelineID()
 		b := branchInfo{
 			id:             id,
 			buffer:         cfg.buffer,
@@ -681,14 +776,11 @@ func Share[T any](p *Pipeline[T], opts ...StageOption) func(...StageOption) *Pip
 			},
 		}
 		branches = append(branches, b)
+		branchPipelines = append(branchPipelines, branchPl)
+		// Update the pipeline's meta now that we have the proper name/kind.
+		branchPl.meta = b.meta
 		mu.Unlock()
 
-		return newPipeline(id, b.meta, func(rc *runCtx) chan T {
-			if existing := rc.getChan(id); existing != nil {
-				return existing.(chan T)
-			}
-			sharedBuild(rc)
-			return rc.getChan(id).(chan T)
-		})
+		return branchPl
 	}
 }
