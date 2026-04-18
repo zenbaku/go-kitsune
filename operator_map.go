@@ -103,9 +103,15 @@ func Map[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts 
 		var stage stageFunc
 		switch {
 		case cfg.concurrency > 1 && cfg.ordered:
-			stage = mapOrdered(inCh, ch, actualFn, cfg, hook)
+			rc.initDrainNotify(id, out.consumerCount.Load())
+			drainFn := func() { rc.signalDrain(p.id) }
+			drainCh := rc.drainCh(id)
+			stage = mapOrdered(inCh, ch, actualFn, cfg, hook, drainFn, drainCh)
 		case cfg.concurrency > 1:
-			stage = mapConcurrent(inCh, ch, actualFn, cfg, hook)
+			rc.initDrainNotify(id, out.consumerCount.Load())
+			drainFn := func() { rc.signalDrain(p.id) }
+			drainCh := rc.drainCh(id)
+			stage = mapConcurrent(inCh, ch, actualFn, cfg, hook, drainFn, drainCh)
 		case isFastPathEligible(cfg, hook) && cfg.cacheConfig == nil:
 			rc.initDrainNotify(id, out.consumerCount.Load())
 			drainFn := func() { rc.signalDrain(p.id) }
@@ -328,14 +334,20 @@ func mapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 	}
 }
 
-func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -409,6 +421,10 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 						}(item, outbox)
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 				}
 			}()
@@ -427,7 +443,7 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 	}
 }
 
-func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook) stageFunc {
+func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I) (O, error), cfg stageConfig, hook internal.Hook, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(I) context.Context)
@@ -440,7 +456,13 @@ func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, 
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -503,6 +525,10 @@ func mapOrdered[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, 
 							return
 						}
 					case <-innerCtx.Done():
+						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
 						return
 					}
 
