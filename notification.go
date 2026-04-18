@@ -128,6 +128,7 @@ func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pi
 		overflow: cfg.overflow,
 		inputs:   []int64{p.id},
 	}
+	var dematerializeOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -140,13 +141,21 @@ func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pi
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, dematerializeOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		hook := rc.hook
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			hook.OnStageStart(ctx, cfg.name)
 			var processed, errs int64
@@ -179,6 +188,9 @@ func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pi
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -187,5 +199,6 @@ func Dematerialize[T any](p *Pipeline[Notification[T]], opts ...StageOption) *Pi
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	dematerializeOut = newPipeline(id, meta, build)
+	return dematerializeOut
 }

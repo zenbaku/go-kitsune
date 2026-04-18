@@ -110,6 +110,7 @@ func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *P
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var defaultIfEmptyOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -122,9 +123,17 @@ func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *P
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, defaultIfEmptyOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			emitted := false
@@ -144,13 +153,17 @@ func DefaultIfEmpty[T any](p *Pipeline[T], defaultVal T, opts ...StageOption) *P
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	defaultIfEmptyOut = newPipeline(id, meta, build)
+	return defaultIfEmptyOut
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +189,7 @@ func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var timestampOut *Pipeline[Timestamped[T]]
 	build := func(rc *runCtx) chan Timestamped[T] {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan Timestamped[T])
@@ -188,9 +202,17 @@ func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, timestampOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -210,13 +232,17 @@ func Timestamp[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[Timestamped
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	timestampOut = newPipeline(id, meta, build)
+	return timestampOut
 }
 
 // TimedInterval pairs an item with the elapsed time since the previous item.
@@ -239,6 +265,7 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var timeIntervalOut *Pipeline[TimedInterval[T]]
 	build := func(rc *runCtx) chan TimedInterval[T] {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan TimedInterval[T])
@@ -251,9 +278,17 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, timeIntervalOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -282,13 +317,17 @@ func TimeInterval[T any](p *Pipeline[T], opts ...StageOption) *Pipeline[TimedInt
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	timeIntervalOut = newPipeline(id, meta, build)
+	return timeIntervalOut
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +347,7 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var sortOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -320,14 +360,22 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, sortOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 
 			// Collect all items.
-			buf, err := func() ([]T, error) {
+			collected, err := func() ([]T, error) {
 				var out []T
 				for {
 					select {
@@ -338,15 +386,21 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 						out = append(out, item)
 					case <-ctx.Done():
 						return nil, ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil, nil
 					}
 				}
 			}()
 			if err != nil {
 				return err
 			}
+			if cooperativeDrain {
+				return nil
+			}
 
-			sort.Slice(buf, func(i, j int) bool { return less(buf[i], buf[j]) })
-			for _, item := range buf {
+			sort.Slice(collected, func(i, j int) bool { return less(collected[i], collected[j]) })
+			for _, item := range collected {
 				if err := outbox.Send(ctx, item); err != nil {
 					return err
 				}
@@ -356,7 +410,8 @@ func Sort[T any](p *Pipeline[T], less func(a, b T) bool, opts ...StageOption) *P
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	sortOut = newPipeline(id, meta, build)
+	return sortOut
 }
 
 // SortBy sorts items by their key K using the provided less function.

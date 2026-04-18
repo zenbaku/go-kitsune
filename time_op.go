@@ -25,6 +25,7 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var throttleOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -37,9 +38,17 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, throttleOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -64,13 +73,17 @@ func Throttle[T any](p *Pipeline[T], window time.Duration, opts ...StageOption) 
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	throttleOut = newPipeline(id, meta, build)
+	return throttleOut
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +118,7 @@ func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var sampleOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -117,9 +131,17 @@ func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, sampleOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -152,13 +174,17 @@ func Sample[T any](p *Pipeline[T], d time.Duration, opts ...StageOption) *Pipeli
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	sampleOut = newPipeline(id, meta, build)
+	return sampleOut
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +205,7 @@ func Debounce[T any](p *Pipeline[T], silence time.Duration, opts ...StageOption)
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var debounceOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -191,9 +218,17 @@ func Debounce[T any](p *Pipeline[T], silence time.Duration, opts ...StageOption)
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, debounceOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			clk := cfg.clock
 			if clk == nil {
@@ -256,11 +291,15 @@ func Debounce[T any](p *Pipeline[T], silence time.Duration, opts ...StageOption)
 
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	debounceOut = newPipeline(id, meta, build)
+	return debounceOut
 }

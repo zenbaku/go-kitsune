@@ -82,6 +82,7 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 		buffer: scfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var rateLimitOut *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -94,11 +95,19 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, rateLimitOut.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 
 		limiter := rate.NewLimiter(rate.Limit(ratePerSec), cfg.burst)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			outbox := internal.NewBlockingOutbox(ch)
 			for {
@@ -121,13 +130,17 @@ func RateLimit[T any](p *Pipeline[T], ratePerSec float64, rlOpts []RateLimitOpt,
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	rateLimitOut = newPipeline(id, meta, build)
+	return rateLimitOut
 }
 
 // ---------------------------------------------------------------------------
