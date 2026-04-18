@@ -110,7 +110,7 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 
 // forEachConcurrent runs n goroutines in parallel, each reading from the shared
 // inCh and calling fn. There is no output channel — fn is the side effect.
-func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook, drainFn func()) stageFunc {
 	var ctxMapper func(T) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(T) context.Context)
@@ -120,6 +120,7 @@ func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cf
 	}
 	return func(ctx context.Context) error {
 		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -191,7 +192,7 @@ func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cf
 // forEachOrdered runs n goroutines in parallel but calls fn for each item in
 // input order. Workers execute fn concurrently; the drainer reads results in
 // insertion order and reports errors deterministically.
-func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook) stageFunc {
+func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook, drainFn func()) stageFunc {
 	var ctxMapper func(T) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
 		ctxMapper = raw.(func(T) context.Context)
@@ -206,6 +207,7 @@ func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg s
 	}
 	return func(ctx context.Context) error {
 		defer func() { go internal.DrainChan((<-chan T)(inCh)) }()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -351,9 +353,9 @@ func (p *Pipeline[T]) ForEach(fn func(context.Context, T) error, opts ...StageOp
 		var stage stageFunc
 		switch {
 		case n > 1 && cfg.ordered:
-			stage = forEachOrdered(inCh, fn, cfg, hook)
+			stage = forEachOrdered(inCh, fn, cfg, hook, drainFn)
 		case n > 1:
-			stage = forEachConcurrent(inCh, fn, cfg, hook)
+			stage = forEachConcurrent(inCh, fn, cfg, hook, drainFn)
 		case isFastPathEligible(cfg, hook):
 			stage = forEachFastPath(inCh, fn, drainFn)
 		default:
