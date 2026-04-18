@@ -90,6 +90,8 @@ func mapWithKeySerial[I, O, S any](
 	km *keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -97,7 +99,13 @@ func mapWithKeySerial[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var processed, errs int64
@@ -135,6 +143,9 @@ func mapWithKeySerial[I, O, S any](
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -153,6 +164,8 @@ func mapWithKeyConcurrent[I, O, S any](
 	workerMaps []*keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -160,7 +173,13 @@ func mapWithKeyConcurrent[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -232,6 +251,10 @@ func mapWithKeyConcurrent[I, O, S any](
 						}
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 					shard := int(fnv32str(keyFn(item))) % n
 					select {
@@ -264,6 +287,8 @@ func mapWithKeyOrdered[I, O, S any](
 	workerMaps []*keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -281,7 +306,13 @@ func mapWithKeyOrdered[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -371,6 +402,10 @@ func mapWithKeyOrdered[I, O, S any](
 						}
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 					slotCh := make(chan result, 1)
 					select {
@@ -452,6 +487,7 @@ func MapWithKey[I, O, S any](
 	keyName := key.name
 	ttl := key.ttl
 
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -465,6 +501,9 @@ func MapWithKey[I, O, S any](
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 
 		hook := rc.hook
 		if hook == nil {
@@ -490,7 +529,7 @@ func MapWithKey[I, O, S any](
 			})
 			stage := func(ctx context.Context) error {
 				km := rc.refs.get(regName).(*keyedRefMap[S])
-				return mapWithKeySerial(inCh, ch, keyFn, fn, km, cfg, hook)(ctx)
+				return mapWithKeySerial(inCh, ch, keyFn, fn, km, cfg, hook, drainFn, drainCh)(ctx)
 			}
 			rc.add(stage, m)
 		} else {
@@ -515,19 +554,20 @@ func MapWithKey[I, O, S any](
 			if cfg.ordered {
 				stage = func(ctx context.Context) error {
 					workerMaps := rc.refs.get(workersKey).([]*keyedRefMap[S])
-					return mapWithKeyOrdered(inCh, ch, keyFn, fn, workerMaps, cfg, hook)(ctx)
+					return mapWithKeyOrdered(inCh, ch, keyFn, fn, workerMaps, cfg, hook, drainFn, drainCh)(ctx)
 				}
 			} else {
 				stage = func(ctx context.Context) error {
 					workerMaps := rc.refs.get(workersKey).([]*keyedRefMap[S])
-					return mapWithKeyConcurrent(inCh, ch, keyFn, fn, workerMaps, cfg, hook)(ctx)
+					return mapWithKeyConcurrent(inCh, ch, keyFn, fn, workerMaps, cfg, hook, drainFn, drainCh)(ctx)
 				}
 			}
 			rc.add(stage, m)
 		}
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +582,8 @@ func flatMapWithKeySerial[I, O, S any](
 	km *keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -549,7 +591,13 @@ func flatMapWithKeySerial[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var processed, errs int64
@@ -586,6 +634,9 @@ func flatMapWithKeySerial[I, O, S any](
 					hook.OnItem(ctx, cfg.name, dur, nil)
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
@@ -601,6 +652,8 @@ func flatMapWithKeyConcurrent[I, O, S any](
 	workerMaps []*keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -608,7 +661,13 @@ func flatMapWithKeyConcurrent[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -677,6 +736,10 @@ func flatMapWithKeyConcurrent[I, O, S any](
 						}
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 					shard := int(fnv32str(keyFn(item))) % n
 					select {
@@ -707,6 +770,8 @@ func flatMapWithKeyOrdered[I, O, S any](
 	workerMaps []*keyedRefMap[S],
 	cfg stageConfig,
 	hook internal.Hook,
+	drainFn func(),
+	drainCh <-chan struct{},
 ) stageFunc {
 	var ctxMapper func(I) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -724,7 +789,13 @@ func flatMapWithKeyOrdered[I, O, S any](
 	}
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		hook.OnStageStart(ctx, cfg.name)
 		var procCount, errCount atomic.Int64
@@ -822,6 +893,10 @@ func flatMapWithKeyOrdered[I, O, S any](
 						}
 					case <-innerCtx.Done():
 						return
+					case <-drainCh:
+						cooperativeDrain = true
+						cancel()
+						return
 					}
 					slotCh := make(chan result, 1)
 					select {
@@ -889,6 +964,7 @@ func FlatMapWithKey[I, O, S any](
 	keyName := key.name
 	ttl := key.ttl
 
+	var out *Pipeline[O]
 	build := func(rc *runCtx) chan O {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan O)
@@ -902,6 +978,9 @@ func FlatMapWithKey[I, O, S any](
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 
 		hook := rc.hook
 		if hook == nil {
@@ -926,7 +1005,7 @@ func FlatMapWithKey[I, O, S any](
 			})
 			stage := func(ctx context.Context) error {
 				km := rc.refs.get(regName).(*keyedRefMap[S])
-				return flatMapWithKeySerial(inCh, ch, keyFn, fn, km, cfg, hook)(ctx)
+				return flatMapWithKeySerial(inCh, ch, keyFn, fn, km, cfg, hook, drainFn, drainCh)(ctx)
 			}
 			rc.add(stage, m)
 		} else {
@@ -950,17 +1029,18 @@ func FlatMapWithKey[I, O, S any](
 			if cfg.ordered {
 				stage = func(ctx context.Context) error {
 					workerMaps := rc.refs.get(workersKey).([]*keyedRefMap[S])
-					return flatMapWithKeyOrdered(inCh, ch, keyFn, fn, workerMaps, cfg, hook)(ctx)
+					return flatMapWithKeyOrdered(inCh, ch, keyFn, fn, workerMaps, cfg, hook, drainFn, drainCh)(ctx)
 				}
 			} else {
 				stage = func(ctx context.Context) error {
 					workerMaps := rc.refs.get(workersKey).([]*keyedRefMap[S])
-					return flatMapWithKeyConcurrent(inCh, ch, keyFn, fn, workerMaps, cfg, hook)(ctx)
+					return flatMapWithKeyConcurrent(inCh, ch, keyFn, fn, workerMaps, cfg, hook, drainFn, drainCh)(ctx)
 				}
 			}
 			rc.add(stage, m)
 		}
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
