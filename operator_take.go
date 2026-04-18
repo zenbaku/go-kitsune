@@ -40,7 +40,12 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
 			defer drainFn()
 			defer signalDone() // stop infinite sources when we exit early
 
@@ -60,11 +65,13 @@ func Take[T any](p *Pipeline[T], n int) *Pipeline[T] {
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-drainCh:
+						cooperativeDrain = true
 						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-drainCh:
+					cooperativeDrain = true
 					return nil
 				}
 			}
@@ -107,7 +114,12 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		drainFn := func() { rc.signalDrain(p.id) }
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
 			defer drainFn()
 
 			count := 0
@@ -126,11 +138,13 @@ func Drop[T any](p *Pipeline[T], n int) *Pipeline[T] {
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-drainCh:
+						cooperativeDrain = true
 						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-drainCh:
+					cooperativeDrain = true
 					return nil
 				}
 			}
@@ -176,7 +190,12 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		signalDone := rc.signalDone
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
 			defer drainFn()
 			defer signalDone() // stop infinite sources when predicate stops
 
@@ -194,11 +213,13 @@ func TakeWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-drainCh:
+						cooperativeDrain = true
 						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-drainCh:
+					cooperativeDrain = true
 					return nil
 				}
 			}
@@ -239,7 +260,12 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 		drainFn := func() { rc.signalDrain(p.id) }
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
 			defer drainFn()
 
 			dropping := true
@@ -258,11 +284,13 @@ func DropWhile[T any](p *Pipeline[T], pred func(T) bool) *Pipeline[T] {
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-drainCh:
+						cooperativeDrain = true
 						return nil
 					}
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-drainCh:
+					cooperativeDrain = true
 					return nil
 				}
 			}
@@ -301,6 +329,7 @@ func DropLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		buffer: internal.DefaultBuffer,
 		inputs: []int64{p.id},
 	}
+	var out *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -313,9 +342,17 @@ func DropLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, out.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			buf := make([]T, n)
 			head := 0 // index of oldest item
@@ -338,17 +375,24 @@ func DropLast[T any](p *Pipeline[T], n int) *Pipeline[T] {
 						case ch <- oldest:
 						case <-ctx.Done():
 							return ctx.Err()
+						case <-drainCh:
+							cooperativeDrain = true
+							return nil
 						}
 					}
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
 				}
 			}
 		}
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	out = newPipeline(id, meta, build)
+	return out
 }
 
 // ---------------------------------------------------------------------------
