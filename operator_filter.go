@@ -30,6 +30,7 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 		supportsFastPath: true,
 		isFastPathCfg:    filterFastPathCfg,
 	}
+	var result *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -42,17 +43,26 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, result.consumerCount.Load())
+		drainCh := rc.drainCh(id)
+		drainFn := func() { rc.signalDrain(p.id) }
 		hook := rc.hook
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
 		var stage stageFunc
 		if isFastPathEligible(cfg, hook) {
-			stage = filterFastPath(inCh, ch, pred)
+			stage = filterFastPath(inCh, ch, pred, drainCh, drainFn)
 		} else {
 			stage = func(ctx context.Context) error {
 				defer close(ch)
-				defer func() { go internal.DrainChan(inCh) }()
+				cooperativeDrain := false
+				defer func() {
+					if !cooperativeDrain {
+						go internal.DrainChan(inCh)
+					}
+				}()
+				defer func() { rc.signalDrain(p.id) }()
 
 				hook.OnStageStart(ctx, cfg.name)
 				var processed, errs int64
@@ -81,6 +91,9 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 							}
 						case <-ctx.Done():
 							return ctx.Err()
+						case <-drainCh:
+							cooperativeDrain = true
+							return nil
 						}
 					}
 				}
@@ -90,7 +103,7 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 		rc.add(stage, m)
 		return ch
 	}
-	result := newPipeline(id, meta, build)
+	result = newPipeline(id, meta, build)
 	// Set fusionEntry when cfg conditions hold (hook check deferred to run time).
 	if filterFastPathCfg {
 		// Update optimization metadata captured by the build closure.
@@ -171,14 +184,29 @@ func Filter[T any](p *Pipeline[T], pred func(context.Context, T) (bool, error), 
 
 // filterFastPath is the drain-protocol + micro-batching fast path for Filter.
 // Conditions: DefaultHandler, OverflowBlock, no supervision, no timeout, NoopHook.
-func filterFastPath[T any](inCh <-chan T, outCh chan T, pred func(context.Context, T) (bool, error)) stageFunc {
+func filterFastPath[T any](inCh <-chan T, outCh chan T, pred func(context.Context, T) (bool, error), drainCh <-chan struct{}, drainFn func()) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(outCh)
-		defer func() { go internal.DrainChan(inCh) }()
+		cooperativeDrain := false
+		defer func() {
+			if !cooperativeDrain {
+				go internal.DrainChan(inCh)
+			}
+		}()
+		defer drainFn()
 
 		var buf [internal.ReceiveBatchSize]T
 		for {
-			item, ok := <-inCh
+			var item T
+			var ok bool
+			select {
+			case item, ok = <-inCh:
+			case <-drainCh:
+				cooperativeDrain = true
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			if !ok {
 				return nil
 			}
@@ -217,6 +245,12 @@ func filterFastPath[T any](inCh <-chan T, outCh chan T, pred func(context.Contex
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			select {
+			case <-drainCh:
+				cooperativeDrain = true
+				return nil
+			default:
+			}
 		}
 	}
 }
@@ -234,6 +268,7 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 		buffer: cfg.buffer,
 		inputs: []int64{p.id},
 	}
+	var tapResult *Pipeline[T]
 	build := func(rc *runCtx) chan T {
 		if existing := rc.getChan(id); existing != nil {
 			return existing.(chan T)
@@ -246,13 +281,21 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 		m.getChanLen = func() int { return len(ch) }
 		m.getChanCap = func() int { return cap(ch) }
 		rc.setChan(id, ch)
+		rc.initDrainNotify(id, tapResult.consumerCount.Load())
+		drainCh := rc.drainCh(id)
 		hook := rc.hook
 		if hook == nil {
 			hook = internal.NoopHook{}
 		}
 		stage := func(ctx context.Context) error {
 			defer close(ch)
-			defer func() { go internal.DrainChan(inCh) }()
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
 
 			hook.OnStageStart(ctx, cfg.name)
 			var processed, errs int64
@@ -282,6 +325,9 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 						}
 					case <-ctx.Done():
 						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
 					}
 				}
 			}
@@ -290,7 +336,8 @@ func Tap[T any](p *Pipeline[T], fn func(context.Context, T) error, opts ...Stage
 		rc.add(stage, m)
 		return ch
 	}
-	return newPipeline(id, meta, build)
+	tapResult = newPipeline(id, meta, build)
+	return tapResult
 }
 
 // IgnoreElements drains p for its side effects and emits nothing downstream.
