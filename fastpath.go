@@ -50,11 +50,10 @@ func resolveHandler(cfg stageConfig, rc *runCtx) internal.ErrorHandler {
 	return internal.DefaultHandler{}
 }
 
-// track increments p's consumerCount for fan-out detection in typed fusion.
-// It is a no-op when p has no fusionEntry (e.g. sources, FlatMap outputs).
+// track increments p's consumerCount. Used for two purposes:
+//   - fan-out detection in typed fusion (fusion disables itself when count > 1)
+//   - cooperative-drain consumer accounting (drainEntry refs = total consumers)
 // Call once at construction time in every operator or terminal that consumes p.
 func track[T any](p *Pipeline[T]) {
-	if p.fusionEntry != nil {
-		p.consumerCount.Add(1)
-	}
+	p.consumerCount.Add(1)
 }
