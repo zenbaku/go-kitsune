@@ -53,6 +53,7 @@ func resolveHandler(cfg stageConfig, rc *runCtx) internal.ErrorHandler {
 // track increments p's consumerCount. Used for two purposes:
 //   - fan-out detection in typed fusion (fusion disables itself when count > 1)
 //   - cooperative-drain consumer accounting (drainEntry refs = total consumers)
+//
 // Call once at construction time in every operator or terminal that consumes p.
 func track[T any](p *Pipeline[T]) {
 	p.consumerCount.Add(1)
