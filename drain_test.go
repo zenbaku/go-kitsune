@@ -196,3 +196,70 @@ func TestCooperativeDrainGoroutineCount(t *testing.T) {
 			leaked, baseline, after)
 	}
 }
+
+// TestCooperativeDrainMerge verifies that a Merge(src1, src2)->Take(1) pipeline
+// tears down without leaking goroutines (multi-input fan-in).
+func TestCooperativeDrainMerge(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	for range 50 {
+		src1 := kitsune.Repeatedly(func() int { return 1 })
+		src2 := kitsune.Repeatedly(func() int { return 2 })
+		p := kitsune.Take(kitsune.Merge(src1, src2), 1)
+		_, err := kitsune.Collect(t.Context(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	// Allow 2 goroutines above baseline (test framework overhead).
+	if after-baseline > 2 {
+		t.Errorf("goroutine leak: before=%d after=%d delta=%d", baseline, after, after-baseline)
+	}
+}
+
+// TestCooperativeDrainBroadcast verifies that a Broadcast(src, 2)->Take(1)/Take(1)
+// pipeline tears down without leaking goroutines (fan-out with two consumers).
+func TestCooperativeDrainBroadcast(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	for range 50 {
+		src := kitsune.Repeatedly(func() int { return 1 })
+		branches := kitsune.Broadcast(src, 2)
+		p0 := kitsune.Take(branches[0], 1)
+		p1 := kitsune.Take(branches[1], 1)
+		runner, err := kitsune.MergeRunners(p0.Drain(), p1.Drain())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runner.Run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	if after-baseline > 2 {
+		t.Errorf("goroutine leak: before=%d after=%d delta=%d", baseline, after, after-baseline)
+	}
+}
+
+// TestCooperativeDrainSource verifies that a FromSlice(1000 items)->Take(1) pipeline
+// tears down without leaking goroutines (source with early exit).
+func TestCooperativeDrainSource(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	items := make([]int, 1000)
+	for i := range items {
+		items[i] = i
+	}
+	for range 50 {
+		p := kitsune.Take(kitsune.FromSlice(items), 1)
+		_, err := kitsune.Collect(t.Context(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	if after-baseline > 2 {
+		t.Errorf("goroutine leak: before=%d after=%d delta=%d", baseline, after, after-baseline)
+	}
+}
