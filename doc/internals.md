@@ -396,8 +396,10 @@ already cooperative). When the stage exits via context cancellation or an error,
 `DrainChan` still fires as a fallback to unblock any unconverted upstream.
 
 **Terminal stages** (e.g. `ForEach`) always spawn `DrainChan` unconditionally as
-a fallback: they are leaf nodes with no drainCh of their own, and they may sit
-below sources that are not yet cooperative.
+a fallback: they are leaf nodes with no drainCh of their own. Because every
+upstream stage is now cooperative, this fallback fires only when a stage exits
+via context cancellation or error (not on the cooperative-drain path), so no
+goroutine burst occurs on normal teardown.
 
 ### Cascade pattern
 
@@ -409,25 +411,33 @@ Take exits (nil)
   → Map2's drainCh fires → Map2 exits (cooperativeDrain=true)
     → defer drainFn() signals Map1's drainNotify
     → Map1's drainCh fires → Map1 exits (cooperativeDrain=true)
-      → defer drainFn() signals Repeatedly
-        (Repeatedly not yet converted: fallback DrainChan fires for inCh)
+      → defer drainFn() signals Repeatedly's drainNotify
+        → Repeatedly's drainCh fires → Repeatedly exits (cooperativeDrain=true)
 ```
 
-Zero extra goroutines on the converted path.
+Zero extra goroutines on the cooperative path.
 
 ### Conversion status
 
-The prototype converts the single-worker serial paths used in the common linear
-pipeline case. Operators that still use `go internal.DrainChan(inCh)` are listed
-in `doc/roadmap.md` under the full-rollout follow-on item.
+The full operator rollout is complete. Every operator uses cooperative drain.
+The `cooperativeDrain = false` fallback (which falls back to `go internal.DrainChan`)
+still exists in each stage but fires only on context-cancelled or error exits,
+not on the cooperative-drain path.
 
-| Operator | Status |
+| Operator group | Status |
 |---|---|
-| `Map` (serial and fast-path) | Cooperative drain |
-| `Take`, `TakeWhile`, `Drop`, `DropWhile` | Cooperative drain |
-| `ForEach` (serial and fast-path) | Dual-defer bridge (always DrainChan + drainFn) |
-| `Map` concurrent/ordered, fused fast path | Still DrainChan goroutine |
-| All other operators | Still DrainChan goroutine |
+| All sources (`FromSlice`, `Repeatedly`, `Generate`, `Channel`, etc.) | Cooperative drain |
+| `Map`, `Filter` (all paths including concurrent/ordered/fused) | Cooperative drain |
+| `Take`, `TakeWhile`, `Drop`, `DropWhile`, `TakeUntil`, `SkipUntil` | Cooperative drain |
+| `ForEach` (serial and fast-path) | Dual-defer bridge (DrainChan fallback + drainFn) |
+| `Batch`, `BufferWith`, `ChunkBy`, `ChunkWhile`, `Window`, `SlidingWindow`, `SessionWindow` | Cooperative drain |
+| `FlatMap`, `ConcatMap`, `SwitchMap`, `ExhaustMap` (all variants) | Cooperative drain |
+| `Merge`, `Zip`, `CombineLatest`, `WithLatestFrom`, `SampleWith` | Cooperative drain |
+| `Partition`, `Broadcast`, `Balance`, `KeyedBalance`, `Share` | Cooperative drain |
+| `MapWith`, `MapWithKey`, `FlatMapWith`, `FlatMapWithKey` (all variants) | Cooperative drain |
+| `Scan`, `Reduce`, `GroupByStream`, `FrequenciesByStream`, all aggregates | Cooperative drain |
+| `Unzip`, `MapResult` (fan-out, multi-output) | Cooperative drain |
+| All remaining operators (`RateLimit`, `Dematerialize`, `Pairwise`, etc.) | Cooperative drain |
 
 ---
 
