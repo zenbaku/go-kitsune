@@ -1,8 +1,8 @@
-// Example: concurrency-guide/routing — heterogeneous fan-out with Partition.
+// Example: concurrency-guide/routing: heterogeneous fan-out with Partition.
 //
 // Events arrive on a single stream. Valid events go to a parallel enrichment
 // pipeline; invalid events go to a dead-letter branch. The two branches have
-// *different* stage shapes and configurations — that is the signal to reach for
+// *different* stage shapes and configurations; that is the signal to reach for
 // Partition rather than Concurrency(n).
 //
 //   - Partition routes by content (predicate on the item), not by load.
@@ -11,7 +11,7 @@
 //   - Both branches must be consumed; MergeRunners starts and waits for both.
 //
 // Compare with:
-//   - Concurrency(n): same stage shape on n goroutines — for load splitting.
+//   - Concurrency(n): same stage shape on n goroutines; for load splitting.
 //   - Balance(n): round-robin to n identical downstream subgraphs.
 //   - Partition: predicate-based split to two *different* downstream subgraphs.
 //
@@ -72,7 +72,7 @@ func main() {
 	)
 	// MergeRunners starts both branches from the shared source and waits for
 	// both to finish. Forgetting to consume one branch stalls the other via
-	// backpressure — MergeRunners prevents that mistake.
+	// backpressure; MergeRunners prevents that mistake.
 	merged, err := kitsune.MergeRunners(
 		enriched.ForEach(func(_ context.Context, o Order) error {
 			mu.Lock()

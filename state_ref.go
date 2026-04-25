@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Key & Ref — typed pipeline state
+// Key & Ref: typed pipeline state
 // ---------------------------------------------------------------------------
 
 // KeyOption configures a [Key].
@@ -51,7 +51,7 @@ func NewKey[T any](name string, initial T, opts ...KeyOption) Key[T] {
 // It is injected into stage functions by [MapWith] and [FlatMapWith].
 //
 // When no [Store] is configured (the default), Ref operates entirely in
-// memory with a mutex — zero serialization overhead. When a Store is
+// memory with a mutex; zero serialization overhead. When a Store is
 // configured via [WithStore], Ref delegates to it using the run's [Codec]
 // (defaults to JSON; override with [WithCodec]).
 type Ref[T any] struct {

@@ -36,7 +36,7 @@ func (o *blockingOutbox[T]) Send(ctx context.Context, item T) error {
 func (o *blockingOutbox[T]) Dropped() int64 { return 0 }
 
 // ---------------------------------------------------------------------------
-// DropNewest — non-blocking send; incoming item is discarded when full
+// DropNewest: non-blocking send; incoming item is discarded when full
 // ---------------------------------------------------------------------------
 
 type dropNewestOutbox[T any] struct {
@@ -61,7 +61,7 @@ func (o *dropNewestOutbox[T]) Send(ctx context.Context, item T) error {
 func (o *dropNewestOutbox[T]) Dropped() int64 { return o.dropped.Load() }
 
 // ---------------------------------------------------------------------------
-// DropOldest — evict oldest buffered item to make room; mutex-protected
+// DropOldest: evict oldest buffered item to make room; mutex-protected
 // ---------------------------------------------------------------------------
 
 // dropOldestOutbox is safe for concurrent senders. The mutex serialises the
@@ -78,14 +78,14 @@ type dropOldestOutbox[T any] struct {
 }
 
 func (o *dropOldestOutbox[T]) Send(ctx context.Context, item T) error {
-	// Fast path: buffer has space — no lock needed.
+	// Fast path: buffer has space; no lock needed.
 	select {
 	case o.ch <- item:
 		return nil
 	default:
 	}
 
-	// Slow path: buffer is full — hold the lock while we drain + resend.
+	// Slow path: buffer is full; hold the lock while we drain + resend.
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -126,7 +126,7 @@ func (o *dropOldestOutbox[T]) Send(ctx context.Context, item T) error {
 func (o *dropOldestOutbox[T]) Dropped() int64 { return o.dropped.Load() }
 
 // ---------------------------------------------------------------------------
-// DropOldest — sharded variant for concurrent workers
+// DropOldest: sharded variant for concurrent workers
 // ---------------------------------------------------------------------------
 
 // dropOldestShard is one shard of a sharded DropOldest outbox. Each shard owns
@@ -147,14 +147,14 @@ type dropOldestShard[T any] struct {
 }
 
 func (o *dropOldestShard[T]) Send(ctx context.Context, item T) error {
-	// Fast path: buffer has space — no lock needed.
+	// Fast path: buffer has space; no lock needed.
 	select {
 	case o.ch <- item:
 		return nil
 	default:
 	}
 
-	// Slow path: buffer is full — hold this shard's lock while we drain + resend.
+	// Slow path: buffer is full; hold this shard's lock while we drain + resend.
 	o.mu.Lock()
 	defer o.mu.Unlock()
 

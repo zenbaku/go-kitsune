@@ -7,7 +7,7 @@ package internal
 const ReceiveBatchSize = 16
 
 // IsNoopHook reports whether h is the no-op hook sentinel.
-// Fast-path stage runners are only activated when the hook is NoopHook —
+// Fast-path stage runners are only activated when the hook is NoopHook;
 // any real hook must receive OnStageStart / OnItem / OnStageDone calls, which
 // the fast paths skip entirely.
 func IsNoopHook(h Hook) bool {
@@ -16,7 +16,7 @@ func IsNoopHook(h Hook) bool {
 }
 
 // IsDefaultHandler reports whether h is the default halt-on-error handler.
-// A nil handler is treated as DefaultHandler — it means "not explicitly set",
+// A nil handler is treated as DefaultHandler; it means "not explicitly set",
 // which the engine resolves to DefaultHandler at run time.
 // Fast paths assume DefaultHandler semantics: return the error immediately,
 // no retry, no skip, no return-value substitution.

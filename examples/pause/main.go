@@ -1,4 +1,4 @@
-// Example: pause — temporarily stop a running pipeline without cancelling it.
+// Example: pause: temporarily stop a running pipeline without cancelling it.
 //
 // Demonstrates:
 //   - RunAsync + RunHandle.Pause / Resume / Paused

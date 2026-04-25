@@ -1,4 +1,4 @@
-// Example: bloomdedup — probabilistic deduplication with a Bloom filter.
+// Example: bloomdedup: probabilistic deduplication with a Bloom filter.
 //
 // Demonstrates: BloomDedupSet, WithDedupSet, Dedupe, DedupeBy
 //

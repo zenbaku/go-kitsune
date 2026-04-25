@@ -188,7 +188,7 @@ func TestOrderedCancellationNoLeak(t *testing.T) {
 
 	select {
 	case <-done:
-		// Pipeline terminated — no deadlock.
+		// Pipeline terminated; no deadlock.
 	case <-time.After(5 * time.Second):
 		t.Fatal("ordered pipeline deadlocked under cancellation")
 	}

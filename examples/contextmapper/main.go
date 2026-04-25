@@ -1,4 +1,4 @@
-// Example: contextmapper — per-item context propagation without implementing ContextCarrier.
+// Example: contextmapper: per-item context propagation without implementing ContextCarrier.
 //
 // Demonstrates: WithContextMapper, per-item trace context injection on Map stages.
 //

@@ -145,7 +145,7 @@ func TestNewWithTracing_NilTracerFallsBackToMetricsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No panics, no spans — metrics still work.
+	// No panics, no spans; metrics still work.
 }
 
 func TestNewWithTracing_MultipleStages(t *testing.T) {

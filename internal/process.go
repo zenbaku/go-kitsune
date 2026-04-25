@@ -88,7 +88,7 @@ func runProtected(fn func() error, onPanic PanicAction) (err error, panicked boo
 }
 
 // WrapStageErr wraps err in a [StageError] unless it is nil, [ErrSkipped],
-// [context.Canceled], or [context.DeadlineExceeded] — errors that either carry
+// [context.Canceled], or [context.DeadlineExceeded]; errors that either carry
 // no stage context or are infrastructure signals rather than user-function failures.
 func WrapStageErr(name string, err error, attempt int) error {
 	if err == nil || err == ErrSkipped || err == context.Canceled || err == context.DeadlineExceeded {

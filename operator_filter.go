@@ -393,7 +393,7 @@ func IgnoreElements[T any](p *Pipeline[T]) *Pipeline[T] {
 //
 // fn receives the terminal error and the context that was active when the
 // pipeline exited. Context cancellation (ctx.Err() != nil) does not trigger
-// fn — only pipeline-level errors do.
+// fn; only pipeline-level errors do.
 func TapError[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T] {
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		innerCtx, cancel := context.WithCancel(ctx)
@@ -416,8 +416,8 @@ func TapError[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[
 	})
 }
 
-// Finally calls fn as a side-effect when the pipeline exits for any reason —
-// successful completion, context cancellation, or error — then re-propagates
+// Finally calls fn as a side-effect when the pipeline exits for any reason:
+// successful completion, context cancellation, or error. Then re-propagates
 // the outcome unchanged. Use it for guaranteed cleanup, resource tracking, or
 // test assertions that must run regardless of how the pipeline terminates.
 //

@@ -18,7 +18,7 @@ func dsn(t *testing.T) string {
 	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
-		t.Skip("DATABASE_URL not set — skipping integration test")
+		t.Skip("DATABASE_URL not set; skipping integration test")
 	}
 	return url
 }

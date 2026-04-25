@@ -103,7 +103,7 @@ func nextPipelineID() int64 {
 }
 
 // ---------------------------------------------------------------------------
-// runCtx — per-Run execution context
+// runCtx: per-Run execution context
 // ---------------------------------------------------------------------------
 
 // drainEntry coordinates the cooperative-drain protocol for one producer stage.
@@ -146,7 +146,7 @@ type runCtx struct {
 	defaultKeyTTL       time.Duration         // 0 = no eviction unless overridden per stage
 
 	// done is closed by early-exit stages (Take, TakeWhile) to stop infinite
-	// sources (Ticker, Repeatedly, …) without cancelling the run context —
+	// sources (Ticker, Repeatedly, …) without cancelling the run context;
 	// which would disrupt downstream stages still draining.
 	done       chan struct{}
 	signalDone func()
@@ -329,7 +329,7 @@ func (rc *runCtx) recordEffectOutcome(id int64, applied bool) {
 // same Pipeline[T] value may be run multiple times or used as the input to
 // multiple independent operators.
 //
-// It is an immutable handle — every operator returns a new Pipeline.
+// It is an immutable handle; every operator returns a new Pipeline.
 // No processing occurs until [Runner.Run] is called.
 type Pipeline[T any] struct {
 	id   int64
@@ -363,7 +363,7 @@ func newPipeline[T any](id int64, meta stageMeta, build func(*runCtx) chan T) *P
 }
 
 // Describe walks the pipeline DAG and returns a topologically-ordered snapshot
-// of every stage (including this one) as []GraphNode — the same shape
+// of every stage (including this one) as []GraphNode, the same shape
 // delivered to [GraphHook.OnGraph] during [Runner.Run].
 //
 // Describe is non-destructive and may be called on any *Pipeline[T], including
@@ -383,7 +383,7 @@ func (p *Pipeline[T]) Describe() []internal.GraphNode {
 }
 
 // ---------------------------------------------------------------------------
-// refRegistry — state management stub (populated during a future phase)
+// refRegistry: state management stub (populated during a future phase)
 // ---------------------------------------------------------------------------
 
 type refRegistry struct {

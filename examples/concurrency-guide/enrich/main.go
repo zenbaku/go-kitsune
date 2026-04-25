@@ -1,4 +1,4 @@
-// Example: concurrency-guide/enrich — parallel enrichment, with and without ordering.
+// Example: concurrency-guide/enrich: parallel enrichment, with and without ordering.
 //
 // A stream of events is enriched via a simulated slow API call. The example runs
 // the same pipeline twice: once unordered (fastest, output in completion order)

@@ -155,7 +155,7 @@ func mapWithKeySerial[I, O, S any](
 
 // mapWithKeyConcurrent routes items to n persistent workers by hash(key)%n.
 // Each worker owns a disjoint partition of the key space with its own local
-// keyedRefMap — no cross-worker locking on entity state.
+// keyedRefMap: no cross-worker locking on entity state.
 func mapWithKeyConcurrent[I, O, S any](
 	inCh <-chan I,
 	outCh chan O,
@@ -431,7 +431,7 @@ func mapWithKeyOrdered[I, O, S any](
 }
 
 // ---------------------------------------------------------------------------
-// MapWithKey — per-entity stateful 1:1 transform
+// MapWithKey: per-entity stateful 1:1 transform
 // ---------------------------------------------------------------------------
 
 // MapWithKey applies a 1:1 transform with per-entity typed pipeline state.
@@ -440,7 +440,7 @@ func mapWithKeyOrdered[I, O, S any](
 //
 // With Concurrency(n) > 1, the key space is sharded across n persistent worker
 // goroutines using a stable hash of the entity key. Each worker owns a disjoint
-// partition of the key space and its own local state map — completely lock-free
+// partition of the key space and its own local state map; completely lock-free
 // per-worker processing with no cross-worker coordination. Same-key items are
 // always routed to the same worker, preserving per-entity state semantics.
 // Add Ordered() to emit results in input order.
@@ -922,7 +922,7 @@ func flatMapWithKeyOrdered[I, O, S any](
 }
 
 // ---------------------------------------------------------------------------
-// FlatMapWithKey — per-entity stateful 1:N transform
+// FlatMapWithKey: per-entity stateful 1:N transform
 // ---------------------------------------------------------------------------
 
 // FlatMapWithKey applies a 1:N transform with per-entity typed pipeline state.
@@ -930,7 +930,7 @@ func flatMapWithKeyOrdered[I, O, S any](
 // share a Ref, while different keys get independent Refs.
 //
 // With Concurrency(n) > 1, the key space is sharded across n persistent workers
-// by stable hash of the entity key — same-key items always reach the same worker,
+// by stable hash of the entity key; same-key items always reach the same worker,
 // preserving per-entity state without any cross-worker locking.
 // Add Ordered() to emit all outputs for item i before any outputs for item i+1.
 //

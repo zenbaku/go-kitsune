@@ -1,4 +1,4 @@
-// Example: inspector — observe channel backpressure with BufferHook.
+// Example: inspector: observe channel backpressure with BufferHook.
 //
 // This example is intentionally excluded from TestExamples (interactive/infinite).
 // Run it manually:

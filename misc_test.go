@@ -334,7 +334,7 @@ func TestStageErrorWrapping(t *testing.T) {
 }
 
 func TestStageErrorWithRetry(t *testing.T) {
-	// Use per-item retry via OnError(Retry(...)) — Attempt increments on each retry.
+	// Use per-item retry via OnError(Retry(...)); Attempt increments on each retry.
 	var calls atomic.Int32
 	boom := errors.New("retryable")
 	p := kitsune.Map(
@@ -490,7 +490,7 @@ func TestMultiHook_EventCounts(t *testing.T) {
 		t.Error("h2: no item events")
 	}
 	if len(h1.Items()) != len(h2.Items()) {
-		t.Errorf("h1 items=%d, h2 items=%d — both should match", len(h1.Items()), len(h2.Items()))
+		t.Errorf("h1 items=%d, h2 items=%d; both should match", len(h1.Items()), len(h2.Items()))
 	}
 	if len(h1.Dones()) == 0 || len(h2.Dones()) == 0 {
 		t.Error("both hooks should receive StageDone events")
@@ -546,7 +546,7 @@ func TestLiftPure_TypeChange(t *testing.T) {
 
 func TestMemoryStore_InProcessBypass(t *testing.T) {
 	// MemoryStore should store and retrieve typed values without codec
-	// when accessed via kitsune.MapWith — codec must NOT be called.
+	// when accessed via kitsune.MapWith; codec must NOT be called.
 	panicCodec := &panicOnCallCodec{}
 	key := kitsune.NewKey[int]("ips-bypass", 0)
 	p := kitsune.MapWith(

@@ -20,7 +20,7 @@ type dropCountHook struct {
 func (h *dropCountHook) OnDrop(_ context.Context, _ string, _ any) { h.drops.Add(1) }
 
 // ---------------------------------------------------------------------------
-// Overflow — default (block)
+// Overflow: default (block)
 // ---------------------------------------------------------------------------
 
 func TestOverflowDefaultIsBlock(t *testing.T) {
@@ -43,7 +43,7 @@ func TestOverflowDefaultIsBlock(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Overflow — DropNewest
+// Overflow: DropNewest
 // ---------------------------------------------------------------------------
 
 func TestOverflowDropNewest(t *testing.T) {
@@ -78,7 +78,7 @@ func TestOverflowDropNewest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Overflow — DropOldest
+// Overflow: DropOldest
 // ---------------------------------------------------------------------------
 
 func TestOverflowDropOldest(t *testing.T) {
@@ -111,7 +111,7 @@ func TestOverflowDropOldest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Overflow — concurrent stages
+// Overflow: concurrent stages
 // ---------------------------------------------------------------------------
 
 func TestOverflowDropNewestConcurrent(t *testing.T) {

@@ -103,7 +103,7 @@ func TestSessionWindow_FlushOnClose(t *testing.T) {
 	}
 	time.Sleep(pipelineStartup)
 
-	// Close without advancing clock — flush must happen on source close.
+	// Close without advancing clock; flush must happen on source close.
 	ch.Close()
 
 	var s1 []int
@@ -176,17 +176,17 @@ func TestSessionWindow_ResetBehavior(t *testing.T) {
 	}
 	time.Sleep(pipelineStartup)
 
-	// Advance by half the gap — timer should NOT fire yet.
+	// Advance by half the gap; timer should NOT fire yet.
 	clock.Advance(half)
 	time.Sleep(pipelineStartup)
 
-	// Send item 2 — this resets the gap timer.
+	// Send item 2; this resets the gap timer.
 	if err := ch.Send(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(pipelineStartup)
 
-	// Advance by half the gap again — only half elapsed since item 2, no flush.
+	// Advance by half the gap again; only half elapsed since item 2, no flush.
 	clock.Advance(half)
 	time.Sleep(pipelineStartup)
 
@@ -197,7 +197,7 @@ func TestSessionWindow_ResetBehavior(t *testing.T) {
 	default:
 	}
 
-	// Advance the remaining half — full gap elapsed since item 2, should flush.
+	// Advance the remaining half; full gap elapsed since item 2, should flush.
 	clock.Advance(half)
 
 	var s1 []int

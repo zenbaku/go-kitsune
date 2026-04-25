@@ -1,9 +1,9 @@
-// Example: concurrency-guide/useragg — per-user stateful aggregation with MapWithKey.
+// Example: concurrency-guide/useragg: per-user stateful aggregation with MapWithKey.
 //
 // A stream of payment events from multiple users is processed to maintain a
 // running total per user. MapWithKey routes all events for the same user to
 // the same worker via hash(userID) % n, so per-user state in Ref[int] is
-// single-owner — no mutex required in the hot path.
+// single-owner; no mutex required in the hot path.
 //
 // Use this when:
 //   - State is per-entity (user, session, device), not global.
@@ -60,7 +60,7 @@ func main() {
 		func(ctx context.Context, ref *kitsune.Ref[int], p Payment) (TotalUpdate, error) {
 			// UpdateAndGet is the atomic read-modify-write primitive on Ref[S].
 			// Because all items for a given userID land on the same worker,
-			// this call is never concurrent — no mutex needed.
+			// this call is never concurrent; no mutex needed.
 			total, _ := ref.UpdateAndGet(ctx, func(t int) (int, error) {
 				return t + p.Amount, nil
 			})

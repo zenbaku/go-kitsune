@@ -447,7 +447,7 @@ func TestStateTTL_ResetOnWrite(t *testing.T) {
 			return 0, err
 		}
 		time.Sleep(ttl / 2)
-		// Write again — resets the TTL clock.
+		// Write again; resets the TTL clock.
 		if err := ref.Set(ctx, 99); err != nil {
 			return 0, err
 		}
@@ -469,7 +469,7 @@ func TestStateTTL_ResetOnWrite(t *testing.T) {
 }
 
 func TestStateTTL_ZeroTTL_NoExpiry(t *testing.T) {
-	// Default key (no TTL) — value must never expire.
+	// Default key (no TTL); value must never expire.
 	key := kitsune.NewKey("ttl-zero", 0)
 	input := kitsune.FromSlice([]int{1})
 
@@ -504,7 +504,7 @@ func TestStateTTL_UpdateResetsTimer(t *testing.T) {
 			return 0, err
 		}
 		time.Sleep(ttl / 2)
-		// Update — resets the TTL clock.
+		// Update; resets the TTL clock.
 		if err := ref.Update(ctx, func(v int) (int, error) { return v + 1, nil }); err != nil {
 			return 0, err
 		}
@@ -526,7 +526,7 @@ func TestStateTTL_UpdateResetsTimer(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3l. Ref[T] API — item 3l from parity-gaps.md
+// 3l. Ref[T] API: item 3l from parity-gaps.md
 // ---------------------------------------------------------------------------
 
 func TestRefWithMemoryStore(t *testing.T) {
@@ -683,7 +683,7 @@ func TestMapWithKey_WithTTL(t *testing.T) {
 				}
 				return ref.Get(ctx)
 			}
-			// Second item: sleep past TTL, then Get — should return initial value (0).
+			// Second item: sleep past TTL, then Get; should return initial value (0).
 			time.Sleep(ttl * 2)
 			return ref.Get(ctx)
 		},
@@ -957,7 +957,7 @@ func TestFlatMapWithKey_MultipleOutputs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// OnError — all four operators
+// OnError: all four operators
 // ---------------------------------------------------------------------------
 
 func TestMapWith_OnError_Skip(t *testing.T) {
@@ -1068,7 +1068,7 @@ func TestFlatMapWithKey_OnError_Skip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Supervise — ref preserved across restart
+// Supervise: ref preserved across restart
 // ---------------------------------------------------------------------------
 
 func TestMapWith_Supervise_RestartOnError(t *testing.T) {
@@ -1112,7 +1112,7 @@ func TestMapWith_Supervise_RefPreservedAcrossRestart(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2})
 	_, err := kitsune.MapWith(p, key, func(ctx context.Context, ref *kitsune.Ref[int], v int) (int, error) {
 		if !s.setOnFirst {
-			// First item: set ref to 42 then fail — triggering a restart.
+			// First item: set ref to 42 then fail, triggering a restart.
 			s.setOnFirst = true
 			if setErr := ref.Set(ctx, 42); setErr != nil {
 				return 0, setErr
@@ -1173,7 +1173,7 @@ func TestMapWithKey_Supervise_KeyedRefPreserved(t *testing.T) {
 		func(ctx context.Context, ref *kitsune.Ref[int], s string) (int, error) {
 			calls++
 			if calls == 1 {
-				// Set "a"'s ref to 99, then fail — triggering restart.
+				// Set "a"'s ref to 99, then fail, triggering restart.
 				_ = ref.Set(ctx, 99)
 				return 0, fmt.Errorf("trigger restart")
 			}
@@ -1237,7 +1237,7 @@ func TestMapWithKey_Supervise_KeyedRefPreservedOnPanic(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MapWithKey — concurrency (key-sharded workers)
+// MapWithKey: concurrency (key-sharded workers)
 // ---------------------------------------------------------------------------
 
 func TestMapWithKey_Concurrency_AllProcessed(t *testing.T) {
@@ -1368,7 +1368,7 @@ func TestMapWithKey_Concurrency_OnError_Skip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MapWith — concurrency (worker-local state)
+// MapWith: concurrency (worker-local state)
 // ---------------------------------------------------------------------------
 
 func TestMapWith_Concurrency_AllProcessed(t *testing.T) {
@@ -1452,7 +1452,7 @@ func TestMapWith_Concurrency_Ordered(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// FlatMapWithKey — concurrency (key-sharded workers)
+// FlatMapWithKey: concurrency (key-sharded workers)
 // ---------------------------------------------------------------------------
 
 func TestFlatMapWithKey_Concurrency_AllProcessed(t *testing.T) {
@@ -1516,7 +1516,7 @@ func TestFlatMapWithKey_Concurrency_Ordered(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// FlatMapWith — concurrency (worker-local state)
+// FlatMapWith: concurrency (worker-local state)
 // ---------------------------------------------------------------------------
 
 func TestFlatMapWith_Concurrency_AllProcessed(t *testing.T) {
@@ -1568,7 +1568,7 @@ func TestFlatMapWith_Concurrency_Ordered(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Race detector — run with -race to validate lock-free key-sharding
+// Race detector: run with -race to validate lock-free key-sharding
 // ---------------------------------------------------------------------------
 
 func TestMapWithKey_Concurrency_Race(t *testing.T) {

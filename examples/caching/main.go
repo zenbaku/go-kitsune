@@ -1,4 +1,4 @@
-// Example: caching — skip redundant work with CacheBy + MemoryCache.
+// Example: caching: skip redundant work with CacheBy + MemoryCache.
 //
 // Demonstrates: CacheBy, CacheTTL, MemoryCache, WithCache (runner-level default)
 package main

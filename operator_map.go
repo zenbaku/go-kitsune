@@ -404,7 +404,7 @@ func mapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Contex
 						if !ok {
 							return
 						}
-						// Use innerCtx.Done() only — reading errCh here would drain it (BUG: removed for test)
+						// Use innerCtx.Done() only; reading errCh here would drain it (BUG: removed for test)
 						// before the final select below can return it to Supervise.
 						select {
 						case sem <- struct{}{}:

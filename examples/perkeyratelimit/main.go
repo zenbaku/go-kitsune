@@ -1,9 +1,9 @@
-// Example: perkeyratelimit — per-entity rate limiting with MapWithKey.
+// Example: perkeyratelimit: per-entity rate limiting with MapWithKey.
 //
 // Each user is allowed at most 3 requests per window (every 5 ticks). Requests
 // within budget are "accepted"; excess requests are "rejected". Because
 // MapWithKey routes all items for the same userID to the same worker, per-user
-// state never crosses goroutine boundaries — lock-free by design.
+// state never crosses goroutine boundaries; lock-free by design.
 //
 // Ticks are logical (an integer field on the request), not wall-clock time,
 // so the example is deterministic and runs instantly.
@@ -57,21 +57,21 @@ func main() {
 
 	// Simulate requests across three users spread over several windows.
 	requests := []Request{
-		// Window 0 (ticks 0–4): alice sends 4 — 3 accepted, 1 rejected
+		// Window 0 (ticks 0-4): alice sends 4; 3 accepted, 1 rejected
 		{"alice", 0}, {"alice", 1}, {"alice", 2}, {"alice", 3},
-		// Window 0: bob sends 2 — 2 accepted
+		// Window 0: bob sends 2; 2 accepted
 		{"bob", 1}, {"bob", 2},
-		// Window 0: carol sends 1 — 1 accepted
+		// Window 0: carol sends 1; 1 accepted
 		{"carol", 0},
-		// Window 1 (ticks 5–9): alice sends 2 — both accepted (fresh window)
+		// Window 1 (ticks 5-9): alice sends 2; both accepted (fresh window)
 		{"alice", 5}, {"alice", 6},
-		// Window 1: bob sends 5 — 3 accepted, 2 rejected
+		// Window 1: bob sends 5; 3 accepted, 2 rejected
 		{"bob", 5}, {"bob", 6}, {"bob", 7}, {"bob", 8}, {"bob", 9},
-		// Window 1: carol sends 3 — all accepted
+		// Window 1: carol sends 3; all accepted
 		{"carol", 5}, {"carol", 6}, {"carol", 7},
-		// Window 2 (ticks 10–14): alice sends 4 — 3 accepted, 1 rejected
+		// Window 2 (ticks 10-14): alice sends 4; 3 accepted, 1 rejected
 		{"alice", 10}, {"alice", 11}, {"alice", 12}, {"alice", 13},
-		// Window 2: carol sends 1 — accepted
+		// Window 2: carol sends 1; accepted
 		{"carol", 10},
 	}
 
@@ -83,7 +83,7 @@ func main() {
 			window := r.Tick / windowSize
 			b, _ := ref.UpdateAndGet(ctx, func(b bucket) (bucket, error) {
 				if window != b.windowStart {
-					// New window — reset counter.
+					// New window; reset counter.
 					b = bucket{windowStart: window}
 				}
 				if b.count < rateLimit {

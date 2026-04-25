@@ -65,7 +65,7 @@ func TestCacheByPerStageCacheOverridesDefault(t *testing.T) {
 			func(v int) string { return "k" },
 			kitsune.CacheBackend(stageCache),
 		)),
-		// No WithCache run option — stage supplies its own backend.
+		// No WithCache run option; stage supplies its own backend.
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestCacheByNoopWhenNoCacheBackend(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 1, 1})
 	_, err := kitsune.Collect(ctx,
 		kitsune.Map(p, fn, kitsune.CacheBy(func(v int) string { return "k" })),
-		// No WithCache — cache is nil, so fn is always called.
+		// No WithCache; cache is nil, so fn is always called.
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestCacheByNoopWhenNoCacheBackend(t *testing.T) {
 func TestDedupeByWithExternalDedupSetGlobalDedup(t *testing.T) {
 	ctx := context.Background()
 	set := kitsune.MemoryDedupSet()
-	// 1 appears non-consecutively — without a set it would pass through; with a set it's suppressed.
+	// 1 appears non-consecutively; without a set it would pass through; with a set it's suppressed.
 	p := kitsune.FromSlice([]int{1, 2, 1, 3, 2})
 	got, err := kitsune.Collect(ctx, kitsune.DedupeBy(p, func(v int) int { return v },
 		kitsune.WithDedupSet(set),
@@ -135,7 +135,7 @@ func TestMemoryCacheTTL(t *testing.T) {
 	cache := kitsune.MemoryCache(10)
 	ctx := context.Background()
 
-	// 1 nanosecond TTL — effectively expired immediately.
+	// 1 nanosecond TTL; effectively expired immediately.
 	_ = cache.Set(ctx, "k", []byte("v"), 1)
 	_, ok, _ := cache.Get(ctx, "k")
 	if ok {

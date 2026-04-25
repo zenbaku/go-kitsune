@@ -6,7 +6,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Stage — composable pipeline transformer
+// Stage: composable pipeline transformer
 // ---------------------------------------------------------------------------
 
 // Stage is a composable pipeline transformer: a function that takes an input

@@ -485,7 +485,7 @@ func expandTree(_ context.Context, v int) *kitsune.Pipeline[int] {
 }
 
 func TestExpandMap_SingleLevel(t *testing.T) {
-	// fn always returns nil — only root items are emitted.
+	// fn always returns nil; only root items are emitted.
 	p := kitsune.ExpandMap(kitsune.FromSlice([]int{1, 2, 3}),
 		func(_ context.Context, _ int) *kitsune.Pipeline[int] { return nil },
 	)
@@ -618,7 +618,7 @@ func TestExpandMap_VisitedBy_BreaksCycle(t *testing.T) {
 
 func TestExpandMap_VisitedBy_SkipsSubtreeOfSeenItem(t *testing.T) {
 	// DAG: 1→[2,3], 2→[4], 3→[2]. Without dedup: 1,2,3,4,2,4 (2 and 4 twice).
-	// With VisitedBy: when 3 tries to expand 2, it's already seen — skip.
+	// With VisitedBy: when 3 tries to expand 2, it's already seen; skip.
 	fn := func(_ context.Context, v int) *kitsune.Pipeline[int] {
 		switch v {
 		case 1:
@@ -662,7 +662,7 @@ func TestExpandMap_VisitedBy_ExternalDedupSet(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ExpandMap — MaxDepth / MaxItems bounds
+// ExpandMap: MaxDepth / MaxItems bounds
 // ---------------------------------------------------------------------------
 
 // depthTree is an infinite binary tree generator: every node v expands to
@@ -1756,7 +1756,7 @@ func TestSlidingWindowTumbling(t *testing.T) {
 }
 
 func TestSlidingWindowShortStream(t *testing.T) {
-	// Stream shorter than window size — no windows emitted (partial windows dropped).
+	// Stream shorter than window size; no windows emitted (partial windows dropped).
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{1, 2})
 	got, err := kitsune.Collect(ctx, kitsune.SlidingWindow(p, 5, 1))
@@ -1825,7 +1825,7 @@ func TestOrderedNoConcurrency(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTakeUntil_SourceFinishesBeforeBoundary(t *testing.T) {
-	// Boundary never fires; p is finite — all items should be emitted.
+	// Boundary never fires; p is finite; all items should be emitted.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
 	// Boundary that blocks until ctx is cancelled (i.e. never fires on its own).
 	boundary := kitsune.Generate(func(ctx context.Context, yield func(struct{}) bool) error {
@@ -1840,7 +1840,7 @@ func TestTakeUntil_SourceFinishesBeforeBoundary(t *testing.T) {
 }
 
 func TestTakeUntil_BoundaryFiresImmediately(t *testing.T) {
-	// Empty boundary closes immediately — TakeUntil should stop early.
+	// Empty boundary closes immediately; TakeUntil should stop early.
 	// p has 1000 items; we only verify that fewer than 1000 are emitted.
 	ctx := context.Background()
 	items := make([]int, 1000)
@@ -1857,7 +1857,7 @@ func TestTakeUntil_BoundaryFiresImmediately(t *testing.T) {
 
 func TestTakeUntil_BoundaryChannel(t *testing.T) {
 	// Control both p and boundary via NewChannel. Send 3 items, fire boundary,
-	// close p — expect exactly 3 items (boundary fires before remaining sends).
+	// close p; expect exactly 3 items (boundary fires before remaining sends).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -1875,7 +1875,7 @@ func TestTakeUntil_BoundaryChannel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Fire boundary then close p — no more items should arrive.
+	// Fire boundary then close p; no more items should arrive.
 	if err := bCh.Send(ctx, struct{}{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1899,7 +1899,7 @@ func TestTakeUntil_BoundaryChannel(t *testing.T) {
 }
 
 func TestDropUntil_BoundaryNeverFires(t *testing.T) {
-	// Boundary never fires; p is finite — no items should be emitted.
+	// Boundary never fires; p is finite; no items should be emitted.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	boundary := kitsune.Generate(func(ctx context.Context, yield func(struct{}) bool) error {
 		<-ctx.Done()
@@ -1936,7 +1936,7 @@ func TestDropUntil_BoundaryChannel(t *testing.T) {
 		resultCh <- got
 	}()
 
-	// These items arrive before the gate opens — they should be skipped.
+	// These items arrive before the gate opens; they should be skipped.
 	for _, v := range []int{1, 2, 3} {
 		if err := pCh.Send(ctx, v); err != nil {
 			t.Fatal(err)
@@ -1948,9 +1948,9 @@ func TestDropUntil_BoundaryChannel(t *testing.T) {
 	}
 	bCh.Close()
 	// Give the stage goroutine time to process the boundary signal before
-	// sending post-gate items — otherwise items may arrive before gate opens.
+	// sending post-gate items; otherwise items may arrive before gate opens.
 	time.Sleep(pipelineStartup)
-	// These items arrive after the gate opens — they must be emitted.
+	// These items arrive after the gate opens; they must be emitted.
 	for _, v := range []int{10, 20, 30} {
 		if err := pCh.Send(ctx, v); err != nil {
 			t.Fatal(err)

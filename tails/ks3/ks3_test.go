@@ -133,7 +133,7 @@ func integrationBucket(t *testing.T) string {
 	t.Helper()
 	bucket := os.Getenv("TEST_S3_BUCKET")
 	if bucket == "" {
-		t.Skip("TEST_S3_BUCKET not set — skipping S3 integration test")
+		t.Skip("TEST_S3_BUCKET not set; skipping S3 integration test")
 	}
 	return bucket
 }

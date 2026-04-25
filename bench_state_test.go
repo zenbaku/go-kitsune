@@ -8,8 +8,8 @@ package kitsune_test
 //
 // These benchmarks measure the throughput of MapWithKey and MapWith across
 // serial and concurrent (sharded/worker-local) modes. The workload uses
-// ref.UpdateAndGet per item — a non-trivial operation involving a mutex
-// acquire/release and an integer addition — to make concurrency meaningful.
+// ref.UpdateAndGet per item: a non-trivial operation involving a mutex
+// acquire/release and an integer addition; to make concurrency meaningful.
 //
 // Key findings to look for:
 //   - MapWithKey/Concurrent* should scale near-linearly with worker count when

@@ -1,4 +1,4 @@
-// Example: basic — a minimal linear pipeline.
+// Example: basic: a minimal linear pipeline.
 //
 // Demonstrates: FromSlice, Map, Filter, ForEach, Collect
 package main

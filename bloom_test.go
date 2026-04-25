@@ -31,13 +31,13 @@ func TestBloomDedupSetBasic(t *testing.T) {
 			t.Errorf("Contains(%q) = false, want true", key)
 		}
 	}
-	// "z" was never added — should be absent (deterministically for a tiny set).
+	// "z" was never added; should be absent (deterministically for a tiny set).
 	ok, err := set.Contains(ctx, "z")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Error("Contains(\"z\") = true for never-inserted key in a 3-element filter — unexpected collision")
+		t.Error("Contains(\"z\") = true for never-inserted key in a 3-element filter; unexpected collision")
 	}
 }
 

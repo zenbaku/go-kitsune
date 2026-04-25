@@ -14,7 +14,7 @@ import (
 // under varying item counts, buffer sizes, and concurrency levels.
 //
 // Invariants checked:
-//   - Pipeline always terminates (no deadlock) — enforced by the outer timeout context
+//   - Pipeline always terminates (no deadlock); enforced by the outer timeout context
 //   - No panics
 //   - No unexpected errors (only context errors are acceptable when using DropNewest/DropOldest)
 //   - With OverflowBlock and no cancellation, all items arrive with correct values
@@ -77,7 +77,7 @@ func FuzzPipelineOverflow(f *testing.F) {
 // the context is cancelled at varying points during execution.
 //
 // Invariants checked:
-//   - Pipeline always terminates (no deadlock) — enforced by the outer timeout context
+//   - Pipeline always terminates (no deadlock); enforced by the outer timeout context
 //   - No panics
 //   - Only context errors (Canceled, DeadlineExceeded) are returned after cancellation
 func FuzzPipelineCancellation(f *testing.F) {
@@ -231,7 +231,7 @@ func FuzzBloomDedupSet(f *testing.F) {
 		ctx := context.Background()
 		set := kitsune.BloomDedupSet(expected, 0.01)
 
-		// Add all keys — no panics allowed.
+		// Add all keys; no panics allowed.
 		for _, k := range keys {
 			if err := set.Add(ctx, k); err != nil {
 				t.Fatalf("Add(%q) returned error: %v", k, err)

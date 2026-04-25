@@ -1,4 +1,4 @@
-// Example: ttldedup — time-bounded deduplication with TTLDedupSet.
+// Example: ttldedup: time-bounded deduplication with TTLDedupSet.
 //
 // Demonstrates: TTLDedupSet, WithDedupSet, DedupeBy.
 //

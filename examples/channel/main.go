@@ -1,4 +1,4 @@
-// Example: channel — push-based source with external producers.
+// Example: channel: push-based source with external producers.
 //
 // Demonstrates: NewChannel, Channel.Send, Channel.Close, RunAsync, RunHandle
 package main

@@ -1,4 +1,4 @@
-// Example: concurrent — parallel processing with and without ordering guarantees.
+// Example: concurrent: parallel processing with and without ordering guarantees.
 //
 // Demonstrates: Concurrency, Ordered, Buffer, WithName
 package main

@@ -22,7 +22,7 @@ type contextCarrierMsg struct {
 func (m *contextCarrierMsg) Context() context.Context { return m.carrierCtx }
 
 // ---------------------------------------------------------------------------
-// WithContextMapper — Map
+// WithContextMapper: Map
 // ---------------------------------------------------------------------------
 
 // TestWithContextMapper_Map verifies that WithContextMapper propagates
@@ -145,7 +145,7 @@ func TestWithContextMapper_Map_NilReturn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithContextMapper — FlatMap
+// WithContextMapper: FlatMap
 // ---------------------------------------------------------------------------
 
 // TestWithContextMapper_FlatMap verifies mapper propagation on a FlatMap stage.
@@ -210,7 +210,7 @@ func TestWithContextMapper_FlatMap_Concurrent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithContextMapper — ForEach
+// WithContextMapper: ForEach
 // ---------------------------------------------------------------------------
 
 // TestWithContextMapper_ForEach verifies mapper propagation in a ForEach terminal.
@@ -286,7 +286,7 @@ func TestWithContextMapper_ForEach_Concurrent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithContextMapper — fast path disqualification
+// WithContextMapper: fast path disqualification
 // ---------------------------------------------------------------------------
 
 // TestWithContextMapper_DisablesFastPath verifies that a stage with
@@ -323,7 +323,7 @@ func TestWithContextMapper_DisablesFastPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// WithContextMapper — WithName and Buffer option compatibility
+// WithContextMapper: WithName and Buffer option compatibility
 // ---------------------------------------------------------------------------
 
 // TestWithContextMapper_WithName verifies that WithName does not interfere

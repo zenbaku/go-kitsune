@@ -1,4 +1,4 @@
-// Example: timeout — enforce per-item deadlines on slow stages.
+// Example: timeout: enforce per-item deadlines on slow stages.
 //
 // Demonstrates: Timeout StageOption, OnError(Skip()), OnError(Return(...))
 //

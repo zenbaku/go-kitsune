@@ -570,7 +570,7 @@ func DropUntil[T, U any](p *Pipeline[T], boundary *Pipeline[U], opts ...StageOpt
 							gateOpen = true
 							gateChRef = nil
 						default:
-							continue // gate still closed — skip item
+							continue // gate still closed; skip item
 						}
 					}
 					if err := outbox.Send(ctx, item); err != nil {

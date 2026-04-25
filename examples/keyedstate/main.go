@@ -1,10 +1,10 @@
-// Example: keyedstate — per-entity stateful processing with key-sharded concurrency.
+// Example: keyedstate: per-entity stateful processing with key-sharded concurrency.
 //
 // Demonstrates MapWithKey with and without concurrency. In serial mode, a single
 // goroutine handles all entity keys in one map. In concurrent mode, the key space
 // is sharded across n workers using a stable hash: hash(userID) % n. Items for
 // the same user always land on the same worker, so per-user state is never
-// accessed by more than one goroutine — lock-free by design.
+// accessed by more than one goroutine; lock-free by design.
 //
 // This is the in-process actor model: each worker acts as a lightweight actor
 // that owns a disjoint partition of the state space.
@@ -72,7 +72,7 @@ func main() {
 	// Concurrent(4): 4 workers, items routed by hash(userID) % 4.
 	//
 	// Each worker owns a partition of the key space. With 4 users and 4 workers,
-	// each user typically maps to a dedicated worker — zero contention.
+	// each user typically maps to a dedicated worker; zero contention.
 	//
 	// Key-sharding guarantee: fnv32(key) % n is stable across the run, so a given
 	// key always reaches the same worker. Per-user state never crosses goroutine
@@ -126,7 +126,7 @@ func main() {
 		fmt.Printf("  %s %-8s serial=%d concurrent=%d\n", status, user, total, concTotal)
 	}
 	if allMatch {
-		fmt.Println("\n  All totals match — key-sharding preserves per-entity correctness.")
+		fmt.Println("\n  All totals match; key-sharding preserves per-entity correctness.")
 	}
 }
 

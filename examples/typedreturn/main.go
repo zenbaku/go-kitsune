@@ -1,10 +1,10 @@
-// Example: typedreturn — compile-time-safe error fallback with TypedReturn.
+// Example: typedreturn: compile-time-safe error fallback with TypedReturn.
 //
 // This example contrasts Return and TypedReturn side-by-side:
 //
 //   - Return(val): ErrorHandler. The fallback type T is inferred from val but is
 //     NOT checked against the stage's output type at compile time. A mismatch
-//     silently falls back to Halt at runtime — no error, no fallback emitted.
+//     silently falls back to Halt at runtime; no error, no fallback emitted.
 //
 //   - TypedReturn[O](val): StageOption. O is the stage's output type and is
 //     checked at the call site. A mismatch is a compile-time error.
@@ -56,7 +56,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	fmt.Println("=== Return with MISMATCHED type (silent Halt) ===")
 	p2 := kitsune.Map(kitsune.FromSlice(ids), lookup,
-		kitsune.OnError(kitsune.Return(0)), // int != string — compiles! but fails at runtime
+		kitsune.OnError(kitsune.Return(0)), // int != string; compiles! but fails at runtime
 	)
 	results2, err := collect(p2)
 	fmt.Printf("  items: %v\n  err:   %v\n\n", results2, err)
@@ -64,7 +64,7 @@ func main() {
 
 	// -------------------------------------------------------------------------
 	// 3. TypedReturn: O=string is checked at the call site.
-	//    TypedReturn[string]("unknown") — the type is locked at compile time.
+	//    TypedReturn[string]("unknown"): the type is locked at compile time.
 	//    Trying TypedReturn[int](0) on a Map[int, string] would not compile.
 	// -------------------------------------------------------------------------
 	fmt.Println("=== TypedReturn[string] (compile-time safe) ===")

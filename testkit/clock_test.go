@@ -87,7 +87,7 @@ func TestTestClock_TimerReset(t *testing.T) {
 	clk := testkit.NewTestClock()
 	timer := clk.NewTimer(5 * time.Second)
 
-	// Advance past the original deadline — timer fires.
+	// Advance past the original deadline; timer fires.
 	clk.Advance(5 * time.Second)
 
 	select {
@@ -100,7 +100,7 @@ func TestTestClock_TimerReset(t *testing.T) {
 	// Reset with a new deadline of 3 more seconds.
 	timer.Reset(3 * time.Second)
 
-	// Advance only 2s — should not fire.
+	// Advance only 2s; should not fire.
 	clk.Advance(2 * time.Second)
 	select {
 	case <-timer.C():
@@ -108,7 +108,7 @@ func TestTestClock_TimerReset(t *testing.T) {
 	default:
 	}
 
-	// Advance 1 more second — should fire now.
+	// Advance 1 more second; should fire now.
 	clk.Advance(1 * time.Second)
 	select {
 	case <-timer.C():
@@ -130,7 +130,7 @@ func TestTestClock_Ticker(t *testing.T) {
 	default:
 	}
 
-	// Advance 2s — one tick.
+	// Advance 2s; one tick.
 	clk.Advance(2 * time.Second)
 	select {
 	case <-ticker.C():
@@ -139,7 +139,7 @@ func TestTestClock_Ticker(t *testing.T) {
 		t.Fatal("ticker did not fire after Advance(2s)")
 	}
 
-	// Advance another 2s — one more tick.
+	// Advance another 2s; one more tick.
 	clk.Advance(2 * time.Second)
 	select {
 	case <-ticker.C():
@@ -148,7 +148,7 @@ func TestTestClock_Ticker(t *testing.T) {
 		t.Fatal("ticker did not fire on second Advance(2s)")
 	}
 
-	// Advance another 2s — one more tick.
+	// Advance another 2s; one more tick.
 	clk.Advance(2 * time.Second)
 	select {
 	case <-ticker.C():

@@ -1,4 +1,4 @@
-// Example: ratelimit — throttle pipeline throughput with a token bucket.
+// Example: ratelimit: throttle pipeline throughput with a token bucket.
 //
 // Demonstrates: RateLimit, RateLimitWait (backpressure), RateLimitDrop, Burst
 package main
@@ -18,7 +18,7 @@ func main() {
 		items[i] = i
 	}
 
-	// --- RateLimitWait: backpressure — blocks until a token is available ---
+	// --- RateLimitWait: backpressure; blocks until a token is available ---
 	//
 	// The pipeline slows to 50 items/sec. Source and all upstream stages apply
 	// backpressure automatically because channels fill up.

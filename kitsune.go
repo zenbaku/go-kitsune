@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Core type aliases — re-export internal types so users don't import internal
+// Core type aliases: re-export internal types so users don't import internal
 // ---------------------------------------------------------------------------
 
 // Clock abstracts time operations for deterministic testing.
@@ -23,12 +23,12 @@ type Hook = internal.Hook
 
 // OverflowHook is an optional extension of [Hook] for drop events.
 // Implement this alongside [Hook] and the runtime will call [OnDrop] for every
-// item dropped due to a full buffer. Checked via type assertion — existing
+// item dropped due to a full buffer. Checked via type assertion; existing
 // Hook implementations need not implement this.
 type OverflowHook = internal.OverflowHook
 
 // SupervisionHook is an optional extension of [Hook] for stage restart events.
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type SupervisionHook = internal.SupervisionHook
 
 // SampleHook is an optional extension of [Hook] for item value sampling.
@@ -49,7 +49,7 @@ type GraphNode = internal.GraphNode
 // The engine calls [OnBuffers] once before execution with a query function that
 // returns a snapshot of all inter-stage channel occupancies when invoked.
 // Call the query periodically to track fill levels over time.
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type BufferHook = internal.BufferHook
 
 // BufferStatus reports the current fill level of one stage's output channel.
@@ -58,7 +58,7 @@ type BufferStatus = internal.BufferStatus
 // ContextCarrier is implemented by item types that carry a context.Context
 // with an attached trace span (or any other per-item context values).
 // When an item implements ContextCarrier, the engine uses its context for
-// stage function calls — allowing stage functions to create per-item child
+// stage function calls, allowing stage functions to create per-item child
 // spans with a normal tracer.Start(ctx, ...) call, with no changes to stage
 // signatures or pipeline wiring.
 //
@@ -80,7 +80,7 @@ type BufferStatus = internal.BufferStatus
 //
 //	func (o Order) Context() context.Context { return o.ctx }
 //
-//	// In a stage function — ctx now carries o's trace span automatically:
+//	// In a stage function ; ctx now carries o's trace span automatically:
 //	kitsune.Map(orders, func(ctx context.Context, o Order) (Invoice, error) {
 //	    ctx, span := tracer.Start(ctx, "build-invoice")
 //	    defer span.End()
@@ -116,7 +116,7 @@ func NewGate() *Gate { return internal.NewGate() }
 // [MemoryStore] is the default. External stores (Redis, DynamoDB) can
 // implement this interface with []byte serialization.
 //
-// Users own connection lifecycle — create, configure, and close the
+// Users own connection lifecycle: create, configure, and close the
 // backing client. Kitsune will never open or close connections.
 type Store = internal.Store
 
@@ -409,7 +409,7 @@ func runWithDrain(parentCtx context.Context, drainTimeout time.Duration, signalD
 	}()
 
 	err := internal.RunStages(drainCtx, stages)
-	// Suppress context errors caused by the drain timeout hard-stop — they are
+	// Suppress context errors caused by the drain timeout hard-stop; they are
 	// expected when drainCtx was cancelled after the timeout, not genuine errors.
 	if err != nil && parentCtx.Err() != nil &&
 		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {

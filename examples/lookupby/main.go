@@ -1,4 +1,4 @@
-// Example: lookupby — bulk-fetch user records with BatchTimeout for low
+// Example: lookupby: bulk-fetch user records with BatchTimeout for low
 // throughput.
 //
 // LookupBy batches items internally and issues one Fetch call per batch with

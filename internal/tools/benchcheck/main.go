@@ -76,7 +76,7 @@ func main() {
 		return
 	}
 
-	fmt.Printf("\nbenchcheck: FAILED — %d regression(s) above %.1f%% for %s:\n\n", len(regressions), *threshold, *metric)
+	fmt.Printf("\nbenchcheck: FAILED: %d regression(s) above %.1f%% for %s:\n\n", len(regressions), *threshold, *metric)
 	for _, r := range regressions {
 		fmt.Printf("  REGRESSION  %-60s  %s\n", r.name, r.delta)
 	}
@@ -227,7 +227,7 @@ func parseSection(lines []string, gatedMetric string, threshold float64) (regres
 			continue
 		}
 
-		// Note column contains "p=0.05 n=10" — ignore it for now.
+		// Note column contains "p=0.05 n=10"; ignore it for now.
 		_ = note
 
 		pct, err := parsePercent(delta)

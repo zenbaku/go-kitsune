@@ -164,12 +164,12 @@ func TestSendBatch(t *testing.T) {
 	}
 }
 
-// Integration test — gated by TEST_SQS_QUEUE_URL.
+// Integration test: gated by TEST_SQS_QUEUE_URL.
 func TestIntegrationRoundTrip(t *testing.T) {
 	qURL := os.Getenv("TEST_SQS_QUEUE_URL")
 	if qURL == "" {
 		t.Skip("TEST_SQS_QUEUE_URL not set; skipping SQS integration test")
 	}
-	// Integration setup omitted — requires AWS credentials and a real queue.
+	// Integration setup omitted; requires AWS credentials and a real queue.
 	_ = qURL
 }

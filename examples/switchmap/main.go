@@ -1,4 +1,4 @@
-// Example: switchmap — cancel in-progress work when a newer item arrives.
+// Example: switchmap: cancel in-progress work when a newer item arrives.
 //
 // Demonstrates: SwitchMap cancellation semantics vs FlatMap/ConcatMap
 package main
@@ -15,7 +15,7 @@ func main() {
 	ctx := context.Background()
 
 	// Each "search query" triggers a slow lookup. With SwitchMap, arriving a
-	// new query cancels the still-running previous one — only the last query's
+	// new query cancels the still-running previous one; only the last query's
 	// result is emitted. This models type-ahead search or live-reload.
 
 	queries := kitsune.FromSlice([]string{"g", "go", "gol", "golang"})

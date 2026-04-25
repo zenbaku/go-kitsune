@@ -94,7 +94,7 @@ func SwitchMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 				}
 
 				// naturalEnd tracks whether the outer input exhausted normally.
-				// When true, we must NOT cancel the last sub-stream — it should be
+				// When true, we must NOT cancel the last sub-stream; it should be
 				// allowed to complete. When false (error or ctx cancellation), we cancel.
 				var loopErr error
 				naturalEnd := func() bool {
@@ -266,7 +266,7 @@ func ExhaustMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) er
 								}
 							}(item)
 						default:
-							// Inner goroutine busy — drop item.
+							// Inner goroutine busy; drop item.
 						}
 					case err := <-errCh:
 						wg.Wait()
@@ -306,7 +306,7 @@ func ConcatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) err
 	// ConcatMap = serial FlatMap. Reject any user-supplied Concurrency(n>1)
 	// rather than silently overriding it, which would mask a usage bug.
 	if probe := buildStageConfig(opts); probe.concurrency != 1 {
-		panic("kitsune: ConcatMap is always serial; do not pass Concurrency(n) — use FlatMap with Concurrency(n) for parallel fan-out")
+		panic("kitsune: ConcatMap is always serial; do not pass Concurrency(n); use FlatMap with Concurrency(n) for parallel fan-out")
 	}
 	// Append last so the enforced single concurrency wins over anything else.
 	opts = append(opts, Concurrency(1))
@@ -329,8 +329,8 @@ type ErrItem[I any] struct {
 // (failed) pipeline as [ErrItem] values containing the original input and error.
 //
 //	ok, failed := kitsune.MapResult(p, fetchUser)
-//	// ok:     *Pipeline[User]        — successful lookups
-//	// failed: *Pipeline[ErrItem[ID]] — items that errored, with original input
+//	// ok:     *Pipeline[User]        // successful lookups
+//	// failed: *Pipeline[ErrItem[ID]] // items that errored, with original input
 //
 // Both output pipelines must be consumed (same rule as [Partition]).
 func MapResult[I, O any](p *Pipeline[I], fn func(context.Context, I) (O, error), opts ...StageOption) (*Pipeline[O], *Pipeline[ErrItem[I]]) {

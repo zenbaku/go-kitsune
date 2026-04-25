@@ -15,7 +15,7 @@ import (
 //	task v2:test:examples
 //
 // Excluded from this test (interactive / requires external services):
-//   - examples/inspector — infinite run loop, meant for manual exploration
+//   - examples/inspector: infinite run loop, meant for manual exploration
 func TestExamples(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping example smoke tests in short mode")

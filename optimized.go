@@ -47,7 +47,7 @@ type OptimizationReport struct {
 }
 
 // ---------------------------------------------------------------------------
-// IsOptimized / IsFastPath — methods on Pipeline[T]
+// IsOptimized / IsFastPath: methods on Pipeline[T]
 // ---------------------------------------------------------------------------
 
 // IsOptimized returns an [OptimizationReport] for every stage in the pipeline
@@ -129,7 +129,7 @@ func optimizationReportForMeta(m stageMeta, hook internal.Hook, defaultEH intern
 
 	if !m.supportsFastPath {
 		// Source, Batch, FlatMap, etc. do not have a fast-path implementation.
-		// Report FastPath: false with no reasons — it is not an error condition.
+		// Report FastPath: false with no reasons; it is not an error condition.
 		return r
 	}
 
@@ -157,7 +157,7 @@ func optimizationReportForMeta(m stageMeta, hook internal.Hook, defaultEH intern
 	}
 	// If isFastPathCfg is false but the above individual conditions are all
 	// satisfied, the remaining cause is a stage-level error handler or (for
-	// Map) a CacheBy option — both checked inside isFastPathEligibleCfg.
+	// Map) a CacheBy option; both checked inside isFastPathEligibleCfg.
 	if !m.isFastPathCfg &&
 		m.concurrency <= 1 &&
 		!m.hasSuperv &&
@@ -183,7 +183,7 @@ func optimizationReportForMeta(m stageMeta, hook internal.Hook, defaultEH intern
 	// --- Fusion: fast path required, plus single-consumer chain ---
 	if r.FastPath && m.hasFusionEntry {
 		if m.getConsumerCount == nil {
-			// No consumer yet — not fused.
+			// No consumer yet; not fused.
 			reasons = append(reasons, "no consumer attached yet")
 		} else if count := m.getConsumerCount(); count == 1 {
 			r.Fused = true

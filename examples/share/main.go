@@ -1,4 +1,4 @@
-// Example: share — multicast a stream to a dynamically-built subscriber list.
+// Example: share: multicast a stream to a dynamically-built subscriber list.
 //
 // Demonstrates: Share, per-branch Buffer and WithName, MergeRunners
 //
@@ -47,7 +47,7 @@ func main() {
 
 	// Share returns a factory. Each call creates a new output branch.
 	// Unlike Broadcast, the number of branches does not need to be known
-	// upfront — and each branch can have its own options.
+	// upfront; and each branch can have its own options.
 	subscribe := kitsune.Share(orders)
 
 	// Audit log: large buffer so it never slows down the pipeline.
@@ -56,7 +56,7 @@ func main() {
 	// Metrics: counts events and accumulates revenue.
 	metrics := subscribe(kitsune.WithName("metrics"))
 
-	// Fraud detection: only active above a threshold — added conditionally.
+	// Fraud detection: only active above a threshold; added conditionally.
 	fraudEnabled := true
 	var fraud *kitsune.Pipeline[OrderEvent]
 	if fraudEnabled {

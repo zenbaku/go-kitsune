@@ -85,7 +85,7 @@ func TestPropMergeMultiset(t *testing.T) {
 }
 
 // TestPropMergeLength verifies that the total item count from Merge equals the
-// sum of all input lengths — a fast regression check for item loss.
+// sum of all input lengths; a fast regression check for item loss.
 func TestPropMergeLength(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		k := rapid.IntRange(1, 6).Draw(t, "k")
@@ -294,7 +294,7 @@ func TestPropTakePreservesOrder(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPropBroadcastCompleteness verifies that every branch of a Broadcast
-// receives all items in the original order — no drops, no reorders, no
+// receives all items in the original order; no drops, no reorders, no
 // cross-branch divergence.
 func TestPropBroadcastCompleteness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
@@ -494,7 +494,7 @@ func TestPropMapComposition(t *testing.T) {
 // TestPropFlatMapLeftIdentity verifies the monad left identity law:
 // FlatMap(FromSlice([a]), f) ≡ f(a). Wrapping a single value in a pipeline
 // and FlatMapping over it must produce exactly the same items as calling f
-// directly — no more, no fewer, in the same order.
+// directly; no more, no fewer, in the same order.
 func TestPropFlatMapLeftIdentity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		a := rapid.IntRange(-1000, 1000).Draw(t, "a")
@@ -515,7 +515,7 @@ func TestPropFlatMapLeftIdentity(t *testing.T) {
 			t.Fatalf("FlatMap(unit(a), f) error: %v", err)
 		}
 
-		// Right side: f(a) directly — the ground truth of what f produces.
+		// Right side: f(a) directly; the ground truth of what f produces.
 		var right []int
 		if err := f(context.Background(), a, func(v int) error {
 			right = append(right, v)
@@ -604,7 +604,7 @@ func TestPropFlatMapAssociativity(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPropScanPreservesCount verifies that Scan emits exactly one value per
-// input item — the running accumulation does not add or drop items.
+// input item; the running accumulation does not add or drop items.
 func TestPropScanPreservesCount(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
@@ -623,7 +623,7 @@ func TestPropScanPreservesCount(t *testing.T) {
 }
 
 // TestPropScanLastEqualsReduce verifies that the last value emitted by Scan
-// equals the single value emitted by Reduce — both compute the same total fold.
+// equals the single value emitted by Reduce; both compute the same total fold.
 // Restricted to non-empty input because Scan on an empty stream emits nothing
 // (no last value), while Reduce emits the initial value; the behaviours
 // diverge by design for the empty case.
@@ -781,7 +781,7 @@ func lengths[T any](ss [][]T) []int {
 // ---------------------------------------------------------------------------
 
 // TestPropEmptyIsMergeIdentity verifies that Merge(Empty, p) has the same
-// multiset as p alone — Empty is the identity element for Merge.
+// multiset as p alone; Empty is the identity element for Merge.
 func TestPropEmptyIsMergeIdentity(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
@@ -798,7 +798,7 @@ func TestPropEmptyIsMergeIdentity(t *testing.T) {
 }
 
 // TestPropConcatEmptyLeft verifies that Concat(Empty, p) emits exactly the
-// items of p in the original order — Empty is the left identity for Concat.
+// items of p in the original order; Empty is the left identity for Concat.
 func TestPropConcatEmptyLeft(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
@@ -818,7 +818,7 @@ func TestPropConcatEmptyLeft(t *testing.T) {
 }
 
 // TestPropConcatEmptyRight verifies that Concat(p, Empty) emits exactly the
-// items of p in the original order — Empty is the right identity for Concat.
+// items of p in the original order; Empty is the right identity for Concat.
 func TestPropConcatEmptyRight(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		in := rapid.SliceOf(rapid.IntRange(-1000, 1000)).Draw(t, "in")
@@ -842,7 +842,7 @@ func TestPropConcatEmptyRight(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestPropNeverAmbIdentity verifies that Amb(Never, p) forwards all items
-// from p — Never is the identity element for Amb when p is non-empty.
+// from p; Never is the identity element for Amb when p is non-empty.
 //
 // Note: Amb(Never, Empty) would deadlock because Amb determines a winner by
 // the first item emitted, and neither pipeline would ever emit. This test
@@ -1924,12 +1924,12 @@ func TestPropPairwise(t *testing.T) {
 			t.Fatalf("Pairwise length: got %d, want %d (input len %d)", len(got), wantLen, len(in))
 		}
 
-		// Invariant 2: boundary — streams of length 0 or 1 produce no pairs.
+		// Invariant 2: boundary; streams of length 0 or 1 produce no pairs.
 		if len(in) <= 1 && len(got) != 0 {
 			t.Fatalf("Pairwise on len=%d input produced %d pairs, want 0", len(in), len(got))
 		}
 
-		// Invariant 3: overlap — adjacent pairs share one element.
+		// Invariant 3: overlap; adjacent pairs share one element.
 		for i := 0; i+1 < len(got); i++ {
 			if got[i].Curr != got[i+1].Prev {
 				t.Fatalf("overlap violated at [%d→%d]: got[%d].Curr=%v != got[%d].Prev=%v (input=%v)",
@@ -1970,21 +1970,21 @@ func TestPropMinMax(t *testing.T) {
 			t.Fatal("MinMax on non-empty input returned ok=false")
 		}
 
-		// Invariant 2: Min bound — no item is less than result.Min.
+		// Invariant 2: Min bound; no item is less than result.Min.
 		for _, v := range in {
 			if less(v, result.Min) {
 				t.Fatalf("item %d < Min %d (input=%v)", v, result.Min, in)
 			}
 		}
 
-		// Invariant 3: Max bound — no item is greater than result.Max.
+		// Invariant 3: Max bound; no item is greater than result.Max.
 		for _, v := range in {
 			if less(result.Max, v) {
 				t.Fatalf("item %d > Max %d (input=%v)", v, result.Max, in)
 			}
 		}
 
-		// Invariant 4: membership — Min and Max must appear in the input.
+		// Invariant 4: membership; Min and Max must appear in the input.
 		minFound, maxFound := false, false
 		for _, v := range in {
 			if v == result.Min {

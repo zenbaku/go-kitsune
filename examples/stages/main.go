@@ -1,10 +1,10 @@
-// Example: stages — composable, reusable pipeline transformers.
+// Example: stages: composable, reusable pipeline transformers.
 //
 // Demonstrates:
-//   - Stage[I,O] — a named pipeline transformer type
-//   - Then — compose two stages into one
-//   - Through — apply a Stage[T,T] to a pipeline
-//   - Or — try a primary stage; fall back to a secondary on failure
+//   - Stage[I,O]: a named pipeline transformer type
+//   - Then: compose two stages into one
+//   - Through: apply a Stage[T,T] to a pipeline
+//   - Or: try a primary stage; fall back to a secondary on failure
 package main
 
 import (
@@ -17,7 +17,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Named stage variables — define once, reuse anywhere
+// Named stage variables: define once, reuse anywhere
 // ---------------------------------------------------------------------------
 
 // ParseInt converts a decimal string to int.
@@ -39,7 +39,7 @@ var Stringify kitsune.Stage[int, string] = func(p *kitsune.Pipeline[int]) *kitsu
 	})
 }
 
-// Uppercase is a Stage[T,T] — directly usable with Through.
+// Uppercase is a Stage[T,T]; directly usable with Through.
 var Uppercase kitsune.Stage[string, string] = func(p *kitsune.Pipeline[string]) *kitsune.Pipeline[string] {
 	return kitsune.Map(p, func(_ context.Context, s string) (string, error) {
 		return strings.ToUpper(s), nil
@@ -47,7 +47,7 @@ var Uppercase kitsune.Stage[string, string] = func(p *kitsune.Pipeline[string]) 
 }
 
 // ---------------------------------------------------------------------------
-// Generic middleware — works at any type
+// Generic middleware: works at any type
 // ---------------------------------------------------------------------------
 
 func Logged[T any](label string) kitsune.Stage[T, T] {
@@ -97,7 +97,7 @@ func main() {
 	// Stage.Or(fallback) returns a new Stage that runs each item through the
 	// primary first. If the primary returns an error (or emits nothing), the
 	// same item is passed to the fallback. Or never propagates the primary's
-	// error — fallback is always called on failure.
+	// error; fallback is always called on failure.
 	//
 	// Note: Or spawns a sub-pipeline per item (via First), so it is not a
 	// high-throughput primitive. Use it for low-volume control paths or

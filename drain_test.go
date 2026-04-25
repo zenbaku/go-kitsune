@@ -106,7 +106,7 @@ func TestWithDrainHardStop(t *testing.T) {
 
 	select {
 	case <-done:
-		// Pipeline terminated — hard stop worked.
+		// Pipeline terminated; hard stop worked.
 	case <-time.After(3 * time.Second):
 		t.Fatal("pipeline did not hard-stop after drain timeout")
 	}

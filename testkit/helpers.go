@@ -124,7 +124,7 @@ func (h *RecordingHook) OnGraph(nodes []kitsune.GraphNode) {
 func (h *RecordingHook) OnBuffers(_ func() []kitsune.BufferStatus) {}
 
 // ---------------------------------------------------------------------------
-// Accessors — return copies to avoid races with ongoing recording.
+// Accessors: return copies to avoid races with ongoing recording.
 // ---------------------------------------------------------------------------
 
 // Starts returns all recorded stage-start events.

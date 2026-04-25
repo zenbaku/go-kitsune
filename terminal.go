@@ -109,7 +109,7 @@ func forEachSerial[T any](inCh chan T, fn func(context.Context, T) error, cfg st
 }
 
 // forEachConcurrent runs n goroutines in parallel, each reading from the shared
-// inCh and calling fn. There is no output channel — fn is the side effect.
+// inCh and calling fn. There is no output channel; fn is the side effect.
 func forEachConcurrent[T any](inCh chan T, fn func(context.Context, T) error, cfg stageConfig, hook internal.Hook, drainFn func()) stageFunc {
 	var ctxMapper func(T) context.Context
 	if raw := cfg.contextMapperFn; raw != nil {
@@ -294,7 +294,7 @@ func forEachOrdered[T any](inCh chan T, fn func(context.Context, T) error, cfg s
 }
 
 // ---------------------------------------------------------------------------
-// ForEach — terminal stage
+// ForEach: terminal stage
 // ---------------------------------------------------------------------------
 
 // ForEachRunner is a terminal stage that consumes all items from a pipeline
@@ -409,7 +409,7 @@ func (r *ForEachRunner[T]) WithFinalizer(fn func(ctx context.Context, s RunSumma
 }
 
 // ---------------------------------------------------------------------------
-// Drain — terminal stage (discard all items)
+// Drain: terminal stage (discard all items)
 // ---------------------------------------------------------------------------
 
 // DrainRunner is a terminal stage that discards all items from a pipeline.

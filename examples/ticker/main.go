@@ -1,4 +1,4 @@
-// Example: ticker — time-based sources and limiting.
+// Example: ticker: time-based sources and limiting.
 //
 // Demonstrates: Ticker, Timer, Take, Map
 package main

@@ -408,7 +408,7 @@ func TestSampleWith_Basic(t *testing.T) {
 }
 
 func TestSampleWith_SamplerBeforeData(t *testing.T) {
-	// Fire sampler before source emits anything — nothing should come out.
+	// Fire sampler before source emits anything; nothing should come out.
 	srcCh := kitsune.NewChannel[int](1)
 	samCh := kitsune.NewChannel[struct{}](2)
 
@@ -981,7 +981,7 @@ func TestTimeoutMap(t *testing.T) {
 }
 
 func TestTimeoutMapSkip(t *testing.T) {
-	// Slow item + OnError(Skip()) — item is dropped, no pipeline error.
+	// Slow item + OnError(Skip()); item is dropped, no pipeline error.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.Map(p, func(ctx context.Context, v int) (int, error) {
 		if v == 2 {
@@ -1007,7 +1007,7 @@ func TestTimeoutMapSkip(t *testing.T) {
 }
 
 func TestTimeoutMapFastFn(t *testing.T) {
-	// Fast fn completes well within the deadline — no error.
+	// Fast fn completes well within the deadline; no error.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
 		return v * 10, nil

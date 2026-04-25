@@ -1,4 +1,4 @@
-// Example: broadcast — fan-out a single stream to N independent consumers.
+// Example: broadcast: fan-out a single stream to N independent consumers.
 //
 // Demonstrates: Broadcast, MergeRunners
 package main

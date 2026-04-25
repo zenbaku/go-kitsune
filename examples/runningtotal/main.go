@@ -1,8 +1,8 @@
-// Example: runningtotal — shared mutable state with MapWith.
+// Example: runningtotal: shared mutable state with MapWith.
 //
 // MapWith gives every item access to a single shared Ref that persists for the
 // lifetime of one Run. Because Concurrency(1) is implied, items are processed
-// in order and the Ref is never accessed concurrently — no mutex needed.
+// in order and the Ref is never accessed concurrently; no mutex needed.
 //
 // Contrast with MapWithKey (examples/keyedstate): one Ref per entity key.
 // Here there is one Ref for the entire stream.
@@ -81,14 +81,14 @@ func main() {
 			s.ID, s.Amount, s.Total, s.Max, s.Count)
 	}
 
-	// --- Second run on same pipeline factory — state resets ---
+	// --- Second run on same pipeline factory; state resets ---
 	//
 	// Each Run creates a fresh runCtx, so the Ref starts from the zero value
 	// declared in NewKey. Build a new pipeline from the same factory to confirm.
 	fmt.Println("\n=== Run 2 (state resets between runs) ===")
 	results2, _ := kitsune.Collect(ctx, buildPipeline(txns))
 	if results2[0].Total == results[0].Total {
-		fmt.Println("  Run 2 matches Run 1 — state was correctly reset.")
+		fmt.Println("  Run 2 matches Run 1 ; state was correctly reset.")
 	}
 	lastRun1 := results[len(results)-1]
 	lastRun2 := results2[len(results2)-1]

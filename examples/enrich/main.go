@@ -1,4 +1,4 @@
-// Example: enrich — combine a stream of events with user records fetched in
+// Example: enrich: combine a stream of events with user records fetched in
 // bulk, using BatchTimeout to bound latency under low throughput.
 //
 // Enrich is like LookupBy but calls a Join function to produce the output type

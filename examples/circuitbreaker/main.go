@@ -1,4 +1,4 @@
-// Example: circuitbreaker — protect a flaky dependency with a circuit breaker.
+// Example: circuitbreaker: protect a flaky dependency with a circuit breaker.
 //
 // Demonstrates: CircuitBreaker, FailureThreshold, CooldownDuration, HalfOpenProbes,
 // ErrCircuitOpen, OnError(Skip())

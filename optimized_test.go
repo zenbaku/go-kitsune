@@ -302,7 +302,7 @@ func TestIsOptimized_FanOut_DisablesFusion(t *testing.T) {
 
 func TestIsOptimized_NoConsumer_NotFused(t *testing.T) {
 	src := kitsune.FromSlice([]int{1, 2, 3})
-	// No ForEach attached — consumerCount == 0.
+	// No ForEach attached; consumerCount == 0.
 	mapped := kitsune.Map(src, noopFn)
 
 	reports := mapped.IsOptimized()

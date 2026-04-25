@@ -18,7 +18,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestCatch_NoError(t *testing.T) {
-	// Primary succeeds — fallback must never be invoked.
+	// Primary succeeds; fallback must never be invoked.
 	ctx := context.Background()
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	fallbackCalled := false
@@ -107,7 +107,7 @@ func TestCatch_ContextCancelledSkipsFallback(t *testing.T) {
 }
 
 func TestCatch_FallbackAlsoErrors(t *testing.T) {
-	// Primary errors; fallback also errors — fallback's error is returned.
+	// Primary errors; fallback also errors; fallback's error is returned.
 	ctx := context.Background()
 	fallbackErr := errors.New("fallback failure")
 	p := kitsune.Map(kitsune.FromSlice([]int{1}),
@@ -978,7 +978,7 @@ func TestExhaustMapIgnoresDuringActive(t *testing.T) {
 	}
 	<-innerRunning // wait until inner for item 1 is running
 
-	// These arrive while inner is active — should be dropped
+	// These arrive while inner is active; should be dropped
 	_ = ch.Send(ctx, 2)
 	_ = ch.Send(ctx, 3)
 	time.Sleep(10 * time.Millisecond) // let ExhaustMap read and discard 2 and 3
@@ -1030,7 +1030,7 @@ func TestExhaustMapContextCancel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SwitchMap — Timeout
+// SwitchMap: Timeout
 // ---------------------------------------------------------------------------
 
 func TestSwitchMapTimeout(t *testing.T) {
@@ -1052,7 +1052,7 @@ func TestSwitchMapTimeout(t *testing.T) {
 }
 
 func TestSwitchMapTimeoutSkip(t *testing.T) {
-	// Slow item with OnError(Skip) — the timed-out item is dropped, no pipeline error.
+	// Slow item with OnError(Skip); the timed-out item is dropped, no pipeline error.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.SwitchMap(p, func(ctx context.Context, v int, yield func(int) error) error {
 		if v == 2 {
@@ -1084,7 +1084,7 @@ func TestSwitchMapTimeoutSkip(t *testing.T) {
 }
 
 func TestSwitchMapTimeoutFastFn(t *testing.T) {
-	// Fast fn completes well within deadline — no error, all items processed.
+	// Fast fn completes well within deadline; no error, all items processed.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.SwitchMap(p, func(_ context.Context, v int, yield func(int) error) error {
 		return yield(v * 10)
@@ -1099,7 +1099,7 @@ func TestSwitchMapTimeoutFastFn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SwitchMap — Supervise
+// SwitchMap: Supervise
 // ---------------------------------------------------------------------------
 
 // waitForRestarts polls hook until at least n restarts are recorded or the
@@ -1229,7 +1229,7 @@ func TestSwitchMapSuperviseExhausted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SwitchMap — Overflow
+// SwitchMap: Overflow
 // ---------------------------------------------------------------------------
 
 func TestSwitchMapOverflow(t *testing.T) {
@@ -1269,7 +1269,7 @@ func TestSwitchMapOverflow(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ExhaustMap — Timeout
+// ExhaustMap: Timeout
 // ---------------------------------------------------------------------------
 
 func TestExhaustMapTimeout(t *testing.T) {
@@ -1291,7 +1291,7 @@ func TestExhaustMapTimeout(t *testing.T) {
 }
 
 func TestExhaustMapTimeoutSkip(t *testing.T) {
-	// Slow item with OnError(Skip) — the timed-out item is dropped, no pipeline error.
+	// Slow item with OnError(Skip); the timed-out item is dropped, no pipeline error.
 	// Use a slow source so item 1 is fully processed before item 2 arrives.
 	p := kitsune.Generate(func(ctx context.Context, yield func(int) bool) error {
 		for _, v := range []int{1, 2, 3} {
@@ -1328,7 +1328,7 @@ func TestExhaustMapTimeoutSkip(t *testing.T) {
 }
 
 func TestExhaustMapTimeoutFastFn(t *testing.T) {
-	// Fast fn completes well within deadline — no error, all items processed.
+	// Fast fn completes well within deadline; no error, all items processed.
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	got, err := kitsune.ExhaustMap(p, func(_ context.Context, v int, yield func(int) error) error {
 		return yield(v * 10)
@@ -1343,7 +1343,7 @@ func TestExhaustMapTimeoutFastFn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ExhaustMap — Supervise
+// ExhaustMap: Supervise
 // ---------------------------------------------------------------------------
 
 func TestExhaustMapSupervise(t *testing.T) {
@@ -1452,7 +1452,7 @@ func TestExhaustMapSuperviseExhausted(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ExhaustMap — Overflow
+// ExhaustMap: Overflow
 // ---------------------------------------------------------------------------
 
 func TestExhaustMapOverflow(t *testing.T) {

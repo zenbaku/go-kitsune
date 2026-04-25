@@ -359,7 +359,7 @@ func mapWithOrdered[I, O, S any](
 }
 
 // ---------------------------------------------------------------------------
-// MapWith — stateful 1:1 transform
+// MapWith: stateful 1:1 transform
 // ---------------------------------------------------------------------------
 
 // MapWith applies a 1:1 transform with access to typed pipeline state.
@@ -367,7 +367,7 @@ func mapWithOrdered[I, O, S any](
 // Each call to Run starts with a fresh Ref initialized to key.initial.
 //
 // With Concurrency(n) > 1, n worker goroutines are launched. Each worker owns
-// an independent Ref[S] initialized from key.initial — state is worker-local,
+// an independent Ref[S] initialized from key.initial; state is worker-local,
 // not shared across workers. Add Ordered() to preserve input order.
 //
 // Use OnError to control what happens when fn returns an error (default: Halt).
@@ -803,7 +803,7 @@ func flatMapWithOrdered[I, O, S any](
 }
 
 // ---------------------------------------------------------------------------
-// FlatMapWith — stateful 1:N transform
+// FlatMapWith: stateful 1:N transform
 // ---------------------------------------------------------------------------
 
 // FlatMapWith applies a 1:N transform with access to typed pipeline state.

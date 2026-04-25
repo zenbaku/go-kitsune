@@ -240,7 +240,7 @@ func TestConcat(t *testing.T) {
 }
 
 func TestAmb(t *testing.T) {
-	// Amb with two sources — winner should be the one that emits faster.
+	// Amb with two sources; winner should be the one that emits faster.
 	// We use synchronous FromSlice so one will win; all items from the winner
 	// should be emitted.
 	got := collectAll(t, kitsune.Amb(
@@ -252,7 +252,7 @@ func TestAmb(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("no items emitted")
 	}
-	// Either {1,2,3} or {10,20,30} — check they're from the same source.
+	// Either {1,2,3} or {10,20,30}; check they're from the same source.
 	first := got[0]
 	if first != 1 && first != 10 {
 		t.Fatalf("unexpected first item %d", first)
@@ -343,13 +343,13 @@ func TestChannel_SendContextCancelled(t *testing.T) {
 
 func TestChannel_SourcePanicsOnSecondCall(t *testing.T) {
 	ch := kitsune.NewChannel[int](4)
-	_ = ch.Source() // first call — fine
+	_ = ch.Source() // first call; fine
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected second Source() call to panic")
 		}
 	}()
-	_ = ch.Source() // second call — should panic
+	_ = ch.Source() // second call; should panic
 }
 
 func TestChannel_Backpressure(t *testing.T) {
@@ -362,7 +362,7 @@ func TestChannel_Backpressure(t *testing.T) {
 		sent <- ch.Send(ctx, 42)
 	}()
 
-	// Send should be blocking — verify it hasn't returned yet.
+	// Send should be blocking; verify it hasn't returned yet.
 	select {
 	case err := <-sent:
 		t.Fatalf("Send completed before consumer was ready, err=%v", err)
@@ -370,7 +370,7 @@ func TestChannel_Backpressure(t *testing.T) {
 		// expected: still blocking
 	}
 
-	// Start consumer — Send should now unblock.
+	// Start consumer; Send should now unblock.
 	received := make(chan int, 1)
 	go func() {
 		_, _ = ch.Source().ForEach(func(_ context.Context, v int) error {
@@ -440,7 +440,7 @@ func TestNever(t *testing.T) {
 	if len(items) != 0 {
 		t.Fatalf("Never emitted items: %v", items)
 	}
-	// err is context.DeadlineExceeded or context.Canceled — both are acceptable
+	// err is context.DeadlineExceeded or context.Canceled; both are acceptable
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected error: %v", err)
 	}

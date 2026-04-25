@@ -82,7 +82,7 @@ func buildStageConfig(opts []StageOption) stageConfig {
 	cfg := stageConfig{
 		concurrency: 1,
 		buffer:      internal.DefaultBuffer,
-		// errorHandler intentionally nil — resolved at run time via resolveHandler,
+		// errorHandler intentionally nil; resolved at run time via resolveHandler,
 		// which falls back to the pipeline-level WithErrorStrategy default, then
 		// to internal.DefaultHandler (halt on first error).
 	}
@@ -274,7 +274,7 @@ func MaxItems(n int) StageOption {
 //
 // WithContextMapper is supported on [Map], [FlatMap], and [ForEach].
 //
-// Example — propagating an OpenTelemetry span from a Kafka message without
+// Example: propagating an OpenTelemetry span from a Kafka message without
 // modifying the message type:
 //
 //	msgs := kitsune.FromChan(kafkaMsgs)
@@ -570,7 +570,7 @@ func WithPauseGate(g *Gate) RunOption {
 //	// Same default but one stage halts explicitly.
 //	kitsune.Map(p, criticalFn, kitsune.OnError(kitsune.Halt()))
 //
-// Without this option, the default is [Halt] — the first error stops the
+// Without this option, the default is [Halt]; the first error stops the
 // pipeline. This option applies to [Map], [FlatMap], [ForEach], [MapWith],
 // [FlatMapWith], [MapWithKey], [FlatMapWithKey], [SwitchMap], and
 // [ExhaustMap]. It does not apply to [MapResult], which has its own

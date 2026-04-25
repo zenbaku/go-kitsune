@@ -74,7 +74,7 @@ func FlatMap[I, O any](p *Pipeline[I], fn func(context.Context, I, func(O) error
 }
 
 // flatMapSerialFastPath is the drain-protocol + micro-batching fast path for serial FlatMap.
-// The yield closure is allocated once outside the loop — zero allocs per item.
+// The yield closure is allocated once outside the loop; zero allocs per item.
 func flatMapSerialFastPath[I, O any](inCh <-chan I, outCh chan O, fn func(context.Context, I, func(O) error) error, name string, drainFn func(), drainCh <-chan struct{}) stageFunc {
 	return func(ctx context.Context) error {
 		defer close(outCh)
@@ -251,7 +251,7 @@ func flatMapConcurrent[I, O any](inCh <-chan I, outCh chan O, fn func(context.Co
 						if !ok {
 							return
 						}
-						// Use innerCtx.Done() only — reading errCh here would drain it (BUG: removed for test)
+						// Use innerCtx.Done() only; reading errCh here would drain it (BUG: removed for test)
 						// before the final select below can return it to Supervise.
 						select {
 						case sem <- struct{}{}:

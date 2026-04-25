@@ -19,7 +19,7 @@ func brokerAddr(t *testing.T) string {
 	t.Helper()
 	addr := os.Getenv("KAFKA_BROKER")
 	if addr == "" {
-		t.Skip("KAFKA_BROKER not set — skipping integration test")
+		t.Skip("KAFKA_BROKER not set; skipping integration test")
 	}
 	return addr
 }

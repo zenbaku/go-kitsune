@@ -56,7 +56,7 @@ func TestSequenceEqualDifferentLengthReturnsFalseReversed(t *testing.T) {
 // ---------------------------------------------------------------------------
 // BUG 2: StartWith uses Merge instead of Concat
 //
-// Root cause: Merge is unordered — both the prefix source and the main
+// Root cause: Merge is unordered; both the prefix source and the main
 // source goroutine run concurrently, so items from the main source can
 // arrive before all prefix items have been emitted.
 //

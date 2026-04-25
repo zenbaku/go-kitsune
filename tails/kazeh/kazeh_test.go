@@ -132,7 +132,7 @@ func integrationClients(t *testing.T) (*azeventhubs.ProducerClient, *azeventhubs
 	connStr := os.Getenv("TEST_EVENTHUBS_CONN_STR")
 	hubName := os.Getenv("TEST_EVENTHUBS_NAME")
 	if connStr == "" || hubName == "" {
-		t.Skip("TEST_EVENTHUBS_CONN_STR / TEST_EVENTHUBS_NAME not set — skipping Event Hubs integration test")
+		t.Skip("TEST_EVENTHUBS_CONN_STR / TEST_EVENTHUBS_NAME not set; skipping Event Hubs integration test")
 	}
 	producer, err := azeventhubs.NewProducerClientFromConnectionString(connStr, hubName, nil)
 	if err != nil {

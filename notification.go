@@ -13,9 +13,9 @@ import (
 // Notification[T] is a sum type that wraps a single event from a pipeline:
 // a value, a terminal error, or normal completion.
 //
-//   - Value notification: Done=false, Err=nil — carries a live item.
-//   - Error notification: Done=true, Err!=nil — carries the terminal error.
-//   - Complete notification: Done=true, Err=nil — signals normal completion.
+//   - Value notification: Done=false, Err=nil; carries a live item.
+//   - Error notification: Done=true, Err!=nil; carries the terminal error.
+//   - Complete notification: Done=true, Err=nil; signals normal completion.
 //
 // Produced by [Materialize] and consumed by [Dematerialize].
 //

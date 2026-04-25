@@ -6,7 +6,7 @@ import "context"
 // with an attached trace span (or any other per-item context values).
 // When an item implements ContextCarrier, the engine threads its context
 // through stage functions so that per-item child spans can be created with
-// a normal tracer.Start(ctx, ...) call — no stage signature changes needed.
+// a normal tracer.Start(ctx, ...) call; no stage signature changes needed.
 //
 // Cancellation still comes from the stage context; the item's context only
 // contributes its values (e.g. the trace span). This keeps pipeline shutdown

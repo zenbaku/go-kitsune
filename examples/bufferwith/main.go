@@ -1,4 +1,4 @@
-// Example: bufferwith — signal-driven buffering with an external closing selector.
+// Example: bufferwith: signal-driven buffering with an external closing selector.
 //
 // Demonstrates: BufferWith, NewChannel, Ticker
 package main

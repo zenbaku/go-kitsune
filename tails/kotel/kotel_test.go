@@ -87,7 +87,7 @@ func TestOTelHookErrors(t *testing.T) {
 		Run(context.Background(), kitsune.WithHook(hook))
 
 	rm := collect(t, reader)
-	// All items are skipped — skipped items still count as processed.
+	// All items are skipped; skipped items still count as processed.
 	if total := findCounter(t, rm, "kitsune.stage.items"); total == 0 {
 		t.Errorf("kitsune.stage.items: expected non-zero, got 0")
 	}
@@ -184,7 +184,7 @@ func TestOTelHookBuffers(t *testing.T) {
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("collect metrics: %v", err)
 	}
-	// The gauge may be zero after the pipeline drains — we just verify it was
+	// The gauge may be zero after the pipeline drains; we just verify it was
 	// registered and the callback runs without error.
 	found := false
 	for _, sm := range rm.ScopeMetrics {

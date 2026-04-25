@@ -1,4 +1,4 @@
-// Example: IsOptimized — inspect fast-path and fusion eligibility
+// Example: IsOptimized: inspect fast-path and fusion eligibility
 //
 // IsOptimized reports whether each stage in a pipeline would run on the
 // fast path (drain-protocol + micro-batching loop) and whether adjacent

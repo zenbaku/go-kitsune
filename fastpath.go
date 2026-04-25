@@ -6,12 +6,12 @@ import "github.com/zenbaku/go-kitsune/internal"
 // drain-protocol + micro-batching loop instead of the full slow path.
 //
 // Conditions (must ALL hold):
-//   - Concurrency(1)          — single goroutine, no semaphore needed
-//   - No supervision          — pre-fetched items must not be silently lost on restart
-//   - DefaultHandler          — no retry / skip / return-value substitution
-//   - OverflowBlock           — default backpressure; DropNewest/Oldest need the outbox
-//   - No per-item timeout     — fast path skips itemContext
-//   - NoopHook                — fast path skips all hook dispatch
+//   - Concurrency(1)          : single goroutine, no semaphore needed
+//   - No supervision          : pre-fetched items must not be silently lost on restart
+//   - DefaultHandler          : no retry / skip / return-value substitution
+//   - OverflowBlock           : default backpressure; DropNewest/Oldest need the outbox
+//   - No per-item timeout     : fast path skips itemContext
+//   - NoopHook                : fast path skips all hook dispatch
 //
 // The cache condition (cfg.cacheConfig == nil) is checked at the call site for
 // Map, since it involves an additional actualFn wrapping step.

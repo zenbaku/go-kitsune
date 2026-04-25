@@ -135,7 +135,7 @@ func TestMetricsHookDrops(t *testing.T) {
 	}
 
 	s := m.Stage("dropper")
-	// Some items may be dropped, some not — just verify the counter is accessible.
+	// Some items may be dropped, some not; just verify the counter is accessible.
 	_ = s.Dropped
 }
 

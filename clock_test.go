@@ -78,7 +78,7 @@ func TestBatch_CountFlush(t *testing.T) {
 }
 
 // TestBatch_TestClock verifies that a partial batch is flushed when the
-// BatchTimeout ticker fires via Advance — no real sleep required.
+// BatchTimeout ticker fires via Advance; no real sleep required.
 func TestBatch_TestClock(t *testing.T) {
 	ctx := context.Background()
 	clock := testkit.NewTestClock()
@@ -110,7 +110,7 @@ func TestBatch_TestClock(t *testing.T) {
 	// Let the goroutine consume both items before firing the ticker.
 	time.Sleep(pipelineStartup)
 
-	// Fire the ticker — the partial batch should flush.
+	// Fire the ticker; the partial batch should flush.
 	clock.Advance(5 * time.Second)
 
 	var b1 []int
@@ -223,7 +223,7 @@ func TestThrottle_TestClock(t *testing.T) {
 		done <- err
 	}()
 
-	// Item 1: first emission — always passes.
+	// Item 1: first emission; always passes.
 	if err := ch.Send(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestThrottle_TestClock(t *testing.T) {
 		t.Fatal("timeout waiting for item 1")
 	}
 
-	// Item 2: within the 5s window — should be dropped.
+	// Item 2: within the 5s window; should be dropped.
 	if err := ch.Send(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestThrottle_TestClock(t *testing.T) {
 		// Expected: nothing emitted.
 	}
 
-	// Advance past the window, then send item 3 — should pass.
+	// Advance past the window, then send item 3; should pass.
 	clock.Advance(5 * time.Second)
 	if err := ch.Send(ctx, 3); err != nil {
 		t.Fatal(err)
@@ -299,7 +299,7 @@ func TestDebounce_TestClock(t *testing.T) {
 	// Wait for the goroutine to consume the burst and arm the silence timer.
 	time.Sleep(pipelineStartup)
 
-	// Fire the silence timer — last item (3) should be emitted.
+	// Fire the silence timer; last item (3) should be emitted.
 	clock.Advance(3 * time.Second)
 
 	select {
@@ -361,7 +361,7 @@ func TestTicker_TestClock(t *testing.T) {
 		clock.Advance(time.Second)
 		select {
 		case <-ticks:
-			// Got a tick — good.
+			// Got a tick; good.
 		case <-time.After(tickTimeout):
 			t.Fatalf("timeout waiting for tick %d", i+1)
 		}
@@ -420,7 +420,7 @@ func TestSample_EmitsLatestPerTick(t *testing.T) {
 		t.Fatal("timeout waiting for first sample")
 	}
 
-	// Send one item, fire second tick — that item must be emitted.
+	// Send one item, fire second tick; that item must be emitted.
 	if err := ch.Send(ctx, 42); err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestSample_SkipsTickWhenNoItems(t *testing.T) {
 
 	time.Sleep(pipelineStartup)
 
-	// Send one item, advance once — should emit.
+	// Send one item, advance once; should emit.
 	if err := ch.Send(ctx, 7); err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestSample_SkipsTickWhenNoItems(t *testing.T) {
 		t.Fatal("timeout waiting for first sample")
 	}
 
-	// Advance again without sending any new item — nothing should be emitted.
+	// Advance again without sending any new item; nothing should be emitted.
 	clock.Advance(5 * time.Second)
 	select {
 	case got := <-items:

@@ -56,7 +56,7 @@ func RateMode(m RateLimitMode) RateLimitOpt {
 // discarded. Use [Burst] to allow short bursts above the steady-state rate.
 //
 // rlOpts configures rate-limit behaviour ([Burst], [RateMode]). stageOpts
-// accepts any [StageOption] — most usefully [WithName] and [Buffer].
+// accepts any [StageOption], most usefully [WithName] and [Buffer].
 //
 //	// Allow up to 100 events/sec with bursts of up to 10:
 //	kitsune.RateLimit(events, 100, []kitsune.RateLimitOpt{kitsune.Burst(10)})
@@ -232,7 +232,7 @@ func (cb *circuitBreaker) allow(now time.Time) (allowed bool, open bool) {
 		if now.Before(cb.openUntil) {
 			return false, true
 		}
-		// Cooldown elapsed — enter half-open.
+		// Cooldown elapsed; enter half-open.
 		cb.state = cbHalfOpen
 		cb.successesNeeded = cb.cfg.halfOpenProbes
 		if cb.cfg.halfOpenTimeout > 0 {
@@ -242,7 +242,7 @@ func (cb *circuitBreaker) allow(now time.Time) (allowed bool, open bool) {
 
 	case cbHalfOpen:
 		if cb.cfg.halfOpenTimeout > 0 && now.After(cb.halfOpenDeadline) {
-			// Half-open window expired without enough successes — reopen.
+			// Half-open window expired without enough successes; reopen.
 			cb.state = cbOpen
 			cb.openUntil = now.Add(cb.cfg.cooldown)
 			cb.failures = 0

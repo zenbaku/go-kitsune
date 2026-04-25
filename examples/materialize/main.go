@@ -1,4 +1,4 @@
-// Example: materialize — error-tolerant pipelines with Materialize / Dematerialize.
+// Example: materialize: error-tolerant pipelines with Materialize / Dematerialize.
 //
 // A log-ingestion pipeline reads entries from a stream that may fail mid-run
 // (e.g. a remote connection drops). Without Materialize the terminal error
@@ -61,7 +61,7 @@ func main() {
 	// -------------------------------------------------------------------------
 	// Without Materialize: the terminal error propagates to Run.
 	// The caller can still read the collected entries, but the error is only
-	// visible after Run returns — it is out-of-band from the pipeline graph.
+	// visible after Run returns; it is out-of-band from the pipeline graph.
 	// -------------------------------------------------------------------------
 	fmt.Println("=== Without Materialize ===")
 
@@ -77,8 +77,8 @@ func main() {
 
 	// -------------------------------------------------------------------------
 	// With Materialize: the terminal error becomes a Notification[LogEntry]
-	// value and flows through the pipeline. ForEach sees every event — values,
-	// the error, and the completion signal — and Run returns nil.
+	// value and flows through the pipeline. ForEach sees every event: values,
+	// the error, and the completion signal; and Run returns nil.
 	// -------------------------------------------------------------------------
 	fmt.Println("=== With Materialize ===")
 

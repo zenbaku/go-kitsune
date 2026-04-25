@@ -2,7 +2,7 @@
 //
 // Create an [Inspector], pass it to [kitsune.WithHook], and open the URL in a browser.
 // The dashboard shows the pipeline graph, per-stage throughput and latency, and a
-// scrollable event log — all updated in real time via Server-Sent Events.
+// scrollable event log, all updated in real time via Server-Sent Events.
 //
 // Usage:
 //
@@ -55,7 +55,7 @@ func WithStore(store InspectorStore) Option {
 
 // Inspector collects pipeline events and serves a live dashboard at its HTTP address.
 // It implements kitsune.Hook, kitsune.GraphHook, kitsune.OverflowHook,
-// kitsune.SupervisionHook, kitsune.SampleHook, and kitsune.BufferHook —
+// kitsune.SupervisionHook, kitsune.SampleHook, and kitsune.BufferHook;
 // pass it to kitsune.WithHook.
 //
 // Use [CancelCh] to receive a stop signal from the UI's Stop button, and
@@ -587,7 +587,7 @@ func (i *Inspector) handleState(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Broadcast loop — computes per-stage rates and pushes stats every tick
+// Broadcast loop: computes per-stage rates and pushes stats every tick
 // ---------------------------------------------------------------------------
 
 func (i *Inspector) broadcastLoop() {

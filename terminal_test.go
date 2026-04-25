@@ -12,7 +12,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// ForEach — serial
+// ForEach: serial
 // ---------------------------------------------------------------------------
 
 func TestForEach_Serial(t *testing.T) {
@@ -86,7 +86,7 @@ func TestForEach_Serial_Supervise_Restart(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ForEach — concurrent
+// ForEach: concurrent
 // ---------------------------------------------------------------------------
 
 func TestForEach_Concurrent_AllProcessed(t *testing.T) {
@@ -141,7 +141,7 @@ func TestForEach_Concurrent_Error_Halts(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ForEach — ordered concurrent
+// ForEach: ordered concurrent
 // ---------------------------------------------------------------------------
 
 func TestForEach_Ordered_AllProcessed(t *testing.T) {
@@ -209,7 +209,7 @@ func TestForEach_Ordered_OnError_Skip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ForEach — race detector
+// ForEach: race detector
 // ---------------------------------------------------------------------------
 
 func TestForEach_Concurrent_Race(t *testing.T) {

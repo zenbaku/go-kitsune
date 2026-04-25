@@ -1,4 +1,4 @@
-// Example: fanout — split a stream and run each branch concurrently.
+// Example: fanout: split a stream and run each branch concurrently.
 //
 // Demonstrates: Partition, MergeRunners
 package main

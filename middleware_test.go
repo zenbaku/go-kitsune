@@ -12,12 +12,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// RateLimit — Wait mode
+// RateLimit: Wait mode
 // ---------------------------------------------------------------------------
 
 func TestRateLimitWaitPassesAllItems(t *testing.T) {
 	ctx := context.Background()
-	// Very high rate — should pass everything through without blocking.
+	// Very high rate; should pass everything through without blocking.
 	p := kitsune.FromSlice([]int{1, 2, 3, 4, 5})
 	got, err := kitsune.Collect(ctx, kitsune.RateLimit(p, 1e9, []kitsune.RateLimitOpt{kitsune.Burst(100)}))
 	if err != nil {
@@ -63,7 +63,7 @@ func TestRateLimitWaitPreservesOrder(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RateLimit — Drop mode
+// RateLimit: Drop mode
 // ---------------------------------------------------------------------------
 
 func TestRateLimitDropDiscardsSomeItems(t *testing.T) {
@@ -214,7 +214,7 @@ func TestCircuitBreakerHalfOpenRecovery(t *testing.T) {
 	src.Send(ctx, 2)
 	time.Sleep(5 * time.Millisecond)
 
-	// Item 3: circuit should be closed — fn called normally, no error.
+	// Item 3: circuit should be closed; fn called normally, no error.
 	src.Send(ctx, 3)
 	time.Sleep(5 * time.Millisecond)
 
@@ -301,7 +301,7 @@ func TestReleaseAll(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CircuitBreaker — additional coverage
+// CircuitBreaker: additional coverage
 // ---------------------------------------------------------------------------
 
 func TestCircuitBreakerProbeFailureReopens(t *testing.T) {
@@ -406,7 +406,7 @@ func TestCircuitBreakerHalfOpenTimeoutExpires(t *testing.T) {
 		[]kitsune.CircuitBreakerOpt{
 			kitsune.FailureThreshold(1),
 			kitsune.CooldownDuration(cooldown),
-			kitsune.HalfOpenProbes(10), // need 10 to close — won't happen
+			kitsune.HalfOpenProbes(10), // need 10 to close; won't happen
 			kitsune.HalfOpenTimeout(hoTimeout),
 		},
 		kitsune.OnError(kitsune.ActionDrop()),
@@ -429,7 +429,7 @@ func TestCircuitBreakerHalfOpenTimeoutExpires(t *testing.T) {
 
 	time.Sleep(hoTimeout + 5*time.Millisecond) // half-open timeout expires → reopens
 
-	// Item 3: circuit should be open again — skipped.
+	// Item 3: circuit should be open again; skipped.
 	src.Send(ctx, 3)
 	time.Sleep(5 * time.Millisecond)
 
@@ -522,7 +522,7 @@ func TestCircuitBreakerTwoIndependentBreakers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// RateLimit — additional coverage
+// RateLimit: additional coverage
 // ---------------------------------------------------------------------------
 
 func TestRateLimitBurst(t *testing.T) {
@@ -579,7 +579,7 @@ func TestRateLimitWithName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Pool — additional coverage
+// Pool: additional coverage
 // ---------------------------------------------------------------------------
 
 func TestPooledDoubleReleasePanics(t *testing.T) {

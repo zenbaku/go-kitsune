@@ -12,9 +12,9 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Hook interfaces — aliases from github.com/zenbaku/go-kitsune/hooks
+// Hook interfaces: aliases from github.com/zenbaku/go-kitsune/hooks
 //
-// Using type aliases (=) means internal.Hook IS hooks.Hook — a tail that
+// Using type aliases (=) means internal.Hook IS hooks.Hook; a tail that
 // implements hooks.Hook satisfies internal.Hook with no conversion needed.
 // Swapping the engine is a one-line go.mod change for user code.
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ func (p SupervisionPolicy) HasSupervision() bool {
 type PanicAction int
 
 const (
-	PanicPropagate PanicAction = iota // re-panic (default — existing behavior)
+	PanicPropagate PanicAction = iota // re-panic (default; existing behavior)
 	PanicRestart                      // treat panic as a restartable error
 	PanicSkip                         // recover and continue; the panicking item is lost
 )
@@ -176,7 +176,7 @@ func (s *memoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
 	if b, isByteSlice := v.([]byte); isByteSlice {
 		return b, true, nil
 	}
-	// Values written via SetAny are typed — marshal for external callers.
+	// Values written via SetAny are typed; marshal for external callers.
 	data, err := json.Marshal(v)
 	return data, true, err
 }
@@ -204,7 +204,7 @@ type InProcessStore interface {
 	DeleteAny(key string)
 }
 
-// InProcessStore implementation — no error returns; in-process maps cannot fail.
+// InProcessStore implementation: no error returns; in-process maps cannot fail.
 
 func (s *memoryStore) GetAny(key string) (any, bool) {
 	s.mu.RLock()

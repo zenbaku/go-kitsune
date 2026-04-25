@@ -198,7 +198,7 @@ func TestConsume_DeliveriesChannelClosed(t *testing.T) {
 }
 
 func TestConsume_ContextCancelled(t *testing.T) {
-	// Consumer with no deliveries — blocks until context is cancelled.
+	// Consumer with no deliveries; blocks until context is cancelled.
 	stub := newStubConsumer(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())

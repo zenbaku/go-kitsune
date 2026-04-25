@@ -1,4 +1,4 @@
-// Example: expandmap — bounded BFS traversal with MaxDepth / MaxItems.
+// Example: expandmap: bounded BFS traversal with MaxDepth / MaxItems.
 //
 // ExpandMap walks an arbitrary graph breadth-first. Without bounds it will
 // traverse the entire reachable graph, which on a high-fanout input can

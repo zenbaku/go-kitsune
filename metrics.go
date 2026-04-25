@@ -141,7 +141,7 @@ func (s StageMetrics) ErrorRate() float64 {
 }
 
 // ---------------------------------------------------------------------------
-// stageState — atomic counters per stage
+// stageState: atomic counters per stage
 // ---------------------------------------------------------------------------
 
 type stageState struct {

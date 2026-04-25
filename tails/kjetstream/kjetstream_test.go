@@ -198,7 +198,7 @@ func TestWatchKV(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = js.DeleteKeyValue(context.Background(), "kjetstream_TestWatchKV") })
 
-	// Put two keys before watching — they will be delivered as the initial snapshot.
+	// Put two keys before watching; they will be delivered as the initial snapshot.
 	if _, err := kv.Put(ctx, "foo", []byte("bar")); err != nil {
 		t.Fatal(err)
 	}

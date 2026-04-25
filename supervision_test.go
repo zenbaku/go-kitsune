@@ -235,7 +235,7 @@ func TestForEachPanicRestart(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Map serial supervision (baseline — already wired, verifying test pattern)
+// Map serial supervision (baseline; already wired, verifying test pattern)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -492,7 +492,7 @@ func TestFlatMapConcurrentErrorAlwaysPropagated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Map serial supervision (baseline — already wired, verifying test pattern)
+// Map serial supervision (baseline; already wired, verifying test pattern)
 // ---------------------------------------------------------------------------
 
 func TestMapSerialSupervision(t *testing.T) {
@@ -578,7 +578,7 @@ func TestRetryThenFallback(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSupervisionNoRestartDefault(t *testing.T) {
-	// Without Supervise, errors propagate normally — no restart, no retry.
+	// Without Supervise, errors propagate normally; no restart, no retry.
 	boom := errors.New("stage error")
 	_, err := kitsune.Map(
 		kitsune.FromSlice([]int{1, 2, 3}),

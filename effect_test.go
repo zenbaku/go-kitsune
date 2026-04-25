@@ -246,7 +246,7 @@ func TestEffect_StageOptionsApply(t *testing.T) {
 }
 
 // TestEffect_NoRetryByDefault verifies that a bare Effect with no
-// EffectPolicy makes exactly one attempt — the zero value of RetryStrategy
+// EffectPolicy makes exactly one attempt; the zero value of RetryStrategy
 // must not silently retry forever. This is a regression guard for the
 // Effect-specific MaxAttempts semantics: 0 means single attempt.
 func TestEffect_NoRetryByDefault(t *testing.T) {

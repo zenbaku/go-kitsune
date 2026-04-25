@@ -198,7 +198,7 @@ func runTail(root, tail string, timeout time.Duration, race bool) result {
 
 	events, parseErr := parseJSONStream(strings.NewReader(stdoutBuf.String()))
 	if parseErr != nil && len(events) == 0 {
-		// Likely a build/link failure — JSON output is garbage or empty.
+		// Likely a build/link failure; JSON output is garbage or empty.
 		reason := "build error"
 		if first := firstLine(stderrBuf.String()); first != "" {
 			reason = "build error: " + first
@@ -332,7 +332,7 @@ func extractSkipMessage(line string) string {
 	// Lines sometimes look like:
 	//   "    redis_test.go:17: Redis not available: dial tcp ..."
 	//   "    MONGO_URI not set; skipping MongoDB integration tests"
-	//   "    skip.go:15: KAFKA_BROKER not set — skipping integration test"
+	//   "    skip.go:15: KAFKA_BROKER not set; skipping integration test"
 	if idx := strings.Index(line, ": "); idx != -1 {
 		line = line[idx+2:]
 	}

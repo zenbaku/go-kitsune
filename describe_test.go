@@ -47,7 +47,7 @@ func TestDescribeSimpleChain(t *testing.T) {
 }
 
 func TestDescribeIntermediatePipeline(t *testing.T) {
-	// Callable on a non-terminal *Pipeline[T] — the core new capability vs GraphHook.
+	// Callable on a non-terminal *Pipeline[T]; the core new capability vs GraphHook.
 	src := kitsune.FromSlice([]int{1, 2, 3})
 	intermediate := kitsune.Map(src, func(_ context.Context, v int) (string, error) {
 		return "x", nil

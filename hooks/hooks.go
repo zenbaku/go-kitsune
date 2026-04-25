@@ -1,7 +1,7 @@
 // Package hooks defines the shared hook interfaces for go-kitsune pipelines.
 //
 // Tails import only this module. Either engine (v1 or v2) can be swapped by
-// changing a single line in the user's go.mod — the tail code is unchanged.
+// changing a single line in the user's go.mod; the tail code is unchanged.
 //
 //	import "github.com/zenbaku/go-kitsune/hooks"
 //
@@ -36,14 +36,14 @@ func (NoopHook) OnItem(context.Context, string, time.Duration, error) {}
 func (NoopHook) OnStageDone(context.Context, string, int64, int64)    {}
 
 // OverflowHook is an optional extension of [Hook] for buffer-drop events.
-// Checked via type assertion at runtime — existing Hook implementations need
+// Checked via type assertion at runtime; existing Hook implementations need
 // not implement this.
 type OverflowHook interface {
 	OnDrop(ctx context.Context, stage string, item any)
 }
 
 // SupervisionHook is an optional extension of [Hook] for stage restart events.
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type SupervisionHook interface {
 	OnStageRestart(ctx context.Context, stage string, attempt int, cause error)
 }
@@ -51,14 +51,14 @@ type SupervisionHook interface {
 // SampleHook is an optional extension of [Hook] for item value sampling.
 // Called for approximately every N-th successfully processed item exiting an
 // instrumented stage. The item value is the post-transform output (type-erased).
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type SampleHook interface {
 	OnItemSample(ctx context.Context, stage string, item any)
 }
 
 // GraphHook is an optional extension of [Hook] for pipeline topology.
 // Called once before execution begins with a snapshot of every compiled node.
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type GraphHook interface {
 	OnGraph(nodes []GraphNode)
 }
@@ -67,7 +67,7 @@ type GraphHook interface {
 // The engine calls OnBuffers once before execution with a query function that
 // returns a snapshot of all inter-stage channel occupancies when invoked.
 // Call the query periodically (e.g. every 250ms) to track fill levels over time.
-// Checked via type assertion — existing Hook implementations need not implement this.
+// Checked via type assertion; existing Hook implementations need not implement this.
 type BufferHook interface {
 	OnBuffers(query func() []BufferStatus)
 }

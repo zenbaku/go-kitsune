@@ -586,7 +586,7 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 // # Share vs Broadcast
 //
 // [Broadcast] requires the exact number of consumers to be known at
-// construction time — all branches are created in one call and share the same
+// construction time; all branches are created in one call and share the same
 // options. Share is the right choice when:
 //
 //   - The consumer list is built dynamically (e.g. in a loop driven by config,
@@ -594,7 +594,7 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 //   - Different consumers need different buffer sizes or stage names.
 //   - You want to name each branch at the call site for readability.
 //
-// Example — building subscribers from a config-driven list:
+// Example: building subscribers from a config-driven list:
 //
 //	subscribe := kitsune.Share(events)
 //
@@ -618,7 +618,7 @@ func KeyedBalance[T any](p *Pipeline[T], n int, keyFn func(T) string, opts ...St
 //
 // "Subscribing late" means calling the factory after earlier subscribe calls
 // but before [Runner.Run]. Since the pipeline graph is fully static at Run
-// time, every registered branch receives every item from the start — there is
+// time, every registered branch receives every item from the start; there is
 // no replay and no runtime subscription. Calling the factory after Run has
 // started panics.
 //

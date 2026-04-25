@@ -322,7 +322,7 @@ func FromIter[T any](seq iter.Seq[T]) *Pipeline[T] {
 }
 
 // ---------------------------------------------------------------------------
-// Channel[T] — push-based source
+// Channel[T]: push-based source
 // ---------------------------------------------------------------------------
 
 // ErrChannelClosed is returned by [Channel.Send] when the channel has been closed.
@@ -350,14 +350,14 @@ type Channel[T any] struct {
 
 // NewChannel creates a push-based source with an internal buffer of the given size.
 // The buffer decouples producers from the pipeline's processing rate.
-// A buffer of 0 creates an unbuffered channel — Send blocks until the pipeline
+// A buffer of 0 creates an unbuffered channel; Send blocks until the pipeline
 // consumes the item, and TrySend always returns false unless a consumer is ready.
 func NewChannel[T any](buffer int) *Channel[T] {
 	return &Channel[T]{ch: make(chan T, buffer)}
 }
 
 // Source returns the [*Pipeline] for this channel. Panics if called more than once
-// (single-consumer rule — use [Broadcast] if multiple consumers are needed).
+// (single-consumer rule; use [Broadcast] if multiple consumers are needed).
 func (c *Channel[T]) Source() *Pipeline[T] {
 	if !c.sourced.CompareAndSwap(false, true) {
 		panic("kitsune: Channel.Source called more than once")
@@ -761,7 +761,7 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 // Catch provides stream-level error recovery. The primary pipeline p runs
 // normally; if its execution returns a non-nil, non-context error, fn is
 // called with that error and its returned fallback pipeline is subscribed
-// instead — items already emitted by p are kept and the fallback's items
+// instead; items already emitted by p are kept and the fallback's items
 // follow them.
 //
 // If p completes without error the fallback is never started.
@@ -794,7 +794,7 @@ func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
 			return ctx.Err()
 		}
 
-		// Primary errored — subscribe to the fallback.
+		// Primary errored; subscribe to the fallback.
 		fallback := fn(err)
 		innerCtx2, cancel2 := context.WithCancel(ctx)
 		_, err2 := fallback.ForEach(func(_ context.Context, item T) error {
@@ -817,7 +817,7 @@ func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
 }
 
 // Using acquires a resource, builds a pipeline from it, and guarantees the
-// resource is released when the pipeline exits — regardless of whether it
+// resource is released when the pipeline exits, regardless of whether it
 // completes, errors, or is cancelled. It is the pipeline equivalent of a
 // try-with-resources or defer pattern for resource-bound sources.
 //

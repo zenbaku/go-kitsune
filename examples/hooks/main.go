@@ -1,4 +1,4 @@
-// Example: hooks — observability with LogHook and MetricsHook.
+// Example: hooks: observability with LogHook and MetricsHook.
 //
 // Demonstrates: WithHook, LogHook, MetricsHook, MetricsSnapshot.JSON,
 // MultiHook, StageMetrics.AvgLatency
