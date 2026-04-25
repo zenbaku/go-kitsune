@@ -232,6 +232,7 @@ func Effect[I, R any](
 		rc.setChan(id, ch)
 
 		rc.initDrainNotify(id, out.consumerCount.Load())
+		rc.registerEffectStat(id, meta.name, cfg.required)
 		drainCh := rc.drainCh(id)
 		dryRun := rc.dryRun
 		localCfg := cfg // local copy for closure capture
@@ -257,6 +258,7 @@ func Effect[I, R any](
 
 					if !dryRun {
 						outcome = runEffectAttempts(ctx, item, fn, localCfg)
+						rc.recordEffectOutcome(id, outcome.Applied)
 					}
 
 					select {
