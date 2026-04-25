@@ -72,6 +72,11 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 	}
 
 	name := s.name
+	// Disable fast-path fusion: fusionEntry bypasses build entirely, which
+	// would skip both segment-name stamping and DevStore capture/replay.
+	// Clearing it forces ForEach to take the normal build path.
+	output.fusionEntry = nil
+
 	originalBuild := output.build
 	output.build = func(rc *runCtx) chan O {
 		// Always stamp segment IDs first; this is independent of DevStore.
