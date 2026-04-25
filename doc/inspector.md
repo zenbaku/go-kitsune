@@ -51,6 +51,8 @@ A live SVG visualization of the DAG. Nodes are stages; directed edges show the d
 
 - **Node color** reflects status: pending (neutral), running (highlighted), done (dimmed)
 - **Edge color** reflects whether the downstream stage has seen any errors or drops (yellow/orange indicator)
+- **Segment hulls**: stages wrapped in a [`Segment`](operators.md#segment) appear inside a tinted dashed-border group with the segment's name labelled above. Stages outside any segment render normally.
+- **Effect badges**: stages constructed by [`Effect`](operators.md#effect) or [`TryEffect`](operators.md#tryeffect) carry a small badge in the top-right corner: `REQ` (red) for required effects, `BE` (yellow) for best-effort. The same colours appear in the sidebar's Configuration section.
 - **Click any node** to open the detail sidebar
 
 Use the **⊡ Fit** button to re-center the graph after resizing the window.
@@ -86,7 +88,7 @@ Click any graph node to open the sidebar for that stage. The sidebar shows:
 - **Avg Latency**: mean processing time
 - **Errors / Drops / Restarts**: counts, highlighted in red/yellow when non-zero
 - **Buffer**: fill bar (current / capacity)
-- **Configuration**: concurrency, buffer size, overflow strategy (if non-default)
+- **Configuration**: segment name, effect kind (`Required` / `BestEffort`), concurrency, buffer size, overflow strategy, batch size, per-item timeout, retry policy and supervision indicators (when set)
 - **Recent Samples**: the last few item values seen at this stage (~every 10th item), formatted with `%v`
 
 Close the sidebar with the `×` button or by clicking elsewhere.

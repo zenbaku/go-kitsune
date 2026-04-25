@@ -120,6 +120,15 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 .node-name { font-size: 12px; font-weight: 600; font-family: system-ui,sans-serif; fill: var(--text); }
 .node-kind { font-size: 9px; font-family: system-ui,sans-serif; fill: var(--muted); letter-spacing: .06em; }
 
+/* Segment hull and label */
+.seg-hull   { fill: var(--blue); fill-opacity: .07; stroke: var(--blue); stroke-opacity: .35; stroke-width: 1; stroke-dasharray: 4 3; rx: 8; ry: 8; pointer-events: none; }
+.seg-label  { font-size: 10px; font-weight: 700; font-family: system-ui,sans-serif; fill: var(--blue); letter-spacing: .04em; text-transform: uppercase; opacity: .9; pointer-events: none; }
+
+/* Effect badge: small rectangle + glyph in the top-right corner of effect nodes */
+.eff-badge-required    { fill: var(--red); fill-opacity: .85; }
+.eff-badge-besteffort  { fill: var(--yellow); fill-opacity: .85; }
+.eff-badge-glyph       { font-size: 9px; font-weight: 800; font-family: system-ui,sans-serif; fill: white; pointer-events: none; }
+
 /* ── Stats table ───────────────────────────────────────────────────────────── */
 #stats-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 table { width: 100%; border-collapse: collapse; }
@@ -210,20 +219,20 @@ tr:hover td { background: rgba(127,127,127,.04); }
 <div id="kpi">
   <div class="kpi-card">
     <div class="kpi-label">Uptime</div>
-    <div class="kpi-value" id="k-uptime">—</div>
+    <div class="kpi-value" id="k-uptime">-</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Total Items (sink)</div>
-    <div class="kpi-value" id="k-items">—</div>
+    <div class="kpi-value" id="k-items">-</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Throughput</div>
-    <div class="kpi-value" id="k-rate">—</div>
+    <div class="kpi-value" id="k-rate">-</div>
     <div class="kpi-sub">items / sec</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Active Stages</div>
-    <div class="kpi-value" id="k-stages">—</div>
+    <div class="kpi-value" id="k-stages">-</div>
   </div>
 </div>
 
@@ -269,8 +278,8 @@ tr:hover td { background: rgba(127,127,127,.04); }
 <div id="sidebar">
   <div id="sb-hdr">
     <div>
-      <div id="sb-name">—</div>
-      <div id="sb-kind">—</div>
+      <div id="sb-name">-</div>
+      <div id="sb-kind">-</div>
     </div>
     <button id="sb-close" title="Close">×</button>
   </div>
@@ -464,6 +473,39 @@ function renderDAG() {
   defs.innerHTML = mkMarkers(tc) + mkFilters(dark);
   root.appendChild(defs);
 
+  // Segment hulls (drawn before edges and nodes so they sit underneath)
+  const segments = new Map(); // name → [nodeIds]
+  for (const n of graph) {
+    if (!n.segment_name) continue;
+    if (!segments.has(n.segment_name)) segments.set(n.segment_name, []);
+    segments.get(n.segment_name).push(n.id);
+  }
+  const PAD = 12;
+  for (const [name, ids] of segments) {
+    let xMin=Infinity, yMin=Infinity, xMax=-Infinity, yMax=-Infinity;
+    for (const id of ids) {
+      const p = nodePosns.get(id); if (!p) continue;
+      if (p.x < xMin) xMin = p.x;
+      if (p.y < yMin) yMin = p.y;
+      if (p.x+NW > xMax) xMax = p.x+NW;
+      if (p.y+NH > yMax) yMax = p.y+NH;
+    }
+    if (!isFinite(xMin)) continue;
+    const r = document.createElementNS(NS, 'rect');
+    r.setAttribute('x', xMin-PAD);
+    r.setAttribute('y', yMin-PAD-10); // extra room at top for the label
+    r.setAttribute('width',  xMax-xMin + 2*PAD);
+    r.setAttribute('height', yMax-yMin + 2*PAD + 10);
+    r.setAttribute('class', 'seg-hull');
+    root.appendChild(r);
+    const lbl = document.createElementNS(NS, 'text');
+    lbl.setAttribute('x', xMin-PAD+8);
+    lbl.setAttribute('y', yMin-PAD-2);
+    lbl.setAttribute('class', 'seg-label');
+    lbl.textContent = name;
+    root.appendChild(lbl);
+  }
+
   // Edges
   for (const n of graph) {
     const to = nodePosns.get(n.id);
@@ -498,6 +540,25 @@ function renderDAG() {
     tK.setAttribute('x',x+NW/2); tK.setAttribute('y',y+NH/2+10); tK.setAttribute('text-anchor','middle');
     tK.setAttribute('class','node-kind'); tK.textContent = n.kind.toUpperCase();
     g.appendChild(rect); g.appendChild(tN); g.appendChild(tK);
+
+    // Effect badge in the top-right corner: required (red) vs best-effort (yellow)
+    if (n.is_effect) {
+      const required = !!n.effect_required;
+      const bw = 24, bh = 12;
+      const bx = x + NW - bw - 4, by = y + 4;
+      const bg = document.createElementNS(NS, 'rect');
+      bg.setAttribute('x', bx); bg.setAttribute('y', by);
+      bg.setAttribute('width', bw); bg.setAttribute('height', bh);
+      bg.setAttribute('rx', 3); bg.setAttribute('ry', 3);
+      bg.setAttribute('class', required ? 'eff-badge-required' : 'eff-badge-besteffort');
+      const bt = document.createElementNS(NS, 'text');
+      bt.setAttribute('x', bx + bw/2); bt.setAttribute('y', by + bh - 3);
+      bt.setAttribute('text-anchor', 'middle');
+      bt.setAttribute('class', 'eff-badge-glyph');
+      bt.textContent = required ? 'REQ' : 'BE';
+      g.appendChild(bg); g.appendChild(bt);
+    }
+
     root.appendChild(g);
     nodeRects.set(n.id, rect);
 
@@ -719,13 +780,13 @@ function refreshSidebar() {
   // Metrics grid
   document.getElementById('sb-metrics').innerHTML = [
     ['Status',       `<span style="color:${statusColor}">${sdot(status)} ${status}</span>`],
-    ['Items',        s ? fmtBig(s.items) : '—'],
-    ['Throughput',   s && s.ratePerSec>0 ? `<span style="color:var(--blue)">${fmtRate(s.ratePerSec,false)}/s</span>` : '—'],
-    ['Avg Latency',  s ? fmtNs(s.avgLatNs) : '—'],
-    ['Errors',       s && s.errors>0   ? `<span style="color:var(--red)">${fmtBig(s.errors)}</span>`     : '<span class="v-dim">—</span>'],
-    ['Drops',        s && s.drops>0    ? `<span style="color:var(--yellow)">${fmtBig(s.drops)}</span>`   : '<span class="v-dim">—</span>'],
-    ['Restarts',     s && s.restarts>0 ? `<span style="color:var(--yellow)">${fmtBig(s.restarts)}</span>`: '<span class="v-dim">—</span>'],
-    ['Buffer',       s && s.bufferCap  ? mkBufBar(s.bufferLen, s.bufferCap) : '<span class="v-dim">—</span>'],
+    ['Items',        s ? fmtBig(s.items) : '-'],
+    ['Throughput',   s && s.ratePerSec>0 ? `<span style="color:var(--blue)">${fmtRate(s.ratePerSec,false)}/s</span>` : '-'],
+    ['Avg Latency',  s ? fmtNs(s.avgLatNs) : '-'],
+    ['Errors',       s && s.errors>0   ? `<span style="color:var(--red)">${fmtBig(s.errors)}</span>`     : '<span class="v-dim">-</span>'],
+    ['Drops',        s && s.drops>0    ? `<span style="color:var(--yellow)">${fmtBig(s.drops)}</span>`   : '<span class="v-dim">-</span>'],
+    ['Restarts',     s && s.restarts>0 ? `<span style="color:var(--yellow)">${fmtBig(s.restarts)}</span>`: '<span class="v-dim">-</span>'],
+    ['Buffer',       s && s.bufferCap  ? mkBufBar(s.bufferLen, s.bufferCap) : '<span class="v-dim">-</span>'],
   ].map(([label, val]) =>
     `<div class="sb-metric"><div class="sb-metric-label">${label}</div><div class="sb-metric-value">${val}</div></div>`
   ).join('');
@@ -744,9 +805,18 @@ function refreshSidebar() {
   // Config
   const cfgWrap = document.getElementById('sb-config-wrap');
   const cfgLines = [];
+  if (n.segment_name)    cfgLines.push(`Segment: <span>${esc(n.segment_name)}</span>`);
+  if (n.is_effect) {
+    const kind = n.effect_required ? 'Required' : 'BestEffort';
+    cfgLines.push(`Effect: <span>${kind}</span>`);
+  }
   if (n.concurrency > 1) cfgLines.push(`Concurrency: <span>${n.concurrency}</span>`);
   if (n.buffer > 0)      cfgLines.push(`Buffer: <span>${n.buffer}</span>`);
   if (n.overflow > 0)    cfgLines.push(`Overflow: <span>${n.overflow === 1 ? 'DropOldest' : 'DropNewest'}</span>`);
+  if (n.batch_size > 0)  cfgLines.push(`Batch size: <span>${n.batch_size}</span>`);
+  if (n.timeout > 0)     cfgLines.push(`Timeout: <span>${fmtNs(n.timeout)}</span>`);
+  if (n.has_retry)       cfgLines.push(`<span style="color:var(--blue)">Retry policy</span>`);
+  if (n.has_supervision) cfgLines.push(`<span style="color:var(--yellow)">Supervision</span>`);
   if (cfgLines.length) {
     cfgWrap.style.display = '';
     document.getElementById('sb-config').innerHTML = cfgLines.map(l=>`<div>${l}</div>`).join('');
@@ -762,7 +832,7 @@ function refreshSidebar() {
       return `<div class="sb-sample">${esc(value)}<div class="sb-sample-ts">${t}</div></div>`;
     }).join('');
   } else {
-    sampsEl.innerHTML = '<div class="sb-empty">No samples yet — items sampled every ~10th</div>';
+    sampsEl.innerHTML = '<div class="sb-empty">No samples yet (items sampled every ~10th)</div>';
   }
 }
 
@@ -779,16 +849,16 @@ function renderTable() {
     if (!s) {
       tr.innerHTML = `<td style="font-weight:600">${esc(n.name)}</td>
         <td class="v-dim" style="font-size:9px;letter-spacing:.06em;text-transform:uppercase">${esc(n.kind)}</td>
-        <td class="s-pending">pending</td><td colspan="7" class="v-dim">—</td>`;
+        <td class="s-pending">pending</td><td colspan="7" class="v-dim">-</td>`;
     } else {
       tr.innerHTML = `
         <td style="font-weight:600">${esc(n.name)}</td>
         <td class="v-dim" style="font-size:9px;letter-spacing:.06em;text-transform:uppercase">${esc(n.kind)}</td>
         <td class="s-${s.status}">${sdot(s.status)} ${s.status}</td>
-        <td>${s.items>0 ? fmtBig(s.items) : '<span class="v-dim">—</span>'}</td>
-        <td class="${s.errors   >0?'v-err' :'v-dim'}">${s.errors   >0?fmtBig(s.errors)  :'—'}</td>
-        <td class="${s.drops    >0?'v-warn':'v-dim'}">${s.drops    >0?fmtBig(s.drops)   :'—'}</td>
-        <td class="${s.restarts >0?'v-warn':'v-dim'}">${s.restarts >0?fmtBig(s.restarts):'—'}</td>
+        <td>${s.items>0 ? fmtBig(s.items) : '<span class="v-dim">-</span>'}</td>
+        <td class="${s.errors   >0?'v-err' :'v-dim'}">${s.errors   >0?fmtBig(s.errors)  :'-'}</td>
+        <td class="${s.drops    >0?'v-warn':'v-dim'}">${s.drops    >0?fmtBig(s.drops)   :'-'}</td>
+        <td class="${s.restarts >0?'v-warn':'v-dim'}">${s.restarts >0?fmtBig(s.restarts):'-'}</td>
         <td>${mkSparkline(sparkData.get(n.name)||[], s.ratePerSec)}</td>
         <td>${fmtNs(s.avgLatNs)}</td>
         <td>${mkBufBar(s.bufferLen, s.bufferCap)}</td>`;
@@ -798,7 +868,7 @@ function renderTable() {
 }
 
 function mkBufBar(len, cap) {
-  if (!cap) return '<span class="v-dim">—</span>';
+  if (!cap) return '<span class="v-dim">-</span>';
   const pct = Math.min(len / cap, 1);
   const col = pct >= 0.8 ? 'var(--red)' : pct >= 0.5 ? 'var(--yellow)' : 'var(--green)';
   return `<div class="buf-wrap">
@@ -831,7 +901,7 @@ function addLog(entry) {
 // ── Sparklines ────────────────────────────────────────────────────────────────
 function mkSparkline(data, current) {
   const W=60, H=20;
-  const label = current>0 ? fmtRate(current,false) : '<span class="v-dim">—</span>';
+  const label = current>0 ? fmtRate(current,false) : '<span class="v-dim">-</span>';
   if (data.length < 3) return label;
   const max = Math.max(...data,1);
   const pts = data.map((v,i) => `${((i/(data.length-1))*W).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');
@@ -850,13 +920,13 @@ function fmtBig(n) {
   return String(n);
 }
 function fmtRate(r, html=true) {
-  if (!r||r<=0) return html ? '<span class="v-dim">—</span>' : '—';
+  if (!r||r<=0) return html ? '<span class="v-dim">-</span>' : '-';
   if (r>=1e6) return (r/1e6).toFixed(1)+'M';
   if (r>=1e3) return (r/1e3).toFixed(1)+'k';
   return r.toFixed(0);
 }
 function fmtNs(ns) {
-  if (!ns||ns<=0) return '<span class="v-dim">—</span>';
+  if (!ns||ns<=0) return '<span class="v-dim">-</span>';
   if (ns<1000)  return `${ns}ns`;
   if (ns<1e6)   return `${(ns/1e3).toFixed(1)}µs`;
   if (ns<1e9)   return `${(ns/1e6).toFixed(1)}ms`;
