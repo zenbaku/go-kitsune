@@ -404,7 +404,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `WithPauseGate` | `WithPauseGate(g *Gate)` | Attach an external gate for pause/resume control. |
 | `WithDefaultBuffer` | `WithDefaultBuffer(n int)` | Default channel buffer size for all stages that do not set their own `Buffer`. Default: 16. Per-stage `Buffer(n)` takes precedence. |
 | `WithDefaultKeyTTL` | `WithDefaultKeyTTL(d time.Duration)` | Default inactivity TTL for all `MapWithKey` and `FlatMapWithKey` stages that do not set their own `WithKeyTTL`. Default: 0 (disabled). Per-stage `WithKeyTTL` takes precedence; `WithKeyTTL(0)` explicitly disables eviction for a stage. |
-| `DryRun` | `DryRun()` | Skip every [`Effect`](operators.md#effect) call (Applied: false, no error). Pure stages run normally. |
+| `DryRun` | `DryRun()` | Skip every [`Effect`](operators.md#effect) and [`TryEffect`](operators.md#tryeffect) call (Applied: false, no error). Pure stages run normally. |
 
 ---
 

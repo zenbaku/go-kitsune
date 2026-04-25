@@ -2933,7 +2933,7 @@ out := kitsune.Effect(src, publish,
 
 **Dry run**
 
-When the runner is started with `DryRun()` (a [`RunOption`](#run-options)), every `Effect` skips its function and emits an outcome with `Applied: false` and no error. Pure stages (`Map`, `Filter`, `Batch`, etc.) and stateful stages run normally. Useful for validating wiring without producing externally-visible side effects.
+When the runner is started with `DryRun()` (a [`RunOption`](api-matrix.md#run-options)), every `Effect` and `TryEffect` call skips its function and emits an outcome with `Applied: false` and no error. Pure stages (`Map`, `Filter`, `Batch`, etc.) and stateful stages run normally. Useful for validating wiring without producing externally-visible side effects.
 
 **Example**
 
