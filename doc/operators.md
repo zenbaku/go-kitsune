@@ -2839,6 +2839,45 @@ normalised := kitsune.FromSlice(rawLines).
 fetch := kitsune.Or(fetchFromCache, fetchFromDB, kitsune.WithName("fetch"))
 ```
 
+### Segment
+
+```go
+type Segment[I, O any] struct{ /* ... */ }
+
+func NewSegment[I, O any](name string, stage Stage[I, O], opts ...SegmentOption) Segment[I, O]
+func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O]
+```
+
+Wraps a [`Stage`](#stagei-o-then-through-or) with a business name. Every stage created by the inner Stage carries `SegmentName: name` in its [`GraphNode`], making the group visible in [`Pipeline.Describe`] and the inspector dashboard.
+
+**Semantics**
+
+- `Segment` satisfies [`Composable`], so it composes with [`Then`] and [`Pipeline.Through`] interchangeably with [`Stage`].
+- Nested segments resolve to the innermost name; the deepest enclosing `Segment` owns each stage.
+- Segments are pure metadata; they do not affect runtime behaviour.
+
+**When to use**
+
+Reach for `Segment` when you want to give a business name to a multi-step transformation that you want to read, debug, or attribute as one unit. Typical uses: an *enrichment* group, a *validation* group, a *publish* group at the end of a pipeline.
+
+**Options**
+
+`SegmentOption` is reserved for future per-segment metadata (description, tags, owner, metric labels). No options are defined in v1.
+
+**Example**
+
+```go
+fetch   := kitsune.NewSegment("fetch-pages",  fetchStage)
+enrich  := kitsune.NewSegment("enrich-pages", enrichStage)
+publish := kitsune.NewSegment("publish",      publishStage)
+
+pipeline := kitsune.Then(kitsune.Then(fetch, enrich), publish)
+
+for _, n := range pipeline.Apply(src).Describe() {
+    fmt.Println(n.SegmentName, n.Kind, n.Name)
+}
+```
+
 ---
 
 ## :material-alert-circle-outline: Error Handling Options { #error-handling }
