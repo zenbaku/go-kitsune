@@ -214,7 +214,7 @@ func Effect[I, R any](
 		inputs:         []int64{p.id},
 		isEffect:       true,
 		effectRequired: cfg.required,
-		hasRetry:       cfg.retry.MaxAttempts > 1 || cfg.retry.MaxAttempts <= 0,
+		hasRetry:       cfg.retry.MaxAttempts > 1 || cfg.retry.MaxAttempts < 0,
 	}
 
 	var out *Pipeline[EffectOutcome[I, R]]
@@ -296,12 +296,14 @@ func runEffectAttempts[I, R any](
 		isRetryable = func(err error) bool { return err != nil }
 	}
 	maxAttempts := cfg.retry.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 1
+	}
 	var lastErr error
-	var lastResult R
 
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
-			return EffectOutcome[I, R]{Input: item, Result: lastResult, Err: ctx.Err(), Applied: false}
+			return EffectOutcome[I, R]{Input: item, Err: ctx.Err(), Applied: false}
 		}
 
 		attemptCtx := ctx
@@ -317,7 +319,6 @@ func runEffectAttempts[I, R any](
 			return EffectOutcome[I, R]{Input: item, Result: result, Err: nil, Applied: true}
 		}
 		lastErr = err
-		lastResult = result
 
 		if !isRetryable(err) {
 			break
@@ -338,9 +339,9 @@ func runEffectAttempts[I, R any](
 			case <-t.C:
 			case <-ctx.Done():
 				t.Stop()
-				return EffectOutcome[I, R]{Input: item, Result: lastResult, Err: ctx.Err(), Applied: false}
+				return EffectOutcome[I, R]{Input: item, Err: ctx.Err(), Applied: false}
 			}
 		}
 	}
-	return EffectOutcome[I, R]{Input: item, Result: lastResult, Err: lastErr, Applied: false}
+	return EffectOutcome[I, R]{Input: item, Err: lastErr, Applied: false}
 }

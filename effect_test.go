@@ -243,3 +243,59 @@ func TestEffect_StageOptionsApply(t *testing.T) {
 		t.Errorf("Buffer=%d, want 64", got.Buffer)
 	}
 }
+
+// TestEffect_NoRetryByDefault verifies that a bare Effect with no
+// EffectPolicy makes exactly one attempt — the zero value of RetryStrategy
+// must not silently retry forever. This is a regression guard for the
+// Effect-specific MaxAttempts semantics: 0 means single attempt.
+func TestEffect_NoRetryByDefault(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1})
+	sentinel := errors.New("permanent")
+	var attempts atomic.Int32
+	fn := func(_ context.Context, _ int) (int, error) {
+		attempts.Add(1)
+		return 0, sentinel
+	}
+	out, err := kitsune.Collect(ctx, kitsune.Effect(src, fn))
+	if err != nil {
+		t.Fatalf("unexpected pipeline error: %v", err)
+	}
+	if attempts.Load() != 1 {
+		t.Errorf("attempts=%d, want 1 (zero-value RetryStrategy must mean single attempt)", attempts.Load())
+	}
+	if len(out) != 1 || out[0].Applied {
+		t.Fatalf("got %+v, want one terminal-failure outcome", out)
+	}
+	if !errors.Is(out[0].Err, sentinel) {
+		t.Errorf("err=%v, want sentinel", out[0].Err)
+	}
+	if out[0].Result != 0 {
+		t.Errorf("Result=%d, want 0 (zero value of int) on terminal failure", out[0].Result)
+	}
+}
+
+// TestEffect_FailureReturnsZeroResult verifies the godoc contract: on
+// terminal failure, the outcome carries the zero value of R, not the last
+// attempt's partial result. Regression guard for issue surfaced in code
+// review of a5277b5.
+func TestEffect_FailureReturnsZeroResult(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1})
+	sentinel := errors.New("permanent")
+	fn := func(_ context.Context, _ int) (string, error) {
+		return "non-zero-leaked", sentinel
+	}
+	out, err := kitsune.Collect(ctx, kitsune.Effect(src, fn,
+		kitsune.EffectPolicy{Retry: kitsune.RetryUpTo(2, kitsune.FixedBackoff(0))},
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Applied {
+		t.Fatalf("got %+v, want one terminal-failure outcome", out)
+	}
+	if out[0].Result != "" {
+		t.Errorf("Result=%q, want \"\" (zero value of string)", out[0].Result)
+	}
+}
