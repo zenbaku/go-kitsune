@@ -2884,6 +2884,8 @@ for _, n := range pipeline.Apply(src).Describe() {
 
 `Effect` and `TryEffect` model externally-visible side effects (publish to a queue, write to a database, call an external API) with retry, per-attempt timeout, and required-vs-best-effort semantics. They differ from a plain `Map` in that the result of every input is preserved in an `EffectOutcome[I, R]` value: downstream sees one outcome per input, success or failure.
 
+For the workflow story (designing an `EffectPolicy`, required-vs-best-effort outcomes, retry strategies, idempotency, dead-letter routing, parallelizing effects, dry-run wiring validation), see the [Side effects guide](side-effects.md).
+
 ### Effect
 
 ```go

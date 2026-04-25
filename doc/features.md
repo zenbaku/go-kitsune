@@ -226,6 +226,8 @@ out := kitsune.Effect(messages, publish,
 
 [`TryEffect`](operators.md#tryeffect) is a two-output convenience that splits outcomes by `Err`: ok branch + failed branch. [`DryRun()`](options.md#dryrun) skips every `Effect` call so you can validate pipeline wiring without producing side effects.
 
+For the full workflow (designing an `EffectPolicy`, required-vs-best-effort outcomes, retry strategies, idempotency, dead-letter routing, parallelizing effects), see the [Side effects guide](side-effects.md).
+
 ---
 
 ## :material-clipboard-text-clock-outline: Run summary { #run-summary }
