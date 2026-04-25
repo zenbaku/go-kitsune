@@ -308,6 +308,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) (RunSummary, error)
 	rc.defaultBuffer = cfg.defaultBuffer
 	rc.defaultKeyTTL = cfg.defaultKeyTTL
 	rc.dryRun = cfg.dryRun
+	rc.devStore = cfg.devStore
 	r.terminal(rc)
 
 	rc.refs.init(cfg.store, codec)

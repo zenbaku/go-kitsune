@@ -75,6 +75,7 @@ type runConfig struct {
 	defaultBuffer       int           // 0 = use internal.DefaultBuffer (16)
 	defaultKeyTTL       time.Duration // 0 = no eviction unless overridden per stage
 	dryRun              bool
+	devStore            DevStore
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
@@ -612,6 +613,22 @@ func WithDefaultKeyTTL(d time.Duration) RunOption {
 // without producing externally-visible side effects.
 func DryRun() RunOption {
 	return func(c *runConfig) { c.dryRun = true }
+}
+
+// WithDevStore configures the run to use a [DevStore] for per-Segment
+// snapshot capture and replay. On each segment in the pipeline:
+//   - if the store has a snapshot under the segment's name, the snapshot is
+//     replayed as the segment's output and the inner stages are bypassed
+//   - otherwise, the segment runs live and its output is captured to the
+//     store at segment exit
+//
+// Snapshots become stale silently when segment outputs change shape; delete
+// the snapshot file (or use a fresh store directory) to force a re-run.
+//
+// DevStore is a development-time affordance with no production safety.
+// See [DevStore] for full semantics.
+func WithDevStore(store DevStore) RunOption {
+	return func(c *runConfig) { c.devStore = store }
 }
 
 // ---------------------------------------------------------------------------

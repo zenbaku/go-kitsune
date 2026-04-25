@@ -175,6 +175,11 @@ type runCtx struct {
 	// (recordEffectOutcome) use atomic operations and read the entry pointer
 	// from a map already populated at build time, so no lock is needed.
 	effectStats map[int64]*effectStat
+
+	// devStore, if non-nil, enables per-Segment snapshot capture and replay.
+	// Set from cfg.devStore by Runner.Run. Read by Segment.Apply during the
+	// build phase to wrap segment output with capture/replay logic.
+	devStore DevStore
 }
 
 // defaultBufSize returns the run-level default buffer, falling back to
