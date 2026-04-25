@@ -53,11 +53,12 @@ func (s Stage[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 	return s(p)
 }
 
-// Through applies stage s to the pipeline and returns the result.
+// Through applies a same-type composable to the pipeline and returns the
+// result. Both [Stage] and [Segment] satisfy [Composable]:
 //
 //	p.Through(normalize).Through(enrich).ForEach(store).Run(ctx)
-func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T] {
-	return s(p)
+func (p *Pipeline[T]) Through(s Composable[T, T]) *Pipeline[T] {
+	return s.Apply(p)
 }
 
 // Or returns a Stage that tries s first and, on error, calls fallback with the

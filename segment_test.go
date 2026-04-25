@@ -3,6 +3,7 @@ package kitsune_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/zenbaku/go-kitsune"
@@ -53,5 +54,26 @@ func TestComposable_ThenAcceptsComposable(t *testing.T) {
 	want := []int{4, 6, 8}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestComposable_ThroughAcceptsComposable verifies Pipeline.Through accepts
+// any value implementing Composable[T,T], not only Stage[T,T].
+func TestComposable_ThroughAcceptsComposable(t *testing.T) {
+	upcase := composableFunc[string, string](func(p *kitsune.Pipeline[string]) *kitsune.Pipeline[string] {
+		return kitsune.Map(p, func(_ context.Context, s string) (string, error) {
+			return strings.ToUpper(s), nil
+		})
+	})
+
+	out, err := kitsune.Collect(context.Background(),
+		kitsune.FromSlice([]string{"hello", "world"}).Through(upcase),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"HELLO", "WORLD"}
+	if !reflect.DeepEqual(out, want) {
+		t.Errorf("got %v, want %v", out, want)
 	}
 }
