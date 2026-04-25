@@ -1,6 +1,7 @@
 package kitsune
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -64,6 +65,22 @@ type RunSummary struct {
 	Duration      time.Duration   `json:"duration_ns"`
 	CompletedAt   time.Time       `json:"completed_at"`
 	FinalizerErrs []error         `json:"-"`
+}
+
+// RunSummaryHook is an optional extension of [Hook]. If the hook passed to
+// [WithHook] implements RunSummaryHook, [Runner.Run] calls OnRunComplete once
+// at the end of the run, after the [RunSummary] is computed and after any
+// finalizers attached via [Runner.WithFinalizer] have run. The summary
+// passed to OnRunComplete is the same value Run returns to the caller.
+//
+// Hooks that observe per-item events implement [Hook]; hooks that observe
+// the run as a whole implement RunSummaryHook. A single hook may implement
+// both.
+//
+// Checked via type assertion; existing Hook implementations need not
+// implement this.
+type RunSummaryHook interface {
+	OnRunComplete(ctx context.Context, summary RunSummary)
 }
 
 // deriveRunOutcome computes the run's outcome from the pipeline error and
