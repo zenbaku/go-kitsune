@@ -369,6 +369,10 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) (RunSummary, error)
 		}
 	}
 
+	if rsh, ok := hook.(RunSummaryHook); ok {
+		rsh.OnRunComplete(ctx, summary)
+	}
+
 	return summary, pipelineErr
 }
 
