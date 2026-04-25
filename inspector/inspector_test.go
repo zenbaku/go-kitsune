@@ -237,6 +237,12 @@ func (e *errorStore) SaveLog(_ context.Context, _ []inspector.LogEntry) error { 
 func (e *errorStore) LoadLog(_ context.Context) ([]inspector.LogEntry, error) {
 	return nil, errAlwaysFail
 }
+func (e *errorStore) SaveSummary(_ context.Context, _ *inspector.SummarySnapshot) error {
+	return errAlwaysFail
+}
+func (e *errorStore) LoadSummary(_ context.Context) (*inspector.SummarySnapshot, error) {
+	return nil, errAlwaysFail
+}
 
 var errAlwaysFail = errorString("store: always fails")
 

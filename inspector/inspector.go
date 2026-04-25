@@ -68,7 +68,7 @@ type Inspector struct {
 	stages  map[string]*stageState
 	order   []string // insertion order for deterministic table rendering
 	graph          []kithooks.GraphNode
-	lastRunSummary *summarySnapshot // populated by OnRunComplete; nil before first run
+	lastRunSummary *SummarySnapshot // populated by OnRunComplete; nil before first run
 	logBuf         []LogEntry
 	clients map[chan sseMsg]struct{}
 
@@ -125,12 +125,12 @@ type stageSnapshot struct {
 	BufferCap  int     `json:"bufferCap"`
 }
 
-// summarySnapshot is the JSON shape sent over SSE for the "summary" event
+// SummarySnapshot is the JSON shape sent over SSE for the "summary" event
 // and persisted via the InspectorStore. It is the inspector-facing
 // projection of [kitsune.RunSummary]; errors are converted to their string
 // form and the MetricsSnapshot is intentionally excluded (live stage
 // metrics are streamed every tick).
-type summarySnapshot struct {
+type SummarySnapshot struct {
 	Outcome       int      `json:"outcome"`
 	OutcomeName   string   `json:"outcomeName"`
 	Err           string   `json:"err,omitempty"`
@@ -139,8 +139,8 @@ type summarySnapshot struct {
 	FinalizerErrs []string `json:"finalizerErrs,omitempty"`
 }
 
-func toSummarySnapshot(s kitsune.RunSummary) summarySnapshot {
-	snap := summarySnapshot{
+func toSummarySnapshot(s kitsune.RunSummary) SummarySnapshot {
+	snap := SummarySnapshot{
 		Outcome:     int(s.Outcome),
 		OutcomeName: s.Outcome.String(),
 		DurationNs:  s.Duration.Nanoseconds(),
@@ -335,6 +335,9 @@ func (i *Inspector) loadFromStore(ctx context.Context) {
 			i.logBuf = i.logBuf[len(i.logBuf)-logCapacity:]
 		}
 	}
+	if summary, err := i.store.LoadSummary(ctx); err == nil && summary != nil {
+		i.lastRunSummary = summary
+	}
 }
 
 // saveToStore persists current state to the configured store. Must not be called
@@ -342,6 +345,7 @@ func (i *Inspector) loadFromStore(ctx context.Context) {
 func (i *Inspector) saveToStore(ctx context.Context) {
 	i.mu.Lock()
 	graph := i.graph
+	summary := i.lastRunSummary
 	order := make([]string, len(i.order))
 	copy(order, i.order)
 	stagesSnap := make(map[string]*stageState, len(i.stages))
@@ -389,6 +393,12 @@ func (i *Inspector) saveToStore(ctx context.Context) {
 
 	if len(logSnap) > 0 {
 		if err := i.store.SaveLog(ctx, logSnap); err != nil {
+			i.storeErr.Store(err)
+		}
+	}
+
+	if summary != nil {
+		if err := i.store.SaveSummary(ctx, summary); err != nil {
 			i.storeErr.Store(err)
 		}
 	}

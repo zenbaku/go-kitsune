@@ -51,6 +51,15 @@ type InspectorStore interface {
 	SaveLog(ctx context.Context, entries []LogEntry) error
 	// LoadLog returns the last saved log entries, or (nil, nil) if none.
 	LoadLog(ctx context.Context) ([]LogEntry, error)
+
+	// SaveSummary persists the most recent RunSummary snapshot. Implementations
+	// overwrite any previous snapshot. Pass nil to clear.
+	SaveSummary(ctx context.Context, summary *SummarySnapshot) error
+
+	// LoadSummary returns the persisted summary snapshot, or (nil, nil) if no
+	// summary has been saved yet. Errors are returned only for I/O failures;
+	// "no summary saved" is not an error.
+	LoadSummary(ctx context.Context) (*SummarySnapshot, error)
 }
 
 // NewMemoryInspectorStore returns an InspectorStore that holds state in process
@@ -66,12 +75,13 @@ func NewMemoryInspectorStore(logTTL time.Duration) InspectorStore {
 }
 
 type memoryInspectorStore struct {
-	mu     sync.RWMutex
-	graph  []kithooks.GraphNode
-	order  []string
-	stages map[string]PersistedStage
-	log    []LogEntry
-	logTTL time.Duration
+	mu      sync.RWMutex
+	graph   []kithooks.GraphNode
+	order   []string
+	stages  map[string]PersistedStage
+	log     []LogEntry
+	logTTL  time.Duration
+	summary *SummarySnapshot
 }
 
 func (m *memoryInspectorStore) SaveGraph(_ context.Context, nodes []kithooks.GraphNode) error {
@@ -151,4 +161,26 @@ func (m *memoryInspectorStore) LoadLog(_ context.Context) ([]LogEntry, error) {
 	cp := make([]LogEntry, len(m.log))
 	copy(cp, m.log)
 	return cp, nil
+}
+
+func (m *memoryInspectorStore) SaveSummary(_ context.Context, s *SummarySnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s == nil {
+		m.summary = nil
+		return nil
+	}
+	cp := *s
+	m.summary = &cp
+	return nil
+}
+
+func (m *memoryInspectorStore) LoadSummary(_ context.Context) (*SummarySnapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.summary == nil {
+		return nil, nil
+	}
+	cp := *m.summary
+	return &cp, nil
 }
