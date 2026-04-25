@@ -30,13 +30,18 @@ type Composable[I, O any] interface {
 	Apply(p *Pipeline[I]) *Pipeline[O]
 }
 
-// Then chains two stages: the output of s becomes the input of next.
+// Then chains two composables: the output of first becomes the input of
+// second. Both [Stage] and [Segment] satisfy [Composable], so Then accepts
+// either interchangeably:
 //
-//	validate := kitsune.Then(parse, enrich)
-//	result := validate(inputPipeline)
-func Then[I, M, O any](s Stage[I, M], next Stage[M, O]) Stage[I, O] {
+//	validate := kitsune.Then(parse, enrich)              // Stage + Stage
+//	pipeline := kitsune.Then(fetchSeg, kitsune.Then(enrichSeg, publishSeg)) // nested Segments
+//	mixed    := kitsune.Then(parse, enrichSeg)           // Stage + Segment
+//
+// The returned [Stage] runs first.Apply followed by second.Apply.
+func Then[I, M, O any](first Composable[I, M], second Composable[M, O]) Stage[I, O] {
 	return func(p *Pipeline[I]) *Pipeline[O] {
-		return next(s(p))
+		return second.Apply(first.Apply(p))
 	}
 }
 

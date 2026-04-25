@@ -32,3 +32,26 @@ func TestComposable_StageSatisfies(t *testing.T) {
 		t.Errorf("got %v, want [2 3 4]", got)
 	}
 }
+
+// TestComposable_ThenAcceptsComposable verifies Then accepts any value
+// implementing Composable[I,M] / Composable[M,O], not only Stage values.
+// We pass a composableFunc (non-Stage) on the left and a Stage on the right
+// to prove heterogeneous composition works.
+func TestComposable_ThenAcceptsComposable(t *testing.T) {
+	increment := composableFunc[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v + 1, nil })
+	})
+	double := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v * 2, nil })
+	})
+
+	composed := kitsune.Then[int, int, int](increment, double)
+	got, err := kitsune.Collect(context.Background(), composed.Apply(kitsune.FromSlice([]int{1, 2, 3})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{4, 6, 8}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
