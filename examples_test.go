@@ -33,6 +33,7 @@ func TestExamples(t *testing.T) {
 		"concurrency-guide/enrich",
 		"concurrency-guide/routing",
 		"concurrency-guide/useragg",
+		"effect",
 		"enrich",
 		"expandmap",
 		"fanout",
