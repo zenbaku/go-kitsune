@@ -3,10 +3,13 @@ package inspector_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"testing"
 	"time"
 
+	kitsune "github.com/zenbaku/go-kitsune"
 	kithooks "github.com/zenbaku/go-kitsune/hooks"
 	"github.com/zenbaku/go-kitsune/inspector"
 )
@@ -249,3 +252,101 @@ var errAlwaysFail = errorString("store: always fails")
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+// TestInspector_OnRunComplete verifies that the inspector receives the run
+// summary when the runner completes, broadcasts a "summary" SSE event, and
+// includes the summary in /state for browser refreshes.
+func TestInspector_OnRunComplete(t *testing.T) {
+	insp := inspector.New()
+	defer insp.Close()
+
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	runner := src.ForEach(func(_ context.Context, _ int) error { return nil })
+
+	summary, err := runner.Run(context.Background(), kitsune.WithHook(insp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Outcome != kitsune.RunSuccess {
+		t.Fatalf("Outcome=%v, want RunSuccess", summary.Outcome)
+	}
+
+	// Allow the broadcast goroutine to deliver the SSE event before we read
+	// /state. The handleState handler reads i.lastRunSummary directly under
+	// i.mu, so the value is visible immediately after Run returns; this
+	// sleep is a safety margin for goroutine scheduling under -race.
+	time.Sleep(50 * time.Millisecond)
+
+	// /state should now include the summary.
+	res, err := http.Get(insp.URL() + "/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Summary *struct {
+			Outcome     int    `json:"outcome"`
+			OutcomeName string `json:"outcomeName"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Summary == nil {
+		t.Fatalf("expected summary in /state response; got body: %s", body)
+	}
+	if got.Summary.OutcomeName != "RunSuccess" {
+		t.Errorf("OutcomeName=%q, want RunSuccess", got.Summary.OutcomeName)
+	}
+}
+
+// TestInspector_OnRunComplete_FinalizerErrors verifies that finalizer
+// errors flow through the summary the inspector sees and are surfaced as
+// strings in the SSE/state JSON shape.
+func TestInspector_OnRunComplete_FinalizerErrors(t *testing.T) {
+	insp := inspector.New()
+	defer insp.Close()
+
+	sentinel := errors.New("finalizer-failed")
+	src := kitsune.FromSlice([]int{1})
+	runner := src.ForEach(func(_ context.Context, _ int) error { return nil }).
+		WithFinalizer(func(_ context.Context, _ kitsune.RunSummary) error {
+			return sentinel
+		})
+
+	summary, err := runner.Run(context.Background(), kitsune.WithHook(insp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.FinalizerErrs) != 1 || !errors.Is(summary.FinalizerErrs[0], sentinel) {
+		t.Fatalf("FinalizerErrs=%v, want [%v]", summary.FinalizerErrs, sentinel)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	res, err := http.Get(insp.URL() + "/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Summary *struct {
+			FinalizerErrs []string `json:"finalizerErrs"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Summary == nil || len(got.Summary.FinalizerErrs) != 1 ||
+		got.Summary.FinalizerErrs[0] != "finalizer-failed" {
+		t.Errorf("FinalizerErrs in /state = %+v, want [\"finalizer-failed\"]", got.Summary)
+	}
+}
