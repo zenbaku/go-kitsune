@@ -221,7 +221,7 @@ kitsune.go: Runner.Run
 ```mermaid
 flowchart TD
     A["Runner.Run"] --> B["newRunCtx()"]
-    B --> C["r.terminal(rc)\nrecursive build — allocates channels,\nregisters stageFuncs into rc"]
+    B --> C["r.terminal(rc)\nrecursive build: allocates channels,\nregisters stageFuncs into rc"]
     C --> D["rc.refs.init()\nmaterialise state keys"]
     D --> E["GraphHook.OnGraph\nif implemented"]
     E --> F["BufferHook.OnBuffers\nif implemented"]
@@ -272,7 +272,7 @@ Sources check it on every yield:
 
 ```go
 select {
-case <-done:      return false  // stop producing — clean exit
+case <-done:      return false  // stop producing; clean exit
 case <-ctx.Done(): return false
 default:
 }
@@ -374,7 +374,7 @@ defer func() {
         go internal.DrainChan(inCh) // fallback: unblock unconverted upstreams
     }
 }()
-defer drainFn() // signal upstream first (LIFO — fires before DrainChan check)
+defer drainFn() // signal upstream first (LIFO; fires before DrainChan check)
 
 for {
     select {
@@ -809,13 +809,13 @@ sequenceDiagram
 
     Caller->>Monitor: parentCtx cancelled
     Note over Monitor: Phase 1
-    Monitor->>Stages: signalDone() — sources stop
+    Monitor->>Stages: signalDone(): sources stop
     Note over Stages: sources exit cleanly,\ndownstream stages drain
 
     alt drains within timeout
         Stages->>Monitor: drainCtx completes naturally
     else timeout exceeded
-        Monitor->>Stages: drainCancel() — hard stop
+        Monitor->>Stages: drainCancel(): hard stop
     end
 ```
 

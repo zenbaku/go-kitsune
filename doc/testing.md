@@ -86,7 +86,7 @@ import (
 Define reusable stages as constructor functions that return a `Stage[I,O]`. The client (or any dependency) is a parameter to the constructor, not a global:
 
 ```go
-// parseStage is a pure transform — no external dependency.
+// parseStage is a pure transform; no external dependency.
 func parseStage() kitsune.Stage[string, LogEntry] {
     return func(p *kitsune.Pipeline[string]) *kitsune.Pipeline[LogEntry] {
         return kitsune.Map(p, parseLine, kitsune.OnError(kitsune.Skip()))
@@ -320,7 +320,7 @@ func TestDebounce(t *testing.T) {
 
     ch.Send(ctx, "a")
     ch.Send(ctx, "b") // supersedes "a"
-    clock.Advance(200 * time.Millisecond) // silence window elapses — "b" emitted
+    clock.Advance(200 * time.Millisecond) // silence window elapses; "b" emitted
 
     cancel()
     mu.Lock(); defer mu.Unlock()

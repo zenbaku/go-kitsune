@@ -105,7 +105,7 @@ Replay bypasses inner stages **including** any `Effect` calls. This is usually w
 
 But it has a sharp edge: a segment that reads as "publish to queue" silently turns into a no-op when its snapshot exists. If you genuinely want the effect to fire on every run, do one of:
 
-1. Don't wrap effects in segments. Put the `Effect` outside any `Segment` — it always runs live.
+1. Don't wrap effects in segments. An `Effect` outside any `Segment` always runs live.
 2. Use `WithDevStore` only when iterating; production runs use no DevStore and effects always fire.
 3. Delete the snapshot file before each run if you want a refresh.
 

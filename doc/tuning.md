@@ -22,7 +22,7 @@ The default buffer size of 16 (`engine.DefaultBuffer`) is intentionally modest. 
 
 ## Fast path and stage fusion
 
-Kitsune has two internal execution shortcuts that can dramatically increase throughput for serial, hook-free pipelines: the **fast path** and **stage fusion**. Both are applied automatically when the pipeline meets certain conditions. Understanding them helps you avoid accidentally disabling them — and helps you diagnose throughput drops when you do.
+Kitsune has two internal execution shortcuts that can dramatically increase throughput for serial, hook-free pipelines: the **fast path** and **stage fusion**. Both are applied automatically when the pipeline meets certain conditions. Understanding them helps you avoid accidentally disabling them, and helps you diagnose throughput drops when you do.
 
 ### What the fast path is
 
@@ -55,9 +55,9 @@ Fusion propagates upstream as long as every operator in the chain sets a `fusion
 
 | Operator | Breaks fusion? | Notes |
 |---|---|---|
-| `Map` | No — participates | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
-| `Filter` | No — participates | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
-| `ForEach` | Terminal — ends chain | Triggers fused execution when upstream is a single-consumer fusable chain |
+| `Map` | No (participates) | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
+| `Filter` | No (participates) | Sets `fusionEntry`; fuses with downstream `Map`, `Filter`, or `ForEach` |
+| `ForEach` | Terminal (ends chain) | Triggers fused execution when upstream is a single-consumer fusable chain |
 | `FlatMap` | **Yes** | Has its own fast path (drain + micro-batching) but never sets `fusionEntry` |
 | `Batch`, `Window`, `SlidingWindow`, `SessionWindow`, `BufferWith`, `ChunkBy`, `ChunkWhile` | **Yes** | Windowing and batching operators do not set `fusionEntry` |
 | `Throttle`, `Debounce`, `Sample`, `SampleWith` | **Yes** | Rate and timing operators do not set `fusionEntry` |
@@ -79,7 +79,7 @@ src      := kitsune.FromSlice(records)        // boundary (source)
 flat     := kitsune.FlatMap(src, expand)       // boundary (FlatMap has fast path, no fusion)
 mapped   := kitsune.Map(flat, transform)       // starts new fusion group
 filtered := kitsune.Filter(mapped, isValid)    // continues fusion group
-runner   := filtered.ForEach(store)            // ends fusion group — Map+Filter+ForEach fuse
+runner   := filtered.ForEach(store)            // ends fusion group; Map+Filter+ForEach fuse
 
 for _, r := range mapped.IsOptimized() {
     fmt.Printf("%s: fused=%v fast=%v reasons=%v\n", r.Name, r.Fused, r.FastPath, r.Reasons)
@@ -217,10 +217,10 @@ By default, a stage's output channel applies backpressure: when the buffer is fu
 
 `Overflow(DropOldest)` is designed for pipelines where dropping stale data is preferable to blocking the producer. Its implementation has two send paths:
 
-- **Fast path (buffer has space):** a non-blocking `select` succeeds immediately — no lock acquired, effectively lock-free.
+- **Fast path (buffer has space):** a non-blocking `select` succeeds immediately; no lock acquired, effectively lock-free.
 - **Slow path (buffer is full):** a `sync.Mutex` is held while the oldest buffered item is drained and the new item is inserted. The lock prevents two concurrent goroutines from interleaving their drain and resend steps, which would corrupt buffer ordering.
 
-**The slow path is the hot path under sustained backpressure.** `DropOldest` is typically chosen precisely because downstream is consistently slower than upstream — meaning the buffer is full most of the time. In that scenario every `Send` call takes the slow path and acquires the mutex. With `Concurrency(n)`, all `n` workers serialise on a single lock per item.
+**The slow path is the hot path under sustained backpressure.** `DropOldest` is typically chosen precisely because downstream is consistently slower than upstream, meaning the buffer is full most of the time. In that scenario every `Send` call takes the slow path and acquires the mutex. With `Concurrency(n)`, all `n` workers serialise on a single lock per item.
 
 **Mitigation:** increase `Buffer(n)` alongside `DropOldest`. A larger buffer means more time on the fast path (no lock) and less time on the slow path. The trade-off is memory: each extra buffer slot holds one item.
 
@@ -233,7 +233,7 @@ kitsune.Map(src, fn,
 )
 ```
 
-**When to prefer `DropNewest` instead:** if you do not need the "keep the most recent item" guarantee, `DropNewest` achieves similar throughput with only an atomic counter — no mutex contention at any concurrency level. The difference is which item is discarded: `DropNewest` discards the incoming item (producer pays no extra cost), while `DropOldest` discards the oldest buffered item (consumer gets newer data, but at the cost of the mutex on the slow path).
+**When to prefer `DropNewest` instead:** if you do not need the "keep the most recent item" guarantee, `DropNewest` achieves similar throughput with only an atomic counter; no mutex contention at any concurrency level. The difference is which item is discarded: `DropNewest` discards the incoming item (producer pays no extra cost), while `DropOldest` discards the oldest buffered item (consumer gets newer data, but at the cost of the mutex on the slow path).
 
 ---
 

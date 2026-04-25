@@ -30,7 +30,7 @@ you do not have to read every godoc in sequence.
 
 ## Sources explained
 
-### `FromSlice[T](items []T)` — in-memory data
+### `FromSlice[T](items []T)`: in-memory data
 
 Use when you have all the data already in a slice. This is the most common source
 in tests and the right choice for any finite in-memory collection.
@@ -39,7 +39,7 @@ in tests and the right choice for any finite in-memory collection.
 p := kitsune.FromSlice([]string{"alice", "bob", "carol"})
 ```
 
-### `From[T](src <-chan T)` — wrap an existing channel
+### `From[T](src <-chan T)`: wrap an existing channel
 
 Use when another part of your program already owns and populates a channel and you
 want to pull items from it into a pipeline. The pipeline completes when the channel
@@ -52,9 +52,9 @@ p := kitsune.From(ch)
 ```
 
 **Do not use** `From` when you need to push items from multiple goroutines after
-pipeline construction — use `NewChannel` instead.
+pipeline construction; use `NewChannel` instead.
 
-### `Generate[T](fn)` — pull-based producer loop
+### `Generate[T](fn)`: pull-based producer loop
 
 Use when the producer is a loop you control: paginated APIs, database cursors,
 file readers, polling loops. `Generate` calls your function with a `yield` callback;
@@ -84,7 +84,7 @@ p := kitsune.Generate(func(ctx context.Context, yield func(Page) bool) error {
 write inline. Prefer `NewChannel` when items arrive from external goroutines that
 the pipeline does not own (HTTP handlers, callbacks).
 
-### `NewChannel[T](buffer int)` / `Channel[T]` — push-based multi-sender bridge
+### `NewChannel[T](buffer int)` / `Channel[T]`: push-based multi-sender bridge
 
 Use when items arrive asynchronously from goroutines you do not control. Create a
 `Channel[T]`, call `.Source()` once to get the pipeline, then send items with
@@ -104,7 +104,7 @@ ch.Close()
 `Channel` is safe for concurrent use. `Send` blocks under backpressure; `TrySend`
 returns false instead of blocking.
 
-### `FromIter[T](seq iter.Seq[T])` — Go 1.23 iterators
+### `FromIter[T](seq iter.Seq[T])`: Go 1.23 iterators
 
 Use when you have a standard library or third-party iterator (e.g. `slices.Values`,
 `maps.Keys`, a database row iterator). Bridges the Go iterator protocol into a pipeline.
@@ -113,7 +113,7 @@ Use when you have a standard library or third-party iterator (e.g. `slices.Value
 p := kitsune.FromIter(slices.Values(mySlice))
 ```
 
-### `Ticker(d time.Duration)` — wall-clock interval
+### `Ticker(d time.Duration)`: wall-clock interval
 
 Use when you need to do something on a repeating schedule (heartbeats, polling,
 periodic flushes). Emits `time.Time` values at each tick. Infinite: pair with
@@ -124,7 +124,7 @@ periodic flushes). Emits `time.Time` values at each tick. Infinite: pair with
 p := kitsune.Ticker(time.Second).Take(10)
 ```
 
-### `Timer[T](delay, fn)` — single value after a delay
+### `Timer[T](delay, fn)`: single value after a delay
 
 Use when you need exactly one item emitted after a fixed delay. Completes after
 the single emission.
@@ -134,7 +134,7 @@ the single emission.
 p := kitsune.Timer(30*time.Second, func() string { return "timeout" })
 ```
 
-### `Unfold[S, T](seed, fn)` — explicit-state mathematical sequence
+### `Unfold[S, T](seed, fn)`: explicit-state mathematical sequence
 
 Use for sequences where the next value depends on a state that changes at each step.
 `fn` receives the current state and returns `(value, nextState, stop)`. Unlike
@@ -148,7 +148,7 @@ p := kitsune.Unfold([2]int{0, 1}, func(s [2]int) (int, [2]int, bool) {
 // → 0, 1, 1, 2, 3, 5, 8, 13
 ```
 
-### `Iterate[T](seed, fn)` — implicit-state mathematical sequence
+### `Iterate[T](seed, fn)`: implicit-state mathematical sequence
 
 Use for sequences where the next value is a simple function of the previous value
 and the value and state are the same type.
@@ -158,7 +158,7 @@ p := kitsune.Iterate(1, func(n int) int { return n * 2 }).Take(5)
 // → 1, 2, 4, 8, 16
 ```
 
-### `Repeatedly[T](fn)` — infinite stream from a function
+### `Repeatedly[T](fn)`: infinite stream from a function
 
 Use when every item is produced by calling the same function repeatedly (random
 number generation, reading from a ring buffer, calling a sensor). Infinite: pair
@@ -168,7 +168,7 @@ with `Take(n)` or `TakeWhile`.
 p := kitsune.Repeatedly(rand.Int).Take(100)
 ```
 
-### `Cycle[T](items)` — infinite repeating list
+### `Cycle[T](items)`: infinite repeating list
 
 Use when you want to loop over a fixed set of values indefinitely (round-robin
 selection, test fixtures). Panics on empty input. Infinite: pair with `Take(n)`.
@@ -178,7 +178,7 @@ p := kitsune.Cycle([]string{"red", "green", "blue"}).Take(7)
 // → red, green, blue, red, green, blue, red
 ```
 
-### `Concat[T](factories...)` — sequential pipeline chaining
+### `Concat[T](factories...)`: sequential pipeline chaining
 
 Use when you need to run pipelines one after another: all items from the first
 complete before the second starts. Factories are functions rather than `*Pipeline`
@@ -193,7 +193,7 @@ kitsune.Concat(
 // → 1, 2, 3, 4
 ```
 
-### `Amb[T](factories...)` — race multiple sources
+### `Amb[T](factories...)`: race multiple sources
 
 Use when you have multiple possible sources and want items from whichever responds
 first. All factories start concurrently; as soon as one emits its first item, all
@@ -207,7 +207,7 @@ kitsune.Amb(
 )
 ```
 
-### `Empty[T]()` — identity element (produces nothing)
+### `Empty[T]()`: identity element (produces nothing)
 
 Completes immediately with no items. Use as a base case in tests, a placeholder
 in conditional pipeline construction, or the identity element in composition:
@@ -222,7 +222,7 @@ if condition {
 }
 ```
 
-### `Never[T]()` — absorbing element (blocks forever)
+### `Never[T]()`: absorbing element (blocks forever)
 
 Never emits any items and never completes until the context is cancelled. Use as a
 placeholder in tests that assert on other branches, or as the identity element for
@@ -238,7 +238,7 @@ p := kitsune.Amb(
 
 ---
 
-## Generate vs NewChannel — extended comparison
+## Generate vs NewChannel: extended comparison
 
 This distinction trips up most new users.
 

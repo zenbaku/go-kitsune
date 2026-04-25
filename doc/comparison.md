@@ -82,9 +82,9 @@ results := p.Wait() // []User, errors discarded
 ```
 
 ```go
-// Kitsune — composable into a larger pipeline
+// Kitsune: composable into a larger pipeline
 users := kitsune.Map(ids, db.GetUser, kitsune.Concurrency(20))
-// then: Filter, Batch, ForEach — all in the same graph
+// then: Filter, Batch, ForEach; all in the same graph
 ```
 
 ---
@@ -98,14 +98,14 @@ Kitsune differs in: compile-time type safety (generics vs `interface{}`), larger
 **Code contrast:** typed vs interface{} transform.
 
 ```go
-// go-streams — interface{} everywhere
+// go-streams: interface{} everywhere
 flow.NewMap(func(i interface{}) interface{} {
     return i.(Order).Total * 1.1
 }, 1)
 ```
 
 ```go
-// Kitsune — compile-time type safety
+// Kitsune: compile-time type safety
 kitsune.Map(orders, func(_ context.Context, o Order) (float64, error) {
     return o.Total * 1.1, nil
 })
@@ -122,7 +122,7 @@ If migrating from RxGo: Kitsune's operator names differ (`Observable`/`Observer`
 **Code contrast:** map operator.
 
 ```go
-// RxGo — interface{} + archived
+// RxGo: interface{} + archived
 rxgo.Just(items)().Map(func(_ context.Context, i interface{}) (interface{}, error) {
     return process(i.(Item)), nil
 })
@@ -173,7 +173,7 @@ Benthos is a different category: it is a runtime you deploy, not a library you i
 **Code contrast:** YAML config vs Go code.
 
 ```yaml
-# Benthos — declarative YAML
+# Benthos: declarative YAML
 input:
   kafka: { addresses: [localhost:9092], topics: [orders] }
 pipeline:
@@ -184,7 +184,7 @@ output:
 ```
 
 ```go
-// Kitsune — typed Go, composable with your codebase
+// Kitsune: typed Go, composable with your codebase
 orders   := kkafka.Consume(reader, unmarshal)
 enriched := kitsune.Map(orders, enrichClient.Enrich, kitsune.Concurrency(20))
 err      := enriched.ForEach(kkafka.Produce(writer, marshal)).Run(ctx)
@@ -201,13 +201,13 @@ Machinery distributes work across processes and machines. Kitsune processes data
 **Code contrast:** Machinery is cross-process (distributed task queue); Kitsune is in-process. They are not interchangeable.
 
 ```go
-// Machinery — registers a task executed by a remote worker
+// Machinery: registers a task executed by a remote worker
 server.RegisterTask("enrich", enrichFunc)
 server.SendTaskWithContext(ctx, &tasks.Signature{Name: "enrich", Args: [...]})
 ```
 
 ```go
-// Kitsune — in-process pipeline stage, no broker required
+// Kitsune: in-process pipeline stage, no broker required
 enriched := kitsune.Map(ids, enrichFunc, kitsune.Concurrency(20))
 ```
 

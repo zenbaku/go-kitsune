@@ -98,7 +98,7 @@ Last-write-wins. Anything you can put in `EffectPolicy`, you can also override w
 
 ### Field-by-field
 
-**`Required bool`** — if any required `Effect` has terminal failures, [`RunSummary.Outcome`](operators.md#run-summary) is `RunFailure`. The default when neither `Required()` nor `BestEffort()` is supplied is `Required: true`. Explicitly:
+**`Required bool`**: if any required `Effect` has terminal failures, [`RunSummary.Outcome`](operators.md#run-summary) is `RunFailure`. The default when neither `Required()` nor `BestEffort()` is supplied is `Required: true`. Explicitly:
 
 ```go
 kitsune.Effect(p, fn, kitsune.Required())   // failures → RunFailure
@@ -107,7 +107,7 @@ kitsune.Effect(p, fn, kitsune.BestEffort()) // failures → RunPartialSuccess (i
 
 When in doubt: required for things that must succeed (the queue publish that triggers downstream business logic), best-effort for things that are nice to have (audit logs, metrics emission, cache warming).
 
-**`Retry RetryStrategy`** — reuses the same `RetryStrategy` value type as the standalone [`Retry[T]`](operators.md#retry) operator. The zero value performs a single attempt:
+**`Retry RetryStrategy`**: reuses the same `RetryStrategy` value type as the standalone [`Retry[T]`](operators.md#retry) operator. The zero value performs a single attempt:
 
 ```go
 RetryUpTo(n, backoff)        // at most n total attempts
@@ -118,9 +118,9 @@ RetryStrategy{}.WithOnRetry(callback)     // log/metric per retry
 
 Inside `Effect`, retries are synchronous and serial: a slow retry blocks downstream emission for the next item. To parallelize, place the `Effect` downstream of a fan-out operator, or set `Concurrency` on a wrapper stage.
 
-**`AttemptTimeout time.Duration`** — applied per attempt via `context.WithTimeout`. Distinct from the stage-level `Timeout(d) StageOption` which applies to the whole `Effect` stage's per-item processing. When both are set, the earlier deadline wins.
+**`AttemptTimeout time.Duration`**: applied per attempt via `context.WithTimeout`. Distinct from the stage-level `Timeout(d) StageOption` which applies to the whole `Effect` stage's per-item processing. When both are set, the earlier deadline wins.
 
-**`Idempotent bool` and `IdempotencyKey func(any) string`** — informational in v1. The fields are stored on the policy and propagated into stage metadata for future use by external idempotent backends. v1 does NOT de-duplicate retries against a store; the keys are a hint.
+**`Idempotent bool` and `IdempotencyKey func(any) string`**: informational in v1. The fields are stored on the policy and propagated into stage metadata for future use by external idempotent backends. v1 does NOT de-duplicate retries against a store; the keys are a hint.
 
 ---
 

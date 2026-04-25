@@ -868,7 +868,7 @@ Helper constructors and predicates are provided:
 
 | Upstream event | Emitted notification | `Run` result |
 |---|---|---|
-| Item `v` | `NextNotification(v)` | — |
+| Item `v` | `NextNotification(v)` | (none) |
 | Normal completion | `CompleteNotification[T]()` | `nil` |
 | Pipeline error `err` | `ErrorNotification[T](err)` | `nil` |
 | Context cancellation | *(none)* | `ctx.Err()` |

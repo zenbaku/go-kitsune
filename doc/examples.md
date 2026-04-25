@@ -10,16 +10,16 @@ go run ./examples/<name>
 
 <div class="grid cards" markdown>
 
-- :material-pipe: **[Getting started](#getting-started)** — basic, concurrent, pause
-- :material-broadcast: **[Fan-out & Fan-in](#fan-out-fan-in)** — fanout, broadcast, share
-- :material-puzzle-outline: **[Composition](#composition)** — stages
-- :material-shield-check-outline: **[Error handling](#error-handling)** — deadletter, circuitbreaker, timeout
-- :material-memory: **[Stateful processing](#stateful-processing)** — runningtotal, keyedstate, caching
-- :material-speedometer: **[Rate limiting](#rate-limiting)** — ratelimit, perkeyratelimit
-- :material-message-arrow-right-outline: **[Push sources](#push-sources)** — channel
-- :material-clock-outline: **[Time-based](#time-based)** — ticker, switchmap
-- :material-filter-check-outline: **[Deduplication](#deduplication)** — bloomdedup
-- :material-chart-line: **[Observability](#observability)** — hooks, inspector
+- :material-pipe: **[Getting started](#getting-started)**: basic, concurrent, pause
+- :material-broadcast: **[Fan-out & Fan-in](#fan-out-fan-in)**: fanout, broadcast, share
+- :material-puzzle-outline: **[Composition](#composition)**: stages
+- :material-shield-check-outline: **[Error handling](#error-handling)**: deadletter, circuitbreaker, timeout
+- :material-memory: **[Stateful processing](#stateful-processing)**: runningtotal, keyedstate, caching
+- :material-speedometer: **[Rate limiting](#rate-limiting)**: ratelimit, perkeyratelimit
+- :material-message-arrow-right-outline: **[Push sources](#push-sources)**: channel
+- :material-clock-outline: **[Time-based](#time-based)**: ticker, switchmap
+- :material-filter-check-outline: **[Deduplication](#deduplication)**: bloomdedup
+- :material-chart-line: **[Observability](#observability)**: hooks, inspector
 
 </div>
 
@@ -39,7 +39,7 @@ A minimal linear pipeline. Trims and uppercases strings, then collects squared n
 ??? example "Full source"
 
     ```go
-    // Example: basic — a minimal linear pipeline.
+    // Example: basic: a minimal linear pipeline.
     //
     // Demonstrates: FromSlice, Map, Filter, ForEach, Collect
     package main
@@ -112,7 +112,7 @@ Parallel processing with and without ordering guarantees.
 ??? example "Full source"
 
     ```go
-    // Example: concurrent — parallel processing with and without ordering guarantees.
+    // Example: concurrent: parallel processing with and without ordering guarantees.
     //
     // Demonstrates: Concurrency, Ordered, Buffer, WithName
     package main
@@ -184,7 +184,7 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
 ??? example "Full source"
 
     ```go
-    // Example: pause — temporarily stop a running pipeline without cancelling it.
+    // Example: pause: temporarily stop a running pipeline without cancelling it.
     //
     // Demonstrates:
     //   - RunAsync + RunHandle.Pause / Resume / Paused
@@ -295,7 +295,7 @@ Split a stream into two typed branches and run them concurrently.
 ??? example "Full source"
 
     ```go
-    // Example: fanout — split a stream and run each branch concurrently.
+    // Example: fanout: split a stream and run each branch concurrently.
     //
     // Demonstrates: Partition, MergeRunners
     package main
@@ -361,7 +361,7 @@ Fan a single stream out to N independent consumers; each sees every item.
 ??? example "Full source"
 
     ```go
-    // Example: broadcast — fan-out a single stream to N independent consumers.
+    // Example: broadcast: fan-out a single stream to N independent consumers.
     //
     // Demonstrates: Broadcast, MergeRunners
     package main
@@ -415,7 +415,7 @@ Fan a single stream out to N independent consumers; each sees every item.
 
 ### `share` { #share }
 
-Multicast a stream to a dynamically-built subscriber list — consumers registered one at a time with independent options.
+Multicast a stream to a dynamically-built subscriber list; consumers registered one at a time with independent options.
 
 **Demonstrates:** `Share`, per-branch `Buffer` and `WithName`, `MergeRunners`
 
@@ -425,7 +425,7 @@ Multicast a stream to a dynamically-built subscriber list — consumers register
 ??? example "Full source"
 
     ```go
-    // Example: share — multicast a stream to a dynamically-built subscriber list.
+    // Example: share: multicast a stream to a dynamically-built subscriber list.
     //
     // Share lets you register consumers one at a time, each with its own options.
     // Unlike Broadcast, the number of consumers doesn't need to be fixed upfront.
@@ -522,7 +522,7 @@ Define reusable, composable pipeline fragments with `Stage[I,O]`.
 ??? example "Full source"
 
     ```go
-    // Example: stages — composable, reusable pipeline transformers.
+    // Example: stages: composable, reusable pipeline transformers.
     //
     // Demonstrates: Stage[I,O], Then, Through, Stage.Or
     package main
@@ -852,7 +852,7 @@ Protect a flaky dependency: after N consecutive failures the circuit opens, fast
 ??? example "Full source"
 
     ```go
-    // Example: circuitbreaker — protect a flaky dependency with a circuit breaker.
+    // Example: circuitbreaker: protect a flaky dependency with a circuit breaker.
     package main
 
     import (
@@ -921,7 +921,7 @@ Enforce per-item deadlines on slow stages. Timed-out items can be skipped or rep
 ??? example "Full source"
 
     ```go
-    // Example: timeout — enforce per-item deadlines on slow stages.
+    // Example: timeout: enforce per-item deadlines on slow stages.
     package main
 
     import (
@@ -978,7 +978,7 @@ Enforce per-item deadlines on slow stages. Timed-out items can be skipped or rep
 
 ### `runningtotal` { #runningtotal }
 
-Accumulate a running total across a stream using `MapWith` — one shared `Ref` for the lifetime of the run.
+Accumulate a running total across a stream using `MapWith`; one shared `Ref` for the lifetime of the run.
 
 **Demonstrates:** `NewKey`, `MapWith`, `Ref.UpdateAndGet`
 
@@ -988,7 +988,7 @@ Accumulate a running total across a stream using `MapWith` — one shared `Ref` 
 ??? example "Full source"
 
     ```go
-    // Example: runningtotal — shared mutable state with MapWith.
+    // Example: runningtotal: shared mutable state with MapWith.
     package main
 
     import (
@@ -1045,7 +1045,7 @@ Accumulate a running total across a stream using `MapWith` — one shared `Ref` 
 
 ### `keyedstate` { #keyedstate }
 
-Per-entity stateful processing. Items are routed by key hash so each entity's state never crosses goroutine boundaries — the in-process actor model.
+Per-entity stateful processing. Items are routed by key hash so each entity's state never crosses goroutine boundaries (the in-process actor model).
 
 **Demonstrates:** `MapWithKey`, `Concurrency` with key-sharded routing, `Ref.UpdateAndGet`
 
@@ -1055,7 +1055,7 @@ Per-entity stateful processing. Items are routed by key hash so each entity's st
 ??? example "Full source"
 
     ```go
-    // Example: keyedstate — per-entity stateful processing with key-sharded concurrency.
+    // Example: keyedstate: per-entity stateful processing with key-sharded concurrency.
     package main
 
     import (
@@ -1121,7 +1121,7 @@ Skip redundant work with `CacheBy`. Cache misses call the function; hits return 
 ??? example "Full source"
 
     ```go
-    // Example: caching — skip redundant work with CacheBy + MemoryCache.
+    // Example: caching: skip redundant work with CacheBy + MemoryCache.
     package main
 
     import (
@@ -1174,7 +1174,7 @@ Throttle pipeline throughput with a token bucket. `RateLimitWait` applies backpr
 ??? example "Full source"
 
     ```go
-    // Example: ratelimit — throttle pipeline throughput with a token bucket.
+    // Example: ratelimit: throttle pipeline throughput with a token bucket.
     package main
 
     import (
@@ -1190,7 +1190,7 @@ Throttle pipeline throughput with a token bucket. `RateLimitWait` applies backpr
         items := make([]int, 20)
         for i := range items { items[i] = i }
 
-        // RateLimitWait: backpressure — blocks until a token is available
+        // RateLimitWait: backpressure; blocks until a token is available
         start := time.Now()
         results, _ := kitsune.Collect(ctx,
             kitsune.RateLimit(kitsune.FromSlice(items[:10]), 200,
@@ -1212,7 +1212,7 @@ Throttle pipeline throughput with a token bucket. `RateLimitWait` applies backpr
 
 ### `perkeyratelimit` { #perkeyratelimit }
 
-Per-entity rate limiting: each user gets an independent token budget. Key-sharded routing ensures per-user state never crosses goroutine boundaries — no mutex required.
+Per-entity rate limiting: each user gets an independent token budget. Key-sharded routing ensures per-user state never crosses goroutine boundaries; no mutex required.
 
 **Demonstrates:** `MapWithKey`, `Ref.UpdateAndGet`, `Concurrency` with key sharding
 
@@ -1222,7 +1222,7 @@ Per-entity rate limiting: each user gets an independent token budget. Key-sharde
 ??? example "Full source"
 
     ```go
-    // Example: perkeyratelimit — per-entity rate limiting with MapWithKey.
+    // Example: perkeyratelimit: per-entity rate limiting with MapWithKey.
     //
     // Each user is allowed at most 3 requests per window (every 5 ticks).
     package main
@@ -1307,7 +1307,7 @@ Create a push-based source with `NewChannel`. External producers call `Send` whi
 ??? example "Full source"
 
     ```go
-    // Example: channel — push-based source with external producers.
+    // Example: channel: push-based source with external producers.
     package main
 
     import (
@@ -1362,7 +1362,7 @@ Time-based sources: periodic ticks and one-shot timers.
 ??? example "Full source"
 
     ```go
-    // Example: ticker — time-based sources and limiting.
+    // Example: ticker: time-based sources and limiting.
     package main
 
     import (
@@ -1416,7 +1416,7 @@ Cancel in-progress work when a newer item arrives. Models type-ahead search or l
 ??? example "Full source"
 
     ```go
-    // Example: switchmap — cancel in-progress work when a newer item arrives.
+    // Example: switchmap: cancel in-progress work when a newer item arrives.
     package main
 
     import (
@@ -1471,7 +1471,7 @@ Probabilistic global deduplication with a Bloom filter: bounded memory regardles
 ??? example "Full source"
 
     ```go
-    // Example: bloomdedup — probabilistic deduplication with a Bloom filter.
+    // Example: bloomdedup: probabilistic deduplication with a Bloom filter.
     package main
 
     import (
@@ -1529,7 +1529,7 @@ Attach a `MetricsHook` and `LogHook` to a pipeline to collect per-stage throughp
 ??? example "Full source"
 
     ```go
-    // Example: hooks — observability with LogHook and MetricsHook.
+    // Example: hooks: observability with LogHook and MetricsHook.
     package main
 
     import (
@@ -1579,7 +1579,7 @@ Attach a `MetricsHook` and `LogHook` to a pipeline to collect per-stage throughp
 
 A live web dashboard showing the pipeline DAG, per-stage metrics, and buffer fill levels. Add one line to any pipeline.
 
-!!! note "Interactive — run locally"
+!!! note "Interactive: run locally"
     The inspector starts an HTTP server and runs indefinitely. It is excluded from automated tests.
 
     ```

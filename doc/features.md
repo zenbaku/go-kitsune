@@ -297,7 +297,7 @@ All time operators accept a [`WithClock`](options.md#withclockc-clock) option fo
 
 ## :material-power-plug-outline: 27 integrations
 
-Each tail is a separate Go module — import only what you use.
+Each tail is a separate Go module; import only what you use.
 
 | Category | Tails |
 |---|---|

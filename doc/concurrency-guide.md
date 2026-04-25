@@ -3,10 +3,10 @@
 Kitsune offers four orthogonal primitives for adding parallelism. They solve different problems; picking the wrong one either limits throughput (over-serialising) or breaks correctness (sharing state across goroutines unsafely). This guide walks through how to choose.
 
 !!! tip "TL;DR"
-    - **`Concurrency(n)`**: parallel workers on one stage, no order guarantee, no shared state — for I/O-bound fan-in.
+    - **`Concurrency(n)`**: parallel workers on one stage, no order guarantee, no shared state; for I/O-bound fan-in.
     - **`Concurrency(n)` + `Ordered()`**: same, but output is resequenced to match input order.
-    - **`MapWithKey` + `Concurrency(n)`**: items hash-routed to stable workers by key — for lock-free per-entity state.
-    - **`Partition` / `Balance`**: explicit fan-out to independent downstream subgraphs — for heterogeneous branches.
+    - **`MapWithKey` + `Concurrency(n)`**: items hash-routed to stable workers by key; for lock-free per-entity state.
+    - **`Partition` / `Balance`**: explicit fan-out to independent downstream subgraphs; for heterogeneous branches.
 
 ---
 
@@ -42,13 +42,13 @@ Does the stage touch per-entity state
                        └── No ──────────────────────► Concurrency(n)       [§ Unordered]
 ```
 
-The primitives compose freely. A `Partition` branch can use `Concurrency(20)` on its enrichment stage; the other branch can use `MapWithKey` for stateful routing. Each primitive is a `StageOption` or a pipeline-shape operator — there is no global "concurrency mode".
+The primitives compose freely. A `Partition` branch can use `Concurrency(20)` on its enrichment stage; the other branch can use `MapWithKey` for stateful routing. Each primitive is a `StageOption` or a pipeline-shape operator; there is no global "concurrency mode".
 
 ---
 
 ## When to reach for each model
 
-### `Concurrency(n)` — unordered parallel workers
+### `Concurrency(n)`: unordered parallel workers
 
 ```go
 enriched := kitsune.Map(events, callAPI,
@@ -65,14 +65,14 @@ enriched := kitsune.Map(events, callAPI,
 
 **Avoid when:**
 - The stage mutates shared state without external synchronisation. Use `MapWithKey` instead to get per-key isolation for free.
-- The stage is CPU-cheap. `Concurrency(n >= 2)` leaves the fast path, adding goroutine scheduling and channel overhead that often exceeds the gain. Measure before reaching for concurrency on fast operations. See [tuning.md — fast path](tuning.md#fast-path-and-stage-fusion).
+- The stage is CPU-cheap. `Concurrency(n >= 2)` leaves the fast path, adding goroutine scheduling and channel overhead that often exceeds the gain. Measure before reaching for concurrency on fast operations. See [tuning.md: fast path](tuning.md#fast-path-and-stage-fusion).
 - Downstream must see items in arrival order. Use `Ordered()`.
 
-**Performance note:** start with 10-20 for HTTP enrichment, then profile. For CPU-bound stages, start at `runtime.NumCPU()`. See [tuning.md — Concurrency](tuning.md#concurrency-concurrencyn) for heuristics.
+**Performance note:** start with 10-20 for HTTP enrichment, then profile. For CPU-bound stages, start at `runtime.NumCPU()`. See [tuning.md: Concurrency](tuning.md#concurrency-concurrencyn) for heuristics.
 
 ---
 
-### `Ordered()` — parallel but resequenced
+### `Ordered()`: parallel but resequenced
 
 ```go
 enriched := kitsune.Map(events, callAPI,
@@ -90,11 +90,11 @@ enriched := kitsune.Map(events, callAPI,
 - Throughput is critical and downstream is actually order-tolerant. `Ordered()` adds a resequencer that costs ~10-15% peak throughput compared to unordered `Concurrency(n)`.
 - One item in the in-flight window might be significantly slower than its peers. A single slow item head-of-lines the output channel until it completes, stalling all faster items that have already finished. If latency outliers are common, `Ordered()` amplifies them.
 
-**Key behaviour:** `Ordered()` does not change how items are *processed* — n goroutines still run in parallel. It only changes how results are *emitted*: a slot-based resequencer holds completed items until all earlier items have been released.
+**Key behaviour:** `Ordered()` does not change how items are *processed* (n goroutines still run in parallel). It only changes how results are *emitted*: a slot-based resequencer holds completed items until all earlier items have been released.
 
 ---
 
-### `MapWith` / `MapWithKey` — key-sharded per-entity workers
+### `MapWith` / `MapWithKey`: key-sharded per-entity workers
 
 ```go
 var totalKey = kitsune.NewKey[int]("running_total", 0)
@@ -125,13 +125,13 @@ results := kitsune.MapWithKey(
 - The key space is heavily skewed: if one key generates 90% of traffic, one worker becomes a bottleneck. Diagnose with `WithHook` metrics; mitigate by using a subkey salt or reducing `n`.
 - Per-item work is sub-microsecond. Hash routing overhead dominates at very fine granularity; prefer `Concurrency(1)` + a plain `map[string]T` in a single goroutine.
 
-**Correctness guarantee:** you never need a mutex on `Ref[S]` state inside the handler. Kitsune's key-sharding ensures that concurrent workers never share a `Ref` — single-owner access is enforced by construction.
+**Correctness guarantee:** you never need a mutex on `Ref[S]` state inside the handler. Kitsune's key-sharding ensures that concurrent workers never share a `Ref`; single-owner access is enforced by construction.
 
 **`MapWith` vs `MapWithKey`:** `MapWith` carries a single shared `Ref[S]` across all items (global state). `MapWithKey` partitions state by key (per-entity state). Use `MapWith` when your accumulator aggregates across the entire stream; use `MapWithKey` when each key has its own independent state bucket.
 
 ---
 
-### `Balance(n)` and `Partition(pred)` — explicit fan-out
+### `Balance(n)` and `Partition(pred)`: explicit fan-out
 
 **`Partition`** splits one pipeline into two based on a predicate. Each item goes to exactly one branch.
 
@@ -162,7 +162,7 @@ branches := kitsune.Balance(src, 3)
 - You need n independent downstream subgraphs, each with its own configuration, and the assignment can be round-robin.
 - You want to route to heterogeneous downstream systems without caring which item goes where.
 
-**Avoid `Balance` for pure load splitting:** that is what `Concurrency(n)` is for. `Concurrency(n)` uses a single shared input channel and self-levels naturally — workers pull items as fast as they can. `Balance` is round-robin: a slow branch will stall the splitter via backpressure, holding back faster branches. Use `Concurrency(n)` when the stage is the same on all workers; use `Balance` only when you need n distinct downstream subgraphs.
+**Avoid `Balance` for pure load splitting:** that is what `Concurrency(n)` is for. `Concurrency(n)` uses a single shared input channel and self-levels naturally; workers pull items as fast as they can. `Balance` is round-robin: a slow branch will stall the splitter via backpressure, holding back faster branches. Use `Concurrency(n)` when the stage is the same on all workers; use `Balance` only when you need n distinct downstream subgraphs.
 
 !!! warning "All branches must be consumed"
     `Partition` and `Balance` produce n output pipelines. Every output must be connected to a downstream stage and consumed. An unconsumed branch's channel fills up, exerting backpressure that stalls all other branches. Use `MergeRunners` to start and await all branches in one call.
@@ -171,7 +171,7 @@ branches := kitsune.Balance(src, 3)
 
 ## Worked examples
 
-### Parallel HTTP enrichment — unordered vs ordered
+### Parallel HTTP enrichment: unordered vs ordered
 
 **Goal:** enrich a stream of event records with data from a slow API. Throughput should be limited by the API's concurrency budget, not by single-goroutine serialisation.
 
@@ -196,7 +196,7 @@ enriched := kitsune.Map(events, callAPI,
 )
 ```
 
-**What to notice:** both pipelines use the same `Concurrency(10)` and complete in roughly the same wall time. The difference is whether downstream sees items in arrival order. If the downstream doesn't need order, omit `Ordered()` — it is free throughput.
+**What to notice:** both pipelines use the same `Concurrency(10)` and complete in roughly the same wall time. The difference is whether downstream sees items in arrival order. If the downstream doesn't need order, omit `Ordered()`; it is free throughput.
 
 **Common mistake:** setting `Concurrency(2)` expecting a 2x speedup on a CPU-cheap `Map` stage. The goroutine scheduling overhead and fast-path loss typically exceed the gain. Profile first; `Concurrency(n)` helps I/O-bound stages, not CPU-cheap ones.
 
@@ -204,7 +204,7 @@ Full runnable example: [`examples/concurrency-guide/enrich/`](../examples/concur
 
 ---
 
-### Per-user stateful aggregation — running totals
+### Per-user stateful aggregation: running totals
 
 **Goal:** maintain a per-user running total across a multi-user payment stream. Each payment must read the current total, add the amount, and emit the new total. No locks.
 
@@ -227,7 +227,7 @@ updates := kitsune.MapWithKey(
 )
 ```
 
-**What to notice:** `ref.UpdateAndGet` is an atomic read-modify-write call. Because `hash("alice") % 4` is the same for every alice payment, all alice payments land on the same worker goroutine. No two goroutines ever access the same `Ref` concurrently — the lock-free guarantee is structural, not incidental.
+**What to notice:** `ref.UpdateAndGet` is an atomic read-modify-write call. Because `hash("alice") % 4` is the same for every alice payment, all alice payments land on the same worker goroutine. No two goroutines ever access the same `Ref` concurrently; the lock-free guarantee is structural, not incidental.
 
 **Common mistake:** replacing this with `Map(p, fn, kitsune.Concurrency(4))` and a shared `map[string]int` + `sync.Mutex`. This works for correctness, but serialises all key updates on the mutex and gains no real concurrency on the hot path. `MapWithKey` eliminates the mutex and shards the hot path.
 
@@ -243,15 +243,15 @@ Full runnable example: [`examples/concurrency-guide/useragg/`](../examples/concu
 
 This pattern is fully demonstrated in [`examples/perkeyratelimit/`](../examples/perkeyratelimit/main.go). The key insight: `Ref.UpdateAndGet` is the read-modify-write primitive, and key-sharding ensures the bucket for each user is only ever touched by one worker at a time.
 
-**Why not `Concurrency(n)` + `Map` + mutex?** A global mutex on the rate-limit state makes all users contend for a single lock. Key-sharding makes each worker responsible for a disjoint partition of the user space — the lock disappears entirely.
+**Why not `Concurrency(n)` + `Map` + mutex?** A global mutex on the rate-limit state makes all users contend for a single lock. Key-sharding makes each worker responsible for a disjoint partition of the user space; the lock disappears entirely.
 
 ---
 
-### Fan-out routing — Partition to heterogeneous branches
+### Fan-out routing: Partition to heterogeneous branches
 
 **Goal:** route valid orders through a parallel enrichment pipeline; send invalid orders directly to a dead-letter sink. The two branches have different stage shapes.
 
-**Choice:** `Partition(pred)`. Two branches with different stage chains — this is the signal that `Partition` is the right tool, not `Concurrency(n)` (which would replicate the same stage on n goroutines) or `Balance(n)` (which is round-robin, not content-based).
+**Choice:** `Partition(pred)`. Two branches with different stage chains: this is the signal that `Partition` is the right tool, not `Concurrency(n)` (which would replicate the same stage on n goroutines) or `Balance(n)` (which is round-robin, not content-based).
 
 ```go
 valid, invalid := kitsune.Partition(src, func(o Order) bool { return o.Valid })
@@ -266,7 +266,7 @@ merged, _ := kitsune.MergeRunners(
 if _, err := merged.Run(ctx); err != nil { ... }
 ```
 
-**What to notice:** the valid branch runs `Concurrency(4)` on enrichment; the invalid branch does not. This asymmetry — different stage shapes per branch — is the defining signal for `Partition` over `Concurrency(n)`.
+**What to notice:** the valid branch runs `Concurrency(4)` on enrichment; the invalid branch does not. This asymmetry (different stage shapes per branch) is the defining signal for `Partition` over `Concurrency(n)`.
 
 **Common mistakes:**
 - Using `Balance(2)` when items should be routed by content, not round-robin. `Balance` does not inspect items; `Partition` does.
@@ -299,7 +299,7 @@ Each primitive is a local decision at one stage. There is no global "concurrency
 - **`Concurrency(n)` on a CPU-cheap `Map`**: goroutine scheduling and fast-path loss can exceed the gain. Measure first. See [tuning.md](tuning.md#fast-path-and-stage-fusion).
 - **`Ordered()` by default**: adds a resequencer and enables head-of-line blocking. Only add it when downstream actually requires input order.
 - **Shared `map[string]T` + mutex inside `Concurrency(n) + Map`**: this serialises all updates on the mutex. Use `MapWithKey` to eliminate the lock and shard the hot path.
-- **`Balance` for load balancing**: `Balance` is round-robin. A slow branch stalls faster branches via backpressure. Use `Concurrency(n)` on a single stage for load balancing — its shared input channel self-levels naturally.
+- **`Balance` for load balancing**: `Balance` is round-robin. A slow branch stalls faster branches via backpressure. Use `Concurrency(n)` on a single stage for load balancing; its shared input channel self-levels naturally.
 - **Unconsumed `Partition` / `Balance` branches**: every output branch must be consumed. An unconsumed branch stalls all others. Use `MergeRunners` to enforce this.
 - **`MapWithKey` with small `n` and many keys**: `Concurrency(2)` with 100 users means 50 users per worker. That is fine. `Concurrency(2)` with 2 heavily skewed users means one worker gets 90% of the traffic. Profile per-worker load before concluding that key-sharding is the bottleneck.
 
@@ -309,7 +309,7 @@ Each primitive is a local decision at one stage. There is no global "concurrency
 
 **Q: Can I combine `Concurrency(n)` with `MapWithKey`?**
 
-Yes — that *is* the sharded form. `MapWithKey(..., kitsune.Concurrency(n))` starts n workers and routes items by `hash(key) % n`. Without `Concurrency(n)`, all keys share one worker (serial).
+Yes: that *is* the sharded form. `MapWithKey(..., kitsune.Concurrency(n))` starts n workers and routes items by `hash(key) % n`. Without `Concurrency(n)`, all keys share one worker (serial).
 
 **Q: Does `Ordered()` work with `MapWithKey`?**
 
@@ -317,7 +317,7 @@ Items for the same key are already processed in arrival order within that key. A
 
 **Q: Is `Balance` work-stealing?**
 
-No. `Balance` distributes items in round-robin order. If one downstream branch is slower, its input channel fills up and the splitter stalls, which eventually stalls the other branches too. For pure load balancing (same stage on n goroutines), use `Concurrency(n)` — it uses a single shared channel and self-levels naturally.
+No. `Balance` distributes items in round-robin order. If one downstream branch is slower, its input channel fills up and the splitter stalls, which eventually stalls the other branches too. For pure load balancing (same stage on n goroutines), use `Concurrency(n)`; it uses a single shared channel and self-levels naturally.
 
 **Q: How do I pick `n` for `Concurrency(n)`?**
 
@@ -325,7 +325,7 @@ Start with 10-20 for I/O-bound stages (HTTP, database). Start with `runtime.NumC
 
 **Q: Does adding `Concurrency(n >= 2)` affect the fast path?**
 
-Yes. Any `Concurrency(n >= 2)` leaves the fast path on that stage. See [tuning.md — exact eligibility conditions](tuning.md#exact-eligibility-conditions) for the full list of conditions.
+Yes. Any `Concurrency(n >= 2)` leaves the fast path on that stage. See [tuning.md: exact eligibility conditions](tuning.md#exact-eligibility-conditions) for the full list of conditions.
 
 **Q: Can I use `Partition` + `Concurrency(n)` on the same stage?**
 
@@ -335,9 +335,9 @@ Yes. `Partition` is a pipeline-shape operator that produces two `*Pipeline[T]` v
 
 ## Further reading
 
-- [tuning.md](tuning.md) — buffer sizing, fast path, concurrency heuristics, and GC trade-offs.
-- [operators.md](operators.md) — full operator reference with exact signatures.
-- [error-handling.md](error-handling.md) — combining concurrency with per-stage supervision and error routing.
-- [`examples/concurrency-guide/`](../examples/concurrency-guide/) — runnable versions of every pattern in this guide.
-- [`examples/perkeyratelimit/`](../examples/perkeyratelimit/main.go) — per-user rate limiting with `MapWithKey`.
-- [`examples/keyedstate/`](../examples/keyedstate/main.go) — per-user stateful aggregation, serial vs concurrent comparison.
+- [tuning.md](tuning.md): buffer sizing, fast path, concurrency heuristics, and GC trade-offs.
+- [operators.md](operators.md): full operator reference with exact signatures.
+- [error-handling.md](error-handling.md): combining concurrency with per-stage supervision and error routing.
+- [`examples/concurrency-guide/`](../examples/concurrency-guide/): runnable versions of every pattern in this guide.
+- [`examples/perkeyratelimit/`](../examples/perkeyratelimit/main.go): per-user rate limiting with `MapWithKey`.
+- [`examples/keyedstate/`](../examples/keyedstate/main.go): per-user stateful aggregation, serial vs concurrent comparison.

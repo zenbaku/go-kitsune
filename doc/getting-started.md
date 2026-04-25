@@ -49,8 +49,8 @@ Go's type system requires a specific code style. **Methods** preserve the elemen
 
 ```go
 lines    := kitsune.FromSlice(rawLines)     // *Pipeline[string]
-parsed   := kitsune.Map(lines, parseLog)    // *Pipeline[LogEntry]   — type changed: free function
-critical := parsed.Filter(isCritical)       // *Pipeline[LogEntry]   — type preserved: method
+parsed   := kitsune.Map(lines, parseLog)    // *Pipeline[LogEntry]   (type changed: free function)
+critical := parsed.Filter(isCritical)       // *Pipeline[LogEntry]   (type preserved: method)
 batched  := kitsune.Batch(critical, kitsune.BatchCount(100))    // *Pipeline[[]LogEntry]; type changed: free function
 _, err   := batched.ForEach(store).Run(ctx)
 ```
@@ -133,7 +133,7 @@ for e := range seq {
         break // pipeline is cancelled; resources are freed
     }
 }
-if err := errFn(); err != nil { // nil — break-induced cancellation is suppressed
+if err := errFn(); err != nil { // nil; break-induced cancellation is suppressed
     log.Fatal(err)
 }
 ```

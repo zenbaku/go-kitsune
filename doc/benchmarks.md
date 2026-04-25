@@ -253,7 +253,7 @@ task bench:baseline
 ```
 task bench:current    # capture current results (6 samples)
 task bench:compare    # print benchstat diff table
-task bench:check      # full check — generate, diff, fail on > 15% regression
+task bench:check      # full check: generate, diff, fail on > 15% regression
 ```
 
 **Allocation regression tests** (hard-fail on ceiling violation):
@@ -274,7 +274,7 @@ go test -v -run TestLatencyPercentiles ./...
 
 `testdata/bench/baseline.txt` is a committed benchmark snapshot used by CI to detect throughput regressions on pull requests. The CI `bench` job runs on every PR, compares the PR branch against the baseline using `benchstat`, and fails if any benchmark regresses by more than 15% with statistical significance (p < 0.05).
 
-The threshold is intentionally conservative at 15% to avoid flaky failures from GitHub runner jitter. Silent regressions below 15% are tracked by the geomean row in the diff table — use it to spot trends across a series of PRs.
+The threshold is intentionally conservative at 15% to avoid flaky failures from GitHub runner jitter. Silent regressions below 15% are tracked by the geomean row in the diff table; use it to spot trends across a series of PRs.
 
 **Regenerating the baseline** after accepting an intentional performance change:
 

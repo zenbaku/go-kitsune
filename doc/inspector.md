@@ -21,12 +21,12 @@ func main() {
     defer insp.Close()
     fmt.Println("Inspector:", insp.URL()) // open this in a browser
 
-    // Build your pipeline as usual — name your stages for best results
+    // Build your pipeline as usual; name your stages for best results
     records := kitsune.FromSlice(rawRecords)
     parsed  := kitsune.Map(records, parse,    kitsune.WithName("parse"))
     valid   := kitsune.Map(parsed,  validate, kitsune.WithName("validate"), kitsune.Concurrency(4))
 
-    // Pass the inspector as a hook — no other changes needed
+    // Pass the inspector as a hook; no other changes needed
     _, err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
 }
 ```
@@ -105,7 +105,7 @@ insp := inspector.New()
 defer insp.Close()
 fmt.Println("Inspector:", insp.URL())
 
-// Build pipeline once — Run can be called multiple times on the same Runner
+// Build pipeline once; Run can be called multiple times on the same Runner
 // ...
 sink := pipeline.ForEach(store, kitsune.WithName("store"))
 
