@@ -134,6 +134,11 @@ type runCtx struct {
 	// drainNotify maps a producer stage ID to its drain entry.
 	// Populated during build(); consumers call signalDrain when they exit.
 	drainNotify map[int64]*drainEntry
+
+	// segmentByID maps stage ID to segment name. Populated by Segment.Apply's
+	// build wrapper at run/Describe time; consulted by runCtx.add to stamp
+	// stageMeta.segmentName before appending to rc.metas.
+	segmentByID map[int64]string
 }
 
 // defaultBufSize returns the run-level default buffer, falling back to
@@ -170,6 +175,7 @@ func newRunCtx() *runCtx {
 	return &runCtx{
 		chans:       make(map[int64]any),
 		drainNotify: make(map[int64]*drainEntry),
+		segmentByID: make(map[int64]string),
 		refs:        newRefRegistry(),
 		done:        done,
 		signalDone:  func() { once.Do(func() { close(done) }) },
@@ -177,6 +183,9 @@ func newRunCtx() *runCtx {
 }
 
 func (rc *runCtx) add(fn stageFunc, meta stageMeta) {
+	if name, ok := rc.segmentByID[meta.id]; ok {
+		meta.segmentName = name
+	}
 	rc.stages = append(rc.stages, fn)
 	rc.metas = append(rc.metas, meta)
 }
