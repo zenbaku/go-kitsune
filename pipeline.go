@@ -45,6 +45,10 @@ type stageMeta struct {
 	timeout     time.Duration
 	hasRetry    bool
 	hasSuperv   bool
+	// segmentName is the name of the enclosing Segment as set by Segment.Apply.
+	// Empty when the stage is not inside a segment. When segments nest, the
+	// innermost segment wins (deepest enclosing Segment owns each stage).
+	segmentName string
 	getChanLen  func() int
 	getChanCap  func() int
 
