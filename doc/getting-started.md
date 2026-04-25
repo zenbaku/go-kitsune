@@ -52,7 +52,7 @@ lines    := kitsune.FromSlice(rawLines)     // *Pipeline[string]
 parsed   := kitsune.Map(lines, parseLog)    // *Pipeline[LogEntry]   — type changed: free function
 critical := parsed.Filter(isCritical)       // *Pipeline[LogEntry]   — type preserved: method
 batched  := kitsune.Batch(critical, kitsune.BatchCount(100))    // *Pipeline[[]LogEntry]; type changed: free function
-err      := batched.ForEach(store).Run(ctx)
+_, err   := batched.ForEach(store).Run(ctx)
 ```
 
 This is a Go language constraint: methods cannot introduce new type parameters. But the style is an asset: each variable name documents what's flowing, and the compiler checks every type transition.
@@ -192,7 +192,7 @@ go func() {
 }()
 
 // Blocking run, pauseable from the goroutine above.
-if err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+if _, err := runner.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
     log.Fatal(err)
 }
 ```
@@ -285,7 +285,7 @@ ok, dlq := kitsune.MapResult(items, transform)
 When `Runner.Run` returns an error, it is wrapped in a `kitsune.StageError` carrying the stage name, attempt count, and original cause:
 
 ```go
-if err := runner.Run(ctx); err != nil {
+if _, err := runner.Run(ctx); err != nil {
     var se *kitsune.StageError
     if errors.As(err, &se) {
         fmt.Printf("stage %q failed on attempt %d: %v\n", se.Stage, se.Attempt, se.Cause)
@@ -311,7 +311,7 @@ std := kitsune.Map(regular, standardProcess).ForEach(store)
 // MergeRunners runs both branches, blocks until both complete
 merged, err := kitsune.MergeRunners(vip, std)
 if err != nil { /* handle */ }
-err = merged.Run(ctx)
+_, err = merged.Run(ctx)
 ```
 
 **[`Broadcast`](operators.md#broadcast-broadcastn)** copies every item to all N output pipelines (unlike [`Partition`](operators.md#partition), where each item goes to exactly one):

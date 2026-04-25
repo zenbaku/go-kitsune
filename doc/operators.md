@@ -3001,6 +3001,78 @@ out := kitsune.Effect(src, publish, SNSPolicy, kitsune.AttemptTimeout(10*time.Se
 
 ---
 
+## :material-clipboard-text-clock-outline: Run Summary { #run-summary }
+
+Every call to `Runner.Run`, `ForEachRunner.Run`, `DrainRunner.Run`, and `RunHandle.Wait` returns a `RunSummary` alongside the fatal error. The summary classifies the run's outcome, captures duration and completion timestamp, exposes a metrics snapshot, and records any finalizer errors.
+
+### RunSummary
+
+```go
+type RunSummary struct {
+    Outcome       RunOutcome
+    Err           error
+    Metrics       MetricsSnapshot
+    Duration      time.Duration
+    CompletedAt   time.Time
+    FinalizerErrs []error
+}
+```
+
+`Outcome` is one of:
+
+| Value | Meaning |
+|---|---|
+| `RunSuccess` | Pipeline finished without a fatal error and every [`Effect`](#effect) stage either succeeded or has no failures. |
+| `RunPartialSuccess` | Pipeline finished cleanly and every required `Effect` succeeded, but at least one [`BestEffort`](#effect) `Effect` had terminal failures. |
+| `RunFailure` | Pipeline returned a fatal error, OR at least one required `Effect` had terminal failures. |
+
+`Err` is the fatal pipeline error (or `nil`). `Metrics` is a `MetricsSnapshot` taken at the moment the pipeline finished. When a `MetricsHook` is attached via `WithHook`, `Metrics` is the hook's snapshot; otherwise it is a minimal snapshot containing `Timestamp` and `Elapsed`.
+
+`Duration` is the wall-clock time between `Run` starting the stage graph and the last stage exiting. `CompletedAt` is the wall-clock time at the end of the run.
+
+`FinalizerErrs` has length equal to the number of registered finalizers (see [`WithFinalizer`](#withfinalizer)); entries are nil for finalizers that returned nil. Finalizer errors do not change `Outcome`.
+
+### Caveat: MetricsHook does not yet reflect Effect outcomes
+
+`Effect` does not currently report its per-input outcomes through the `Hook` interface. As a result, `summary.Metrics.Stages["my-effect"]` will not appear in the snapshot even when an `Effect` stage with that name is in the pipeline. `Outcome` derivation does not depend on the metrics snapshot; it uses an internal per-stage counter populated by the `Effect` operator. Wiring `Effect → Hook.OnItem` is tracked as a follow-up.
+
+### WithFinalizer
+
+```go
+func (r *Runner) WithFinalizer(fn func(ctx context.Context, s RunSummary) error) *Runner
+func (r *ForEachRunner[T]) WithFinalizer(fn func(ctx context.Context, s RunSummary) error) *ForEachRunner[T]
+```
+
+Registers `fn` to run after the pipeline completes. Multiple finalizers run in registration order; each receives the same `RunSummary` (computed before any finalizer ran). A finalizer's return error is recorded in `RunSummary.FinalizerErrs[i]`; finalizer errors do not change `Outcome`.
+
+`MergeRunners` collects finalizers from input runners and prepends them, so:
+
+```go
+runner, _ := kitsune.MergeRunners(a, b) // a's and b's finalizers carry over
+runner.WithFinalizer(persistRunSummary) // runs after a's and b's
+```
+
+**Example: persist last-run timestamp**
+
+```go
+store := openLastRunStore()
+
+runner := pipeline.
+    Through(normalize).
+    Through(enrich).
+    ForEach(processItem).
+    WithFinalizer(func(ctx context.Context, s kitsune.RunSummary) error {
+        return store.Set(ctx, "last_run", s.CompletedAt)
+    })
+
+summary, err := runner.Run(ctx)
+if err != nil {
+    log.Printf("run failed: %v (outcome=%v)", err, summary.Outcome)
+}
+```
+
+---
+
 ## :material-alert-circle-outline: Error Handling Options { #error-handling }
 
 Error handling is configured per-stage with `OnError(handler)` or pipeline-wide with `WithErrorStrategy(handler)` in run options.

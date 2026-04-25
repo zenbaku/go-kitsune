@@ -350,6 +350,17 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 ---
 
+## 12.7 · Run Summary
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `RunOutcome` | `RunSuccess / RunPartialSuccess / RunFailure` | iota-typed enum returned in [`RunSummary.Outcome`](operators.md#run-summary) |
+| `RunSummary` | `struct{ Outcome; Err; Metrics; Duration; CompletedAt; FinalizerErrs }` | Returned from every Run / Wait |
+| `(r *Runner).WithFinalizer` | `WithFinalizer(fn func(ctx, RunSummary) error) *Runner` | Registers a post-run callback; multiple allowed |
+| `(r *ForEachRunner[T]).WithFinalizer` | `WithFinalizer(fn func(ctx, RunSummary) error) *ForEachRunner[T]` | Same; chains to underlying *Runner |
+
+---
+
 ## 13 · Error Routing
 
 | Operator | Signature | Notes |
