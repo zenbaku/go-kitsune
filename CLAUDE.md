@@ -98,17 +98,10 @@ When writing property tests:
 
 ## Roadmap
 
-The next unimplemented items in `doc/roadmap.md` (as of 2026-04-11):
+The Active / Near-term and Upcoming sections in `doc/roadmap.md` are all complete (2026-04-24). Three Long-term items remain:
 
-**Operators:** *(all complete in Active section)*
+1. **Higher-level authoring layer M2-M4** (next): `Effect[I,R]`, `RunSummary` + `WithFinalizer`, `DevStore` + `FromCheckpoint`. M1 (`Segment`) shipped 2026-04-24. Spec at `docs/superpowers/specs/2026-04-15-higher-level-authoring-design.md`. Design notes for M2 (RetryPolicy → RetryStrategy rename, EffectPolicy shape) are in the M1 plan preamble at `docs/superpowers/plans/2026-04-24-higher-level-authoring-segment.md`.
+2. **Event-time / watermark support**: `WithEventTime[T]` on windowing operators plus a watermark mechanism for Kafka/log-replay workloads.
+3. **Checkpointing and fault-tolerant restart**: periodic state snapshots so `MapWithKey` / window accumulators survive process restart.
 
-**State:** *(all complete in Active section)*
-
-**Developer experience:**
-- "Choosing a concurrency model" guide
-- `WithInspectorStore(store)` option
-- `benchstat` performance regression baseline
-- Unified tail integration test matrix
-- Supervision + error handler interaction docs
-
-Pick the next item by impact: operator work before dev-experience docs, correctness work before ergonomics.
+Pick by impact and self-contained-ness: higher-level authoring M2 (Effect) is the most user-facing and ships incrementally; event-time touches every windowing operator; checkpointing depends on decisions event-time would also force.
