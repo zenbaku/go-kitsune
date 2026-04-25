@@ -1,6 +1,10 @@
 package kitsune
 
-import "sync/atomic"
+import (
+	"context"
+	"encoding/json"
+	"sync/atomic"
+)
 
 // Segment wraps a [Stage] with a business name. When applied to a pipeline,
 // every stage created by the inner Stage is stamped with SegmentName=name in
@@ -70,15 +74,84 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 	name := s.name
 	originalBuild := output.build
 	output.build = func(rc *runCtx) chan O {
-		// Always overwrite. Build-wrapper composition fires outer first
-		// (outer.build runs, then calls originalBuild which is the inner
-		// wrapper), so an inner Segment's writes correctly take precedence
-		// for IDs in its narrower range. This yields "innermost wins"
-		// without explicit guards.
+		// Always stamp segment IDs first; this is independent of DevStore.
+		// Build-wrapper composition fires outer first (outer.build runs,
+		// then calls originalBuild which is the inner wrapper), so an inner
+		// Segment's writes correctly take precedence for IDs in its
+		// narrower range. This yields "innermost wins" without explicit
+		// guards.
 		for _, id := range ids {
 			rc.segmentByID[id] = name
+		}
+
+		// DevStore branch: only when a store is attached AND the segment
+		// has a non-empty name. Replay if a snapshot exists; capture if
+		// not.
+		if rc.devStore != nil && name != "" {
+			if replayed, ok := tryReplaySegment[O](rc, name); ok {
+				return replayed
+			}
+			return captureSegment[O](rc, name, originalBuild(rc))
 		}
 		return originalBuild(rc)
 	}
 	return output
+}
+
+// tryReplaySegment attempts to load a snapshot for name from rc.devStore.
+// On success it returns a fresh output channel of type T and true; a
+// goroutine drains the snapshot into the channel asynchronously.
+// On miss (any error from store.Load) it returns nil, false; the caller
+// should fall back to capture mode.
+//
+// This function does not register a stage in rc.stages: the spawned
+// goroutine runs out-of-band. That is appropriate because DevStore is a
+// dev-only affordance and the goroutine is short-lived (bounded by snapshot
+// size, no upstream waiting).
+func tryReplaySegment[T any](rc *runCtx, name string) (chan T, bool) {
+	raws, err := rc.devStore.Load(context.Background(), name)
+	if err != nil {
+		// Missing snapshot is the common case; non-missing errors are
+		// dev-only and fall through to capture mode (run live).
+		return nil, false
+	}
+	ch := make(chan T, 16)
+	go func() {
+		defer close(ch)
+		for _, data := range raws {
+			var item T
+			if err := json.Unmarshal(data, &item); err != nil {
+				// Best-effort: stop emission, leave channel closed. A
+				// future hook could surface this to the user.
+				return
+			}
+			ch <- item
+		}
+	}()
+	return ch, true
+}
+
+// captureSegment wraps an upstream output channel with a tee goroutine that
+// marshals each item into a buffer, forwards items downstream, and calls
+// store.Save at end of input.
+//
+// Like tryReplaySegment, this runs out-of-band of the rc.stages graph.
+// Save errors are silently dropped: capture is best-effort and a save
+// failure should not escalate into a run failure.
+func captureSegment[T any](rc *runCtx, name string, in chan T) chan T {
+	out := make(chan T, cap(in))
+	go func() {
+		defer close(out)
+		var buf []json.RawMessage
+		for item := range in {
+			data, err := json.Marshal(item)
+			if err == nil {
+				buf = append(buf, data)
+			}
+			out <- item
+		}
+		// Save once at end-of-input. Best-effort: errors are dropped.
+		_ = rc.devStore.Save(context.Background(), name, buf)
+	}()
+	return out
 }
