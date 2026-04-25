@@ -404,15 +404,6 @@ func metasToGraphNodes(metas []stageMeta) []internal.GraphNode {
 	return nodes
 }
 
-// DryRun configures the run to skip every [Effect] / [TryEffect] call,
-// returning [EffectOutcome] values with Applied: false and no error. Pure
-// stages (Map, Filter, Batch, etc.) and stateful stages run normally; only
-// effect functions are bypassed. Useful for validating pipeline graph wiring
-// without producing externally-visible side effects.
-func DryRun() RunOption {
-	return func(c *runConfig) { c.dryRun = true }
-}
-
 // MergeRunners combines multiple terminal stages that share the same pipeline
 // graph into a single runner. Use this when a pipeline forks (e.g., via
 // [Partition] or [Broadcast]) into multiple terminal branches.

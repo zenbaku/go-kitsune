@@ -605,6 +605,15 @@ func WithDefaultKeyTTL(d time.Duration) RunOption {
 	return func(cfg *runConfig) { cfg.defaultKeyTTL = d }
 }
 
+// DryRun configures the run to skip every [Effect] / [TryEffect] call,
+// returning [EffectOutcome] values with Applied: false and no error. Pure
+// stages (Map, Filter, Batch, etc.) and stateful stages run normally; only
+// effect functions are bypassed. Useful for validating pipeline graph wiring
+// without producing externally-visible side effects.
+func DryRun() RunOption {
+	return func(c *runConfig) { c.dryRun = true }
+}
+
 // ---------------------------------------------------------------------------
 // Error handling
 // ---------------------------------------------------------------------------
