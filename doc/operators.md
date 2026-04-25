@@ -3007,6 +3007,8 @@ out := kitsune.Effect(src, publish, SNSPolicy, kitsune.AttemptTimeout(10*time.Se
 
 Every call to `Runner.Run`, `ForEachRunner.Run`, `DrainRunner.Run`, and `RunHandle.Wait` returns a `RunSummary` alongside the fatal error. The summary classifies the run's outcome, captures duration and completion timestamp, exposes a metrics snapshot, and records any finalizer errors.
 
+For the workflow story (outcome derivation, finalizer ordering, `MergeRunners` propagation, async via `RunHandle`, alerting / audit / metrics patterns, interaction with `Effect` and `DevStore`), see the [Run summaries and finalizers guide](run-summary.md).
+
 ### RunSummary
 
 ```go

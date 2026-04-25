@@ -241,6 +241,8 @@ log.Printf("run %v in %v: outcome=%v", summary.CompletedAt, summary.Duration, su
 
 [`(*Runner).WithFinalizer(fn)`](operators.md#withfinalizer) and [`(*ForEachRunner[T]).WithFinalizer(fn)`](operators.md#withfinalizer) register post-run callbacks that observe the summary. Multiple finalizers run in registration order; their errors are recorded in `RunSummary.FinalizerErrs` and do not change `Outcome`.
 
+For the full workflow (outcome derivation, finalizer ordering, `MergeRunners` propagation, async via `RunHandle`, alerting / audit / metrics patterns, interaction with `Effect` and `DevStore`), see the [Run summaries and finalizers guide](run-summary.md).
+
 ---
 
 ## :material-floppy-variant: Dev iteration { #higher-level-authoring }
