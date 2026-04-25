@@ -92,6 +92,47 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 .kpi-value { font-size: 22px; font-weight: 700; letter-spacing: -.03em; font-variant-numeric: tabular-nums; transition: color .3s; }
 .kpi-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
 
+/* ── Last Run summary card ──────────────────────────────────────────────────── */
+.run-summary {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.rs-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.rs-prefix {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+.rs-outcome {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+.rs-outcome.success { background: rgba(76, 175, 80, .14);  color: var(--green); }
+.rs-outcome.partial { background: rgba(255, 193, 7, .14);  color: var(--yellow); }
+.rs-outcome.failure { background: rgba(244, 67, 54, .14);  color: var(--red); }
+.rs-duration  { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.rs-completed { font-size: 11px; color: var(--muted); }
+.rs-err       { margin-top: 8px; font-size: 12px; color: var(--red); white-space: pre-wrap; }
+.rs-fin       { margin-top: 8px; font-size: 12px; }
+.rs-fin summary { cursor: pointer; color: var(--yellow); list-style: none; }
+.rs-fin summary::-webkit-details-marker { display: none; }
+.rs-fin summary::before { content: '▸ '; }
+.rs-fin[open] summary::before { content: '▾ '; }
+.rs-fin ul { margin: 6px 0 0 18px; color: var(--muted); padding: 0; }
+.rs-fin li { margin: 2px 0; }
+
 /* ── Sections ──────────────────────────────────────────────────────────────── */
 #main { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
 .sec-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -236,6 +277,20 @@ tr:hover td { background: rgba(127,127,127,.04); }
   </div>
 </div>
 
+<div id="run-summary-card" class="run-summary" style="display:none">
+  <div class="rs-row">
+    <span class="rs-prefix">Last Run</span>
+    <span id="rs-outcome" class="rs-outcome"></span>
+    <span id="rs-duration" class="rs-duration"></span>
+    <span id="rs-completed" class="rs-completed"></span>
+  </div>
+  <div id="rs-err" class="rs-err" style="display:none"></div>
+  <details id="rs-finalizer-errs" class="rs-fin" style="display:none">
+    <summary id="rs-finalizer-summary"></summary>
+    <ul id="rs-finalizer-list"></ul>
+  </details>
+</div>
+
 <div id="main">
   <div>
     <div class="sec-hdr">
@@ -356,11 +411,12 @@ function updatePauseBtn() {
 const es = new EventSource('/events');
 es.onopen  = () => document.getElementById('dot').classList.add('on');
 es.onerror = () => document.getElementById('dot').classList.remove('on');
-es.addEventListener('graph',  e => { graph = JSON.parse(e.data); buildNodeIndex(); renderDAG(); renderTable(); });
-es.addEventListener('stats',  e => { stats = JSON.parse(e.data); onStats(); });
-es.addEventListener('log',    e => addLog(JSON.parse(e.data)));
-es.addEventListener('sample', e => onSample(JSON.parse(e.data)));
-es.addEventListener('paused', e => { pipelinePaused = JSON.parse(e.data).paused; updatePauseBtn(); updateBadge(); });
+es.addEventListener('graph',   e => { graph = JSON.parse(e.data); buildNodeIndex(); renderDAG(); renderTable(); });
+es.addEventListener('stats',   e => { stats = JSON.parse(e.data); onStats(); });
+es.addEventListener('log',     e => addLog(JSON.parse(e.data)));
+es.addEventListener('sample',  e => onSample(JSON.parse(e.data)));
+es.addEventListener('paused',  e => { pipelinePaused = JSON.parse(e.data).paused; updatePauseBtn(); updateBadge(); });
+es.addEventListener('summary', e => { renderSummary(JSON.parse(e.data)); });
 document.getElementById('addr').textContent = window.location.host;
 
 function buildNodeIndex() {
@@ -936,6 +992,51 @@ function fmtUptime(ms) {
   const s=Math.floor(ms/1000), m=Math.floor(s/60), h=Math.floor(m/60);
   const p = n=>String(n).padStart(2,'0');
   return h>0 ? `${p(h)}:${p(m%60)}:${p(s%60)}` : `${p(m)}:${p(s%60)}`;
+}
+
+// ── Last Run summary ──────────────────────────────────────────────────────────
+function renderSummary(s) {
+  document.getElementById('run-summary-card').style.display = '';
+
+  const outcomeEl = document.getElementById('rs-outcome');
+  const cls = s.outcome === 0 ? 'success' : s.outcome === 1 ? 'partial' : 'failure';
+  outcomeEl.className = 'rs-outcome ' + cls;
+  outcomeEl.textContent = s.outcomeName;
+
+  document.getElementById('rs-duration').textContent = fmtDuration(s.duration_ns);
+  document.getElementById('rs-completed').textContent = 'Completed ' + fmtCompletedAt(s.completedAt);
+
+  const errEl = document.getElementById('rs-err');
+  if (s.err) {
+    errEl.style.display = '';
+    errEl.textContent = s.err;
+  } else {
+    errEl.style.display = 'none';
+  }
+
+  const finEl   = document.getElementById('rs-finalizer-errs');
+  const finList = document.getElementById('rs-finalizer-list');
+  const finSum  = document.getElementById('rs-finalizer-summary');
+  const errs    = (s.finalizerErrs || []).filter(x => x);
+  if (errs.length) {
+    finEl.style.display = '';
+    finSum.textContent  = errs.length + ' finalizer error' + (errs.length === 1 ? '' : 's');
+    finList.innerHTML   = errs.map(e => `<li>${esc(e)}</li>`).join('');
+  } else {
+    finEl.style.display = 'none';
+  }
+}
+
+function fmtDuration(ns) {
+  if (ns < 1000)  return ns + 'ns';
+  if (ns < 1e6)   return (ns/1e3).toFixed(1) + 'µs';
+  if (ns < 1e9)   return (ns/1e6).toFixed(1) + 'ms';
+  return (ns/1e9).toFixed(2) + 's';
+}
+
+function fmtCompletedAt(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString('en', {hour12: false, fractionalSecondDigits: 3});
 }
 </script>
 </body>
