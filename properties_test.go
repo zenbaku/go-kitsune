@@ -2387,3 +2387,47 @@ func TestSegment_TransparencyProperty(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Effect properties
+// ---------------------------------------------------------------------------
+
+// TestPropEffect_OneOutcomePerInput verifies that Effect emits exactly one
+// outcome per input, in input order, regardless of which inputs cause fn to
+// fail. The function fails for inputs whose value mod failMod == 0.
+func TestPropEffect_OneOutcomePerInput(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		items := rapid.SliceOfN(rapid.IntRange(0, 10), 0, 20).Draw(t, "items")
+		failMod := rapid.IntRange(1, 5).Draw(t, "failMod")
+
+		src := kitsune.FromSlice(items)
+		fn := func(_ context.Context, v int) (int, error) {
+			if v%failMod == 0 {
+				return 0, errAttempt
+			}
+			return v * 2, nil
+		}
+		out, err := kitsune.Collect(context.Background(), kitsune.Effect(src, fn))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out) != len(items) {
+			t.Fatalf("got %d outcomes, want %d", len(out), len(items))
+		}
+		for i, o := range out {
+			if o.Input != items[i] {
+				t.Fatalf("outcome %d: input=%d, want %d (order broken)", i, o.Input, items[i])
+			}
+			wantErr := items[i]%failMod == 0
+			if wantErr && o.Err == nil {
+				t.Errorf("outcome %d: want err for input=%d", i, items[i])
+			}
+			if !wantErr && o.Err != nil {
+				t.Errorf("outcome %d: unexpected err for input=%d: %v", i, items[i], o.Err)
+			}
+			if !wantErr && o.Result != items[i]*2 {
+				t.Errorf("outcome %d: result=%d, want %d", i, o.Result, items[i]*2)
+			}
+		}
+	})
+}
