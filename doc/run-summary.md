@@ -295,11 +295,11 @@ MetricsSnapshot{
 
 The minimal snapshot lets callers read `.Timestamp` and `.Elapsed` without a nil check.
 
-### Known limitation: `Effect` outcomes not reflected in `MetricsHook`
+### `Effect` outcomes in `MetricsHook`
 
-`Effect` does not currently call `hook.OnItem` per outcome. As a consequence, `summary.Metrics.Stages["my-effect"]` is empty even when an `Effect` named `"my-effect"` is in the pipeline. The per-effect counters live in `runCtx.effectStats` and feed `Outcome` derivation, but they do not surface as `StageMetrics` entries.
+Each `Effect` stage reports per-item outcomes through `hook.OnItem`. When a `MetricsHook` is attached, `summary.Metrics.Stages["my-effect"]` carries `Processed` (count of successful outcomes), `Errors` (count of terminal failures), and the latency histogram across the full per-item retry window. The `runCtx.effectStats` counter that feeds `Outcome` derivation is independent of the hook, so derivation works whether or not a hook is attached.
 
-If you need per-stage effect counts for dashboards, use `summary.Outcome` plus `OnRetry` callbacks on the `RetryStrategy`:
+For finer-grained instrumentation (per-attempt retry events), pair with `OnRetry` callbacks on the `RetryStrategy`:
 
 ```go
 SNSPolicy := kitsune.EffectPolicy{
@@ -311,7 +311,7 @@ SNSPolicy := kitsune.EffectPolicy{
 }
 ```
 
-Wiring `Effect → hook.OnItem` so MetricsHook reflects effect counts is a tracked follow-up; not in v1.
+Under `DryRun` no items are registered with the hook (the function never ran).
 
 ---
 
@@ -345,8 +345,7 @@ Finalizers attached to the runner run inside the `RunAsync` goroutine before `Do
 
 These were considered and explicitly excluded from v1:
 
-- **`Effect → hook.OnItem` integration.** As above; tracked as a follow-up.
-- **Per-stage `EffectStats` in `RunSummary`.** The internal `runCtx.effectStats` is not exported. If users want per-effect counts, they currently rely on `OnRetry` callbacks or wrapping `Effect` in a stage that bumps a counter. A future version may surface a structured `summary.EffectStats` map.
+- **Per-stage `EffectStats` in `RunSummary`.** The internal `runCtx.effectStats` is not exported. Per-effect counts are visible via `summary.Metrics.Stages["my-effect"]` (since `Effect` now calls `hook.OnItem`); a future version may surface a structured `summary.EffectStats` map for dashboards that want the required/best-effort split without re-deriving it from stage names.
 - **Finalizer-driven `Outcome` mutation.** Finalizers cannot change `Outcome`. The intent: finalizers observe; they do not decide. If you want to re-classify a run based on a side check, do it in the calling code after `Run` returns.
 - **Cancellation of finalizers.** All registered finalizers run unconditionally after the pipeline completes. There is no "halt on first finalizer error" mode. If you want short-circuit behaviour, build it into the finalizer functions themselves.
 

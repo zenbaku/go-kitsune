@@ -354,3 +354,63 @@ func TestTryEffect_Split(t *testing.T) {
 		t.Errorf("failInputs=%v, want [2 4]", failInputs)
 	}
 }
+
+// TestEffect_MetricsHookSeesOutcomes verifies that an Effect stage reports
+// per-item outcomes through the Hook interface so MetricsHook reflects
+// successes and failures alongside ordinary stages.
+func TestEffect_MetricsHookSeesOutcomes(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3, 4})
+
+	var calls atomic.Int32
+	fn := func(_ context.Context, v int) (int, error) {
+		calls.Add(1)
+		if v%2 == 0 {
+			return 0, errors.New("even rejected")
+		}
+		return v * 10, nil
+	}
+
+	p := kitsune.Effect(src, fn,
+		kitsune.EffectStageOption(kitsune.WithName("publish")),
+	)
+	runner := p.ForEach(func(_ context.Context, _ kitsune.EffectOutcome[int, int]) error { return nil })
+
+	hook := kitsune.NewMetricsHook()
+	if _, err := runner.Run(ctx, kitsune.WithHook(hook)); err != nil {
+		t.Fatal(err)
+	}
+
+	stage := hook.Stage("publish")
+	if stage.Processed != 2 {
+		t.Errorf("Processed=%d, want 2 (odd inputs 1 and 3)", stage.Processed)
+	}
+	if stage.Errors != 2 {
+		t.Errorf("Errors=%d, want 2 (even inputs 2 and 4)", stage.Errors)
+	}
+	if stage.TotalNs == 0 {
+		t.Errorf("TotalNs=0, want a positive duration sum")
+	}
+}
+
+// TestEffect_MetricsHookSkipsDryRun verifies that DryRun does not register
+// per-item events with the Hook, since no work was actually performed.
+func TestEffect_MetricsHookSkipsDryRun(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3})
+
+	fn := func(_ context.Context, v int) (int, error) { return v, nil }
+	p := kitsune.Effect(src, fn, kitsune.EffectStageOption(kitsune.WithName("publish")))
+	runner := p.ForEach(func(_ context.Context, _ kitsune.EffectOutcome[int, int]) error { return nil })
+
+	hook := kitsune.NewMetricsHook()
+	if _, err := runner.Run(ctx, kitsune.WithHook(hook), kitsune.DryRun()); err != nil {
+		t.Fatal(err)
+	}
+
+	stage := hook.Stage("publish")
+	if stage.Processed != 0 || stage.Errors != 0 {
+		t.Errorf("dry-run: Processed=%d Errors=%d, want 0/0 (no items registered with hook)",
+			stage.Processed, stage.Errors)
+	}
+}

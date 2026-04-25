@@ -236,9 +236,17 @@ func Effect[I, R any](
 		drainCh := rc.drainCh(id)
 		dryRun := rc.dryRun
 		localCfg := cfg // local copy for closure capture
+		hook := rc.hook
+		if hook == nil {
+			hook = internal.NoopHook{}
+		}
+		stageName := meta.name
 
 		stage := func(ctx context.Context) error {
 			defer close(ch)
+			hook.OnStageStart(ctx, stageName)
+			var processed, errored int64
+			defer func() { hook.OnStageDone(ctx, stageName, processed, errored) }()
 			cooperativeDrain := false
 			defer func() {
 				if !cooperativeDrain {
@@ -257,8 +265,15 @@ func Effect[I, R any](
 					outcome.Input = item
 
 					if !dryRun {
+						start := time.Now()
 						outcome = runEffectAttempts(ctx, item, fn, localCfg)
+						hook.OnItem(ctx, stageName, time.Since(start), outcome.Err)
 						rc.recordEffectOutcome(id, outcome.Applied)
+						if outcome.Err != nil {
+							errored++
+						} else {
+							processed++
+						}
 					}
 
 					select {

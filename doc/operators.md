@@ -3036,9 +3036,11 @@ type RunSummary struct {
 
 `FinalizerErrs` has length equal to the number of registered finalizers (see [`WithFinalizer`](#withfinalizer)); entries are nil for finalizers that returned nil. Finalizer errors do not change `Outcome`.
 
-### Caveat: MetricsHook does not yet reflect Effect outcomes
+### Effect outcomes in `MetricsHook`
 
-`Effect` does not currently report its per-input outcomes through the `Hook` interface. As a result, `summary.Metrics.Stages["my-effect"]` will not appear in the snapshot even when an `Effect` stage with that name is in the pipeline. `Outcome` derivation does not depend on the metrics snapshot; it uses an internal per-stage counter populated by the `Effect` operator. Wiring `Effect → Hook.OnItem` is tracked as a follow-up.
+Each `Effect` stage reports its per-item outcomes through the `Hook` interface. When a `MetricsHook` is attached, `summary.Metrics.Stages["my-effect"]` carries the usual counters: `Processed` for successes (`Applied: true`), `Errors` for terminal failures, plus the latency histogram across the full per-item retry window. Under `DryRun` the function is not called and no items are registered with the hook (`Processed` and `Errors` stay at zero for that stage).
+
+`Outcome` derivation uses the same source of truth: an internal per-effect-stage counter populated as outcomes are emitted, independent of whether a `MetricsHook` is attached.
 
 ### WithFinalizer
 

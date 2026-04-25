@@ -437,7 +437,6 @@ runner := audited.ForEach(handleFinalAck)
 
 These are documented in the spec but deferred to a future release:
 
-- **`hook.OnItem` integration.** `Effect` does not currently call the run-level hook for per-input completion. So `MetricsHook.Stages["my-effect"]` is empty even when an `Effect` named `"my-effect"` is in the pipeline. Use `RunSummary.Outcome` for now; full per-stage Effect metrics will land later.
 - **Idempotency-key-driven deduplication.** Stored on `EffectPolicy` but not yet wired to a backend.
 - **`DryRunNoop()` per-effect override.** Dropped from v1 because it adds no observable behaviour over the default `DryRun` skip. Can be added if a use case for opting *out* of the default skip emerges.
 
