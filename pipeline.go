@@ -114,6 +114,15 @@ type drainEntry struct {
 	refs atomic.Int32
 }
 
+// effectStat tracks success and terminal-failure counts for a single Effect
+// stage during a run.
+type effectStat struct {
+	name     string       // stage name (cf. stageMeta.name); used for logging
+	required bool         // mirrors stageMeta.effectRequired
+	success  atomic.Int64
+	failure  atomic.Int64
+}
+
 // errDrained is returned by a source's send helper when the cooperative drain
 // fires. sourceStage converts this to nil so it does not propagate as an error.
 var errDrained = errors.New("kitsune: cooperative drain")
@@ -154,6 +163,18 @@ type runCtx struct {
 	// dryRun is true when the run was started with [DryRun]. Effect operators
 	// check this and short-circuit fn execution; pure stages run normally.
 	dryRun bool
+
+	// effectStats accumulates per-Effect-stage outcome counts during a run.
+	// Keyed by the Effect stage's ID. Populated by Effect.build via
+	// registerEffectStat; incremented from the Effect goroutine via
+	// recordEffectOutcome after each emitted outcome. Read by Runner.Run at
+	// shutdown to derive RunOutcome.
+	//
+	// Map writes (registerEffectStat) all happen during the build phase,
+	// before any stage goroutine starts. Counter increments
+	// (recordEffectOutcome) use atomic operations and read the entry pointer
+	// from a map already populated at build time, so no lock is needed.
+	effectStats map[int64]*effectStat
 }
 
 // defaultBufSize returns the run-level default buffer, falling back to
@@ -191,6 +212,7 @@ func newRunCtx() *runCtx {
 		chans:       make(map[int64]any),
 		drainNotify: make(map[int64]*drainEntry),
 		segmentByID: make(map[int64]string),
+		effectStats: make(map[int64]*effectStat),
 		refs:        newRefRegistry(),
 		done:        done,
 		signalDone:  func() { once.Do(func() { close(done) }) },
@@ -266,6 +288,30 @@ func (rc *runCtx) drainCh(id int64) <-chan struct{} {
 		return e.ch
 	}
 	return nil
+}
+
+// registerEffectStat creates and stores an effectStat entry for an Effect
+// stage. Called from Effect.build during the build phase, before any stage
+// goroutine starts. Safe without a lock because all build closures run
+// sequentially in a single goroutine before Run starts the stage workers.
+func (rc *runCtx) registerEffectStat(id int64, name string, required bool) {
+	rc.effectStats[id] = &effectStat{name: name, required: required}
+}
+
+// recordEffectOutcome increments the success or failure counter for an
+// Effect stage. Called from inside the Effect goroutine after each emitted
+// outcome. Safe for concurrent use because the entry pointer is read from a
+// map that was fully populated during the build phase.
+func (rc *runCtx) recordEffectOutcome(id int64, applied bool) {
+	s, ok := rc.effectStats[id]
+	if !ok {
+		return
+	}
+	if applied {
+		s.success.Add(1)
+	} else {
+		s.failure.Add(1)
+	}
 }
 
 // ---------------------------------------------------------------------------
