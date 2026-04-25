@@ -72,7 +72,7 @@ func Materialize[T any](p *Pipeline[T]) *Pipeline[Notification[T]] {
 		innerCtx, cancel := context.WithCancel(ctx)
 		stopped := false
 
-		err := p.ForEach(func(_ context.Context, item T) error {
+		_, err := p.ForEach(func(_ context.Context, item T) error {
 			if !yield(NextNotification(item)) {
 				stopped = true
 				cancel()

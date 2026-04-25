@@ -599,7 +599,7 @@ func Concat[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 		for _, factory := range factories {
 			innerCtx, cancel := context.WithCancel(ctx)
 			stopped := false
-			err := factory().ForEach(func(_ context.Context, item T) error {
+			_, err := factory().ForEach(func(_ context.Context, item T) error {
 				if !yield(item) {
 					stopped = true
 					cancel()
@@ -640,7 +640,7 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 	}
 	if len(factories) == 1 {
 		return Generate(func(ctx context.Context, yield func(T) bool) error {
-			err := factories[0]().ForEach(func(_ context.Context, item T) error {
+			_, err := factories[0]().ForEach(func(_ context.Context, item T) error {
 				if !yield(item) {
 					return context.Canceled
 				}
@@ -690,7 +690,7 @@ func Amb[T any](factories ...func() *Pipeline[T]) *Pipeline[T] {
 			go func() {
 				defer wg.Done()
 				fCtx := factoryCtxs[i]
-				err := factory().ForEach(func(_ context.Context, v T) error {
+				_, err := factory().ForEach(func(_ context.Context, v T) error {
 					select {
 					case chs[i] <- ambItem{val: v, factory: i}:
 						return nil
@@ -778,7 +778,7 @@ func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		innerCtx, cancel := context.WithCancel(ctx)
 		stopped := false
-		err := p.ForEach(func(_ context.Context, item T) error {
+		_, err := p.ForEach(func(_ context.Context, item T) error {
 			if !yield(item) {
 				stopped = true
 				cancel()
@@ -797,7 +797,7 @@ func Catch[T any](p *Pipeline[T], fn func(error) *Pipeline[T]) *Pipeline[T] {
 		// Primary errored — subscribe to the fallback.
 		fallback := fn(err)
 		innerCtx2, cancel2 := context.WithCancel(ctx)
-		err2 := fallback.ForEach(func(_ context.Context, item T) error {
+		_, err2 := fallback.ForEach(func(_ context.Context, item T) error {
 			if !yield(item) {
 				stopped = true
 				cancel2()
@@ -845,7 +845,7 @@ func Using[T, R any](
 
 		innerCtx, cancel := context.WithCancel(ctx)
 		stopped := false
-		err = build(res).ForEach(func(_ context.Context, item T) error {
+		_, err = build(res).ForEach(func(_ context.Context, item T) error {
 			if !yield(item) {
 				stopped = true
 				cancel()

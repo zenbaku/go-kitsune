@@ -26,7 +26,7 @@ import (
 //	}).Run(ctx)
 func Collect[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) ([]T, error) {
 	var out []T
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		out = append(out, v)
 		return nil
 	}).Run(ctx, opts...)
@@ -45,7 +45,7 @@ func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bo
 
 	var result T
 	var found bool
-	_ = p.ForEach(func(_ context.Context, v T) error {
+	_, _ = p.ForEach(func(_ context.Context, v T) error {
 		result = v
 		found = true
 		cancel()
@@ -64,7 +64,7 @@ func First[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bo
 func Last[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, bool, error) {
 	var result T
 	var found bool
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		result = v
 		found = true
 		return nil
@@ -114,7 +114,7 @@ func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T
 
 	var result T
 	count := 0
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		count++
 		if count > 1 {
 			return fmt.Errorf("kitsune: Single: pipeline emitted more than one item")
@@ -148,7 +148,7 @@ func Single[T any](ctx context.Context, p *Pipeline[T], opts ...SingleOption) (T
 // Count returns the number of items emitted by the pipeline.
 func Count[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (int64, error) {
 	var n int64
-	err := p.ForEach(func(_ context.Context, _ T) error {
+	_, err := p.ForEach(func(_ context.Context, _ T) error {
 		n++
 		return nil
 	}).Run(ctx, opts...)
@@ -166,7 +166,7 @@ func Any[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...
 	defer cancel()
 
 	found := false
-	_ = p.ForEach(func(_ context.Context, v T) error {
+	_, _ = p.ForEach(func(_ context.Context, v T) error {
 		if pred(v) {
 			found = true
 			cancel()
@@ -184,7 +184,7 @@ func All[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ...
 	defer cancel()
 
 	allMatch := true
-	_ = p.ForEach(func(_ context.Context, v T) error {
+	_, _ = p.ForEach(func(_ context.Context, v T) error {
 		if !pred(v) {
 			allMatch = false
 			cancel()
@@ -206,7 +206,7 @@ func Find[T any](ctx context.Context, p *Pipeline[T], pred func(T) bool, opts ..
 
 	var result T
 	found := false
-	_ = p.ForEach(func(_ context.Context, v T) error {
+	_, _ = p.ForEach(func(_ context.Context, v T) error {
 		if pred(v) {
 			result = v
 			found = true
@@ -233,7 +233,7 @@ type Numeric interface {
 // Sum returns the sum of all items. Returns 0 if the pipeline is empty.
 func Sum[T Numeric](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, error) {
 	var sum T
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		sum += v
 		return nil
 	}).Run(ctx, opts...)
@@ -245,7 +245,7 @@ func Sum[T Numeric](ctx context.Context, p *Pipeline[T], opts ...RunOption) (T, 
 func Min[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (T, bool, error) {
 	var result T
 	found := false
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		if !found || less(v, result) {
 			result = v
 			found = true
@@ -276,7 +276,7 @@ type MinMaxResult[T any] struct {
 func MinMax[T any](ctx context.Context, p *Pipeline[T], less func(a, b T) bool, opts ...RunOption) (MinMaxResult[T], bool, error) {
 	var result MinMaxResult[T]
 	found := false
-	err := p.ForEach(func(_ context.Context, v T) error {
+	_, err := p.ForEach(func(_ context.Context, v T) error {
 		if !found {
 			result.Min = v
 			result.Max = v

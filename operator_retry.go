@@ -95,7 +95,7 @@ func Retry[T any](p *Pipeline[T], pol RetryStrategy) *Pipeline[T] {
 			// runCtx and a clean source reconnection.
 			innerCtx, cancel := context.WithCancel(ctx)
 			stopped := false
-			runErr := p.ForEach(func(_ context.Context, item T) error {
+			_, runErr := p.ForEach(func(_ context.Context, item T) error {
 				if !yield(item) {
 					stopped = true
 					cancel() // unblock upstream stages in the sub-pipeline

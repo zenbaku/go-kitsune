@@ -386,8 +386,8 @@ func (r *ForEachRunner[T]) Build() *Runner {
 	return r.runner
 }
 
-// Run executes the pipeline, blocking until completion.
-func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
+// Run executes the pipeline, blocking until completion. See [Runner.Run].
+func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) (RunSummary, error) {
 	return r.runner.Run(ctx, opts...)
 }
 
@@ -396,6 +396,16 @@ func (r *ForEachRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
 // See [Runner.RunAsync] for details.
 func (r *ForEachRunner[T]) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 	return r.runner.RunAsync(ctx, opts...)
+}
+
+// WithFinalizer registers a finalizer on the underlying [*Runner].
+// Multiple finalizers run in registration order after the pipeline completes.
+// See [Runner.WithFinalizer] for details.
+//
+// WithFinalizer returns r so callers can chain attach calls.
+func (r *ForEachRunner[T]) WithFinalizer(fn func(ctx context.Context, s RunSummary) error) *ForEachRunner[T] {
+	r.runner.WithFinalizer(fn)
+	return r
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +437,9 @@ func (r *DrainRunner[T]) Build() *Runner {
 }
 
 // Run registers the Drain terminal stage and executes the pipeline.
-func (r *DrainRunner[T]) Run(ctx context.Context, opts ...RunOption) error {
+//
+// Deprecated: use [Pipeline.ForEach] with a no-op function instead.
+func (r *DrainRunner[T]) Run(ctx context.Context, opts ...RunOption) (RunSummary, error) {
 	return r.Build().Run(ctx, opts...)
 }
 

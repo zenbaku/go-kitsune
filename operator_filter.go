@@ -375,7 +375,7 @@ func IgnoreElements[T any](p *Pipeline[T]) *Pipeline[T] {
 	return Generate(func(ctx context.Context, _ func(T) bool) error {
 		innerCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		err := p.ForEach(func(_ context.Context, _ T) error {
+		_, err := p.ForEach(func(_ context.Context, _ T) error {
 			return nil
 		}).Run(innerCtx)
 		if err != nil {
@@ -398,7 +398,7 @@ func TapError[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		innerCtx, cancel := context.WithCancel(ctx)
 		stopped := false
-		err := p.ForEach(func(_ context.Context, item T) error {
+		_, err := p.ForEach(func(_ context.Context, item T) error {
 			if !yield(item) {
 				stopped = true
 				cancel()
@@ -428,7 +428,7 @@ func Finally[T any](p *Pipeline[T], fn func(context.Context, error)) *Pipeline[T
 	return Generate(func(ctx context.Context, yield func(T) bool) error {
 		innerCtx, cancel := context.WithCancel(ctx)
 		stopped := false
-		err := p.ForEach(func(_ context.Context, item T) error {
+		_, err := p.ForEach(func(_ context.Context, item T) error {
 			if !yield(item) {
 				stopped = true
 				cancel()
@@ -539,7 +539,7 @@ func ExpandMap[T any](p *Pipeline[T], fn func(context.Context, T) *Pipeline[T], 
 				innerCtx, cancel := context.WithCancel(ctx)
 				var sendErr error
 				var limitHit bool
-				err := current.p.ForEach(func(_ context.Context, item T) error {
+				_, err := current.p.ForEach(func(_ context.Context, item T) error {
 					// Dedup check: skip item and its subtree if already visited.
 					if set != nil {
 						key := keyFn(item)
