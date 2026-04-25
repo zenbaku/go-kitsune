@@ -3009,6 +3009,8 @@ Every call to `Runner.Run`, `ForEachRunner.Run`, `DrainRunner.Run`, and `RunHand
 
 For the workflow story (outcome derivation, finalizer ordering, `MergeRunners` propagation, async via `RunHandle`, alerting / audit / metrics patterns, interaction with `Effect` and `DevStore`), see the [Run summaries and finalizers guide](run-summary.md).
 
+The [Inspector dashboard](inspector.md#2-last-run-card) renders the latest `RunSummary` automatically when the inspector is attached as a hook via `WithHook`. The inspector implements the optional `RunSummaryHook` interface (defined alongside `RunSummary`) so the runner delivers the summary to it at the end of each run.
+
 ### RunSummary
 
 ```go
@@ -3076,6 +3078,20 @@ if err != nil {
     log.Printf("run failed: %v (outcome=%v)", err, summary.Outcome)
 }
 ```
+
+### RunSummaryHook { #runsummaryhook }
+
+```go
+type RunSummaryHook interface {
+    OnRunComplete(ctx context.Context, summary RunSummary)
+}
+```
+
+An optional extension of [`Hook`](#runner--runasync). If the hook passed to [`WithHook`](#runner--runasync) implements `RunSummaryHook`, [`Runner.Run`](#runner--runasync) calls `OnRunComplete` once at the end of each run, after the `RunSummary` is computed and after any finalizers attached via [`WithFinalizer`](#withfinalizer) have run. The summary passed to `OnRunComplete` is the same value `Run` returns to the caller.
+
+Hooks that observe per-item events implement `Hook`; hooks that observe the run as a whole implement `RunSummaryHook`. A single hook may implement both. The [Inspector](inspector.md) implements both and uses `OnRunComplete` to render the [Last Run card](inspector.md#2-last-run-card).
+
+Checked via type assertion; existing `Hook` implementations need not implement this.
 
 ---
 

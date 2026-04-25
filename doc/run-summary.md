@@ -116,6 +116,8 @@ case <-time.After(30 * time.Second):
 
 `handle.Summary()` is non-blocking: before completion it returns the zero-valued `RunSummary` (with `Outcome: RunSuccess`, `Duration: 0`, etc.). Use `<-handle.Done()` to gate the read, or block on `handle.Wait()` which returns both the summary and the error.
 
+Hooks that observe the run as a whole (rather than individual items) implement [`RunSummaryHook`](operators.md#runsummaryhook). The inspector uses this to render the run's outcome on its dashboard; see [Inspector: Last Run card](inspector.md#2-last-run-card).
+
 ---
 
 ## `WithFinalizer`: post-run callbacks

@@ -37,7 +37,7 @@ Open the printed URL in a browser. The dashboard updates in real time as the pip
 
 ## Dashboard layout
 
-The dashboard has three panels:
+The dashboard has five panels:
 
 ### 1. KPI bar (top)
 
@@ -45,7 +45,21 @@ Two global counters update continuously:
 - **Total Items (sink)**: total items that have reached the final stage(s)
 - **Throughput**: current items/sec at the sink, averaged over a rolling window
 
-### 2. Pipeline Graph (left)
+### 2. Last Run card
+
+A card sits below the KPI bar and is hidden until the first run completes. After every run it shows:
+
+- **Outcome badge**: green `RunSuccess`, yellow `RunPartialSuccess`, red `RunFailure`.
+- **Duration**: wall-clock time of the run, formatted as ns/µs/ms/s.
+- **Completed at**: the run's completion timestamp.
+- **Fatal error** (if any): the error returned by `Run`, in red.
+- **Finalizer errors** (if any): a collapsible list of errors returned by finalizers attached via [`WithFinalizer`](operators.md#withfinalizer).
+
+The card replaces its content on every subsequent run. If you persist inspector state via [`WithStore`](#persistent-state) the latest summary is restored on browser reload.
+
+The card is driven by the [`RunSummaryHook`](operators.md#runsummaryhook) optional interface that the inspector implements. The runner fires `OnRunComplete` once per `Run`, after finalizers have run, with the same `RunSummary` that synchronous callers see as the first return value.
+
+### 3. Pipeline Graph (left)
 
 A live SVG visualization of the DAG. Nodes are stages; directed edges show the data flow direction.
 
@@ -57,7 +71,7 @@ A live SVG visualization of the DAG. Nodes are stages; directed edges show the d
 
 Use the **⊡ Fit** button to re-center the graph after resizing the window.
 
-### 3. Stage Metrics table (center)
+### 4. Stage Metrics table (center)
 
 One row per named stage, with live-updating columns:
 
@@ -74,7 +88,7 @@ One row per named stage, with live-updating columns:
 | Avg Latency | Mean processing time per item |
 | Buffer | Live fill bar showing current / capacity for the output channel |
 
-### 4. Event Log (bottom)
+### 5. Event Log (bottom)
 
 A scrollable log of pipeline lifecycle events: stage starts, completions, errors, restarts, and item samples. Samples appear approximately every 10th item to give you a representative view of what's flowing without overwhelming the log.
 
