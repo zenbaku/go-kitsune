@@ -46,6 +46,7 @@ func TestExamples(t *testing.T) {
 		"randomsample",
 		"reducewhile",
 		"runningtotal",
+		"segment",
 		"single",
 		"stages",
 		"switchmap",
