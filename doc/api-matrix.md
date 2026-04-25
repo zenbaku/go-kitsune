@@ -330,6 +330,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `(p).Through` | `(p *Pipeline[T]).Through(s Stage[T,T]) *Pipeline[T]` | Method form of Apply |
 | `Or` | `Or[I,O](primary, fallback func) Stage[I,O]` | Try primary; fall back to fallback on no output |
 | `(s).Or` | `(s Stage[I,O]).Or(fallback Stage[I,O]) Stage[I,O]` *(compat)* | Method form taking a full Stage |
+| `Segment[I,O]` | `NewSegment[I,O](name string, stage Stage[I,O], opts ...SegmentOption) Segment[I,O]` | Metadata wrapper; accepts no StageOptions. See [operators.md#segment](operators.md#segment) |
 
 ---
 
