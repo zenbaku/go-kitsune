@@ -334,6 +334,22 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 ---
 
+## 12.5 · Effects
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `EffectOutcome[I,R]` | `struct{ Input I; Result R; Err error; Applied bool }` | One per input from [`Effect`](operators.md#effect) |
+| `EffectPolicy` | `struct{ Retry RetryStrategy; Required bool; AttemptTimeout time.Duration; Idempotent bool; IdempotencyKey func(any)string }` | Reusable bundle; satisfies `EffectOption` |
+| `Effect` | `Effect[I,R](p, fn func(ctx,I)(R,error), opts...) *Pipeline[EffectOutcome[I,R]]` | Single-output side-effect operator |
+| `TryEffect` | `TryEffect[I,R](p, fn, opts...) (ok, failed *Pipeline[EffectOutcome[I,R]])` | Two-output convenience that splits on Err |
+| `Required()` | `Required() EffectOption` | Mark effect as required (default) |
+| `BestEffort()` | `BestEffort() EffectOption` | Failures recorded; run continues |
+| `AttemptTimeout` | `AttemptTimeout(d time.Duration) EffectOption` | Per-attempt deadline |
+| `WithIdempotencyKey` | `WithIdempotencyKey(fn func(any)string) EffectOption` | Informational in v1 |
+| `EffectStageOption` | `EffectStageOption(opt StageOption) EffectOption` | Wrap regular StageOptions |
+
+---
+
 ## 13 · Error Routing
 
 | Operator | Signature | Notes |
@@ -388,6 +404,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `WithPauseGate` | `WithPauseGate(g *Gate)` | Attach an external gate for pause/resume control. |
 | `WithDefaultBuffer` | `WithDefaultBuffer(n int)` | Default channel buffer size for all stages that do not set their own `Buffer`. Default: 16. Per-stage `Buffer(n)` takes precedence. |
 | `WithDefaultKeyTTL` | `WithDefaultKeyTTL(d time.Duration)` | Default inactivity TTL for all `MapWithKey` and `FlatMapWithKey` stages that do not set their own `WithKeyTTL`. Default: 0 (disabled). Per-stage `WithKeyTTL` takes precedence; `WithKeyTTL(0)` explicitly disables eviction for a stage. |
+| `DryRun` | `DryRun()` | Skip every [`Effect`](operators.md#effect) call (Applied: false, no error). Pure stages run normally. |
 
 ---
 

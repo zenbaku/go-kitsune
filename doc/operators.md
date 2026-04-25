@@ -2880,6 +2880,127 @@ for _, n := range pipeline.Apply(src).Describe() {
 
 ---
 
+## :material-play-circle-outline: Effects { #effects }
+
+`Effect` and `TryEffect` model externally-visible side effects (publish to a queue, write to a database, call an external API) with retry, per-attempt timeout, and required-vs-best-effort semantics. They differ from a plain `Map` in that the result of every input is preserved in an `EffectOutcome[I, R]` value: downstream sees one outcome per input, success or failure.
+
+### Effect
+
+```go
+type EffectOutcome[I, R any] struct {
+    Input   I
+    Result  R
+    Err     error
+    Applied bool
+}
+
+func Effect[I, R any](
+    p *Pipeline[I],
+    fn func(ctx context.Context, item I) (R, error),
+    opts ...EffectOption,
+) *Pipeline[EffectOutcome[I, R]]
+```
+
+Runs `fn` for every input, retrying on error per the configured `RetryStrategy`. Emits exactly one `EffectOutcome[I, R]` per input. On success: `Applied: true`, `Result` set, `Err: nil`. On terminal failure (retries exhausted): `Applied: false`, `Result` is the zero value, `Err` carries the last error. The pipeline does not error out; downstream decides how to route success vs failure (or use [`TryEffect`](#tryeffect)).
+
+**When to use**
+
+- Publishing to an external queue (SNS, Kafka) where retries on transient failure are required and the pipeline must continue past permanent failures.
+- Writing to a database where each write returns a status that downstream stages use.
+- Any externally-visible action where you need a graph-visible "this is a side effect" marker, distinct from a pure `Map`.
+
+**Options** ([`EffectPolicy`](#effectpolicy) bundles all of these as a single value)
+
+| Option | Description |
+|---|---|
+| `Required()` | Effect failures fail the run (default when no `Required`/`BestEffort` is supplied). |
+| `BestEffort()` | Effect failures are recorded but do not fail the run. |
+| `AttemptTimeout(d)` | Per-attempt deadline applied via `context.WithTimeout`. Distinct from the stage-level `Timeout(d)`. |
+| `WithIdempotencyKey(fn)` | Records a stable key per input for future use by external idempotent backends. v1 does not de-duplicate retries. |
+| `EffectStageOption(opt)` | Apply a regular `StageOption` (e.g. `WithName("publish")`, `Buffer(64)`) to the underlying stage. |
+
+The retry strategy is a field on `EffectPolicy`. To configure retries, pass an `EffectPolicy` value:
+
+```go
+out := kitsune.Effect(src, publish,
+    kitsune.EffectPolicy{
+        Retry:          kitsune.RetryUpTo(3, kitsune.FixedBackoff(50*time.Millisecond)),
+        Required:       true,
+        AttemptTimeout: 5 * time.Second,
+    },
+)
+```
+
+**Dry run**
+
+When the runner is started with `DryRun()` (a [`RunOption`](#run-options)), every `Effect` skips its function and emits an outcome with `Applied: false` and no error. Pure stages (`Map`, `Filter`, `Batch`, etc.) and stateful stages run normally. Useful for validating wiring without producing externally-visible side effects.
+
+**Example**
+
+```go
+type Message struct{ ID int; Body string }
+
+publish := func(ctx context.Context, m Message) (string, error) {
+    return sns.Publish(ctx, m.Body)
+}
+
+out := kitsune.Effect(messages, publish,
+    kitsune.EffectPolicy{
+        Required:       true,
+        Retry:          kitsune.RetryUpTo(3, kitsune.ExponentialBackoff(100*time.Millisecond, 2*time.Second)),
+        AttemptTimeout: 5 * time.Second,
+    },
+)
+```
+
+### TryEffect
+
+```go
+func TryEffect[I, R any](
+    p *Pipeline[I],
+    fn func(ctx context.Context, item I) (R, error),
+    opts ...EffectOption,
+) (ok *Pipeline[EffectOutcome[I, R]], failed *Pipeline[EffectOutcome[I, R]])
+```
+
+Two-output convenience around [`Effect`](#effect): the `ok` pipeline carries outcomes for which `Err == nil`; the `failed` pipeline carries outcomes for which `Err != nil`. Both pipelines must be consumed (same rule as [`Partition`](#partition) and [`MapResult`](#mapresult)).
+
+```go
+ok, failed := kitsune.TryEffect(messages, publish, kitsune.Required())
+
+ok.ForEach(recordSuccess)         // EffectOutcome.Applied is always true here
+failed.ForEach(reportFailure)     // EffectOutcome.Err is never nil here
+```
+
+### EffectPolicy
+
+```go
+type EffectPolicy struct {
+    Retry          RetryStrategy
+    Required       bool
+    AttemptTimeout time.Duration
+    Idempotent     bool
+    IdempotencyKey func(any) string
+}
+```
+
+A reusable, named bundle of `Effect` settings. `EffectPolicy` itself satisfies `EffectOption`, so it composes with per-call overrides:
+
+```go
+var SNSPolicy = kitsune.EffectPolicy{
+    Required:       true,
+    Retry:          kitsune.RetryUpTo(3, kitsune.FixedBackoff(50*time.Millisecond)),
+    AttemptTimeout: 5 * time.Second,
+}
+
+// Override the timeout at this call site:
+out := kitsune.Effect(src, publish, SNSPolicy, kitsune.AttemptTimeout(10*time.Second))
+```
+
+`Idempotent` and `IdempotencyKey` are recorded for future use by external idempotent backends; v1 does not de-duplicate retries against a store.
+
+---
+
 ## :material-alert-circle-outline: Error Handling Options { #error-handling }
 
 Error handling is configured per-stage with `OnError(handler)` or pipeline-wide with `WithErrorStrategy(handler)` in run options.
