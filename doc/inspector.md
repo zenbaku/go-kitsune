@@ -27,7 +27,7 @@ func main() {
     valid   := kitsune.Map(parsed,  validate, kitsune.WithName("validate"), kitsune.Concurrency(4))
 
     // Pass the inspector as a hook — no other changes needed
-    err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
+    _, err := valid.ForEach(store, kitsune.WithName("store")).Run(ctx, kitsune.WithHook(insp))
 }
 ```
 
@@ -122,7 +122,7 @@ for {
         }
     }()
 
-    sink.Run(ctx, kitsune.WithHook(insp))
+    _, _ = sink.Run(ctx, kitsune.WithHook(insp))
     cancel()
 
     // Continue loop on Restart; break on Stop or natural exit
@@ -157,7 +157,7 @@ defer insp.Close()
 for {
     ctx, cancel := context.WithCancel(context.Background())
     go func() { <-insp.RestartCh(); cancel() }()
-    sink.Run(ctx, kitsune.WithHook(insp))
+    _, _ = sink.Run(ctx, kitsune.WithHook(insp))
     cancel()
     select {
     case <-insp.RestartCh():

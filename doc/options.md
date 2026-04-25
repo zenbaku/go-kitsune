@@ -504,7 +504,7 @@ recent := kitsune.Dedupe(values, kitsune.DedupeWindow(100))
 When the runner is started with `DryRun()`, every [`Effect`](operators.md#effect) and [`TryEffect`](operators.md#tryeffect) skips its function and emits an `EffectOutcome` with `Applied: false` and no error. All pure stages (`Map`, `Filter`, `Batch`, etc.) and stateful stages (`MapWith`, `MapWithKey`) run normally. Use for validating pipeline graph wiring without producing externally-visible side effects.
 
 ```go
-err := runner.Run(ctx, kitsune.DryRun())
+_, err := runner.Run(ctx, kitsune.DryRun())
 ```
 
 ---

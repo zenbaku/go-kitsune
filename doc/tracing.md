@@ -67,7 +67,7 @@ the per-item spans:
 
 ```go
 hook := kotel.NewWithTracing(otel.Meter("my-app"), otel.Tracer("my-app"))
-runner.Run(ctx, kitsune.WithHook(hook))
+_, _ = runner.Run(ctx, kitsune.WithHook(hook))
 ```
 
 ---

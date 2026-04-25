@@ -144,7 +144,7 @@ merged, _ := kitsune.MergeRunners(
     enriched.ForEach(store),
     invalid.ForEach(deadLetter),
 )
-merged.Run(ctx)
+_, _ = merged.Run(ctx)
 ```
 
 **`Balance`** distributes items across n output pipelines in **round-robin order** (not work-stealing). Each item goes to exactly one branch in sequence.
@@ -263,7 +263,7 @@ merged, _ := kitsune.MergeRunners(
     enriched.ForEach(store),
     invalid.ForEach(deadLetter),
 )
-if err := merged.Run(ctx); err != nil { ... }
+if _, err := merged.Run(ctx); err != nil { ... }
 ```
 
 **What to notice:** the valid branch runs `Concurrency(4)` on enrichment; the invalid branch does not. This asymmetry — different stage shapes per branch — is the defining signal for `Partition` over `Concurrency(n)`.

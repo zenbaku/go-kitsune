@@ -76,7 +76,7 @@ Group items before passing them downstream.
 
 ```go
 batched := kitsune.Batch(enriched, 500, kitsune.BatchTimeout(2*time.Second))
-err     := batched.ForEach(bulkInsert, kitsune.Concurrency(4)).Run(ctx)
+_, err  := batched.ForEach(bulkInsert, kitsune.Concurrency(4)).Run(ctx)
 ```
 
 ---
@@ -186,7 +186,7 @@ The `RetryStrategy` type exposes `WithRetryable(fn)` to restrict which errors tr
 
 ## :material-puzzle-outline: Stage composition
 
-[`Stage[I, O]`](operators.md#stagei-o--then--through--or) is a typed function `func(*Pipeline[I]) *Pipeline[O]`. It is a first-class value: store it in a variable, pass it to a function, compose it with [`Then`](operators.md#stagei-o--then--through--or).
+[`Stage[I, O]`](operators.md#stagei-o-then-through-or) is a typed function `func(*Pipeline[I]) *Pipeline[O]`. It is a first-class value: store it in a variable, pass it to a function, compose it with [`Then`](operators.md#stagei-o-then-through-or). [`Composable[I, O]`](operators.md#stage-composition) is the interface both `Stage` and [`Segment`](operators.md#segment) satisfy, so they compose interchangeably.
 
 ```go
 var ParseInt  kitsune.Stage[string, int]   = ...
@@ -196,9 +196,61 @@ var Stringify kitsune.Stage[int, string]   = ...
 pipeline := kitsune.Then(kitsune.Then(ParseInt, Double), Stringify)
 ```
 
-`Stage.Or(fallback)` wraps a primary stage with a typed fallback: if the primary fails, the same item is passed to the fallback. Useful for DB-then-cache or primary-API-then-secondary-API patterns.
+[`Segment[I, O]`](operators.md#segment) wraps a `Stage` with a business name. Constituent stages carry that name in `GraphNode.SegmentName`, making the group visible in `Describe()` and the inspector dashboard.
 
-Stages are independently testable with [`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect--first--last--count--any--all--find--contains); no mocks, no infrastructure.
+```go
+fetch   := kitsune.NewSegment("fetch",  fetchStage)
+enrich  := kitsune.NewSegment("enrich", enrichStage)
+publish := kitsune.NewSegment("publish", publishStage)
+
+pipeline := kitsune.Then(kitsune.Then(fetch, enrich), publish)
+```
+
+`Stage.Or(fallback)` wraps a primary stage with a typed fallback: if the primary fails, the same item is passed to the fallback. Stages are independently testable with [`FromSlice`](operators.md#fromslice) + [`Collect`](operators.md#collect-first-last-count-any-all-find-contains); no mocks, no infrastructure.
+
+---
+
+## :material-play-circle-outline: Side effects { #side-effects }
+
+[`Effect[I, R]`](operators.md#effect) models externally-visible side effects (publish to a queue, write to a database, call an external API) with retry, per-attempt timeout, and required-vs-best-effort outcomes. Every input produces exactly one [`EffectOutcome[I, R]`](operators.md#effect): success carries the result; terminal failure carries the last error. The pipeline does not error out; downstream decides how to route success vs failure.
+
+```go
+out := kitsune.Effect(messages, publish,
+    kitsune.EffectPolicy{
+        Required:       true,
+        Retry:          kitsune.RetryUpTo(3, kitsune.ExponentialBackoff(100*time.Millisecond, 2*time.Second)),
+        AttemptTimeout: 5 * time.Second,
+    },
+)
+```
+
+[`TryEffect`](operators.md#tryeffect) is a two-output convenience that splits outcomes by `Err`: ok branch + failed branch. [`DryRun()`](options.md#dryrun) skips every `Effect` call so you can validate pipeline wiring without producing side effects.
+
+---
+
+## :material-clipboard-text-clock-outline: Run summary { #run-summary }
+
+Every `Runner.Run`, `ForEachRunner.Run`, `DrainRunner.Run`, and `RunHandle.Wait` returns a [`RunSummary`](operators.md#run-summary) alongside the fatal error. `RunSummary.Outcome` classifies the run as `RunSuccess`, `RunPartialSuccess` (best-effort `Effect`s failed), or `RunFailure` (required `Effect`s failed or the pipeline returned a fatal error). `Duration`, `CompletedAt`, and a `MetricsSnapshot` are populated on every run.
+
+```go
+summary, err := runner.Run(ctx)
+log.Printf("run %v in %v: outcome=%v", summary.CompletedAt, summary.Duration, summary.Outcome)
+```
+
+[`(*Runner).WithFinalizer(fn)`](operators.md#withfinalizer) and [`(*ForEachRunner[T]).WithFinalizer(fn)`](operators.md#withfinalizer) register post-run callbacks that observe the summary. Multiple finalizers run in registration order; their errors are recorded in `RunSummary.FinalizerErrs` and do not change `Outcome`.
+
+---
+
+## :material-floppy-variant: Dev iteration { #higher-level-authoring }
+
+[`WithDevStore(store)`](operators.md#devstore) is a development-time RunOption that captures each named [`Segment`](operators.md#segment)'s output on first run and replays from snapshot on subsequent runs. Iterate on a downstream segment without re-running expensive upstream work; delete a snapshot file to force its segment to re-run.
+
+```go
+store := kitsune.NewFileDevStore("/tmp/kitsune-snapshots")
+runner.Run(ctx, kitsune.WithDevStore(store))
+```
+
+[`FromCheckpoint[T](store, name)`](operators.md#fromcheckpoint) loads a stored snapshot directly as a pipeline source for unit testing downstream stages from frozen upstream output. Strictly dev-only: no schema versioning, no production safety.
 
 ---
 

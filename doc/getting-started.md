@@ -382,6 +382,12 @@ See the [`stages` example](examples.md#stages) for the full stage composition an
 
 ---
 
+### Higher-level authoring
+
+For larger pipelines: name groups of operators with [`Segment`](operators.md#segment), model side effects with [`Effect`](operators.md#effect), use the [`RunSummary`](operators.md#run-summary) returned from `Run` to derive structured outcomes, and iterate on downstream segments without re-running upstream work via [`WithDevStore`](operators.md#devstore).
+
+---
+
 ## :material-map-marker-path: Where to go next
 
 **Reference:**

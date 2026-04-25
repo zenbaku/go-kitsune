@@ -317,7 +317,7 @@ Implement `Hook` to collect per-stage timing, throughput, and error counts. See 
 
 **Quick debugging with `LogHook`:**
 ```go
-err := runner.Run(ctx, kitsune.WithHook(kitsune.LogHook(slog.Default())))
+_, err := runner.Run(ctx, kitsune.WithHook(kitsune.LogHook(slog.Default())))
 ```
 `LogHook` logs stage start and done events with item counts to the provided `slog.Logger`. Useful for tracing where items are being lost or where a stage is slow.
 

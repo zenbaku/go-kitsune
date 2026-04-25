@@ -74,7 +74,7 @@ A minimal linear pipeline. Trims and uppercases strings, then collects squared n
                 return strings.ToUpper(s), nil
             })
 
-        err := upper.ForEach(func(_ context.Context, s string) error {
+        _, err := upper.ForEach(func(_ context.Context, s string) error {
             fmt.Println(s)
             return nil
         }).Run(ctx)
@@ -272,7 +272,7 @@ Temporarily stop a running pipeline without cancelling it. Sources block; in-fli
             fmt.Println("gate resumed")
         }()
 
-        if err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+        if _, err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
             panic(err)
         }
         fmt.Printf("total: %d items\n", len(out))
@@ -338,7 +338,7 @@ Split a stream into two typed branches and run them concurrently.
         if err != nil {
             panic(err)
         }
-        if err := merged.Run(ctx); err != nil {
+        if _, err := merged.Run(ctx); err != nil {
             panic(err)
         }
 
@@ -401,7 +401,7 @@ Fan a single stream out to N independent consumers; each sees every item.
         if err != nil {
             panic(err)
         }
-        if err := merged.Run(ctx); err != nil {
+        if _, err := merged.Run(ctx); err != nil {
             panic(err)
         }
 
@@ -495,7 +495,7 @@ Multicast a stream to a dynamically-built subscriber list — consumers register
         })
 
         merged, _ := kitsune.MergeRunners(auditRunner, metricsRunner, fraudRunner)
-        merged.Run(ctx)
+        _, _ = merged.Run(ctx)
 
         fmt.Println("\n--- audit log ---")
         for _, entry := range auditLog {
@@ -593,6 +593,251 @@ Define reusable, composable pipeline fragments with `Stage[I,O]`.
 
 ---
 
+### `segment` { #segment-example }
+
+Group operators into named, graph-visible business units. The example threads two named segments through a `Then` chain and prints the resulting graph.
+
+**Demonstrates:** `Segment[I,O]`, `NewSegment`, `Then` with `Segment` operands, `GraphNode.SegmentName`
+
+[:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/segment/main.go){ .md-button }
+
+??? example "Full source"
+
+    ```go
+    // Example: Segment groups operators into named, graph-visible business units.
+    //
+    //	go run ./examples/segment
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "strings"
+
+        "github.com/zenbaku/go-kitsune"
+    )
+
+    type Order struct {
+        ID    int
+        Item  string
+        Price int // cents
+    }
+
+    func main() {
+        ctx := context.Background()
+        src := kitsune.FromSlice([]Order{
+            {ID: 1, Item: "  apple ", Price: 150},
+            {ID: 2, Item: "BANANA", Price: 75},
+            {ID: 3, Item: " carrot", Price: 200},
+        })
+
+        // "normalize" segment: trim and uppercase the item name.
+        normalize := kitsune.Stage[Order, Order](func(p *kitsune.Pipeline[Order]) *kitsune.Pipeline[Order] {
+            return kitsune.Map(p, func(_ context.Context, o Order) (Order, error) {
+                o.Item = strings.ToUpper(strings.TrimSpace(o.Item))
+                return o, nil
+            })
+        })
+
+        // "tax" segment: 10 percent sales tax.
+        addTax := kitsune.Stage[Order, Order](func(p *kitsune.Pipeline[Order]) *kitsune.Pipeline[Order] {
+            return kitsune.Map(p, func(_ context.Context, o Order) (Order, error) {
+                o.Price = o.Price + o.Price/10
+                return o, nil
+            })
+        })
+
+        pipeline := kitsune.Then(
+            kitsune.NewSegment("normalize", normalize),
+            kitsune.NewSegment("tax", addTax),
+        )
+
+        out, err := kitsune.Collect(ctx, pipeline.Apply(src))
+        if err != nil {
+            panic(err)
+        }
+
+        fmt.Println("--- Output ---")
+        for _, o := range out {
+            fmt.Printf("#%d %-10s %d\n", o.ID, o.Item, o.Price)
+        }
+
+        fmt.Println("\n--- Graph ---")
+        for _, n := range pipeline.Apply(src).Describe() {
+            seg := "(no segment)"
+            if n.SegmentName != "" {
+                seg = "[segment: " + n.SegmentName + "]"
+            }
+            fmt.Printf("  %-12s %-30s %s\n", n.Kind, n.Name, seg)
+        }
+    }
+    ```
+
+---
+
+### `effect` { #effect-example }
+
+Model externally-visible side effects with retry, per-attempt timeout, and `TryEffect`'s two-output split.
+
+**Demonstrates:** `Effect`, `TryEffect`, `EffectPolicy`, `Required` / `BestEffort`, `AttemptTimeout`, `MergeRunners`
+
+[:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/effect/main.go){ .md-button }
+
+??? example "Full source"
+
+    ```go
+    // Example: Effect models an externally-visible side effect with retry,
+    // per-attempt timeout, and required-vs-best-effort semantics. TryEffect
+    // splits the outcome stream into ok and failed branches.
+    //
+    //	go run ./examples/effect
+    package main
+
+    import (
+        "context"
+        "errors"
+        "fmt"
+        "time"
+
+        "github.com/zenbaku/go-kitsune"
+    )
+
+    type Message struct {
+        ID   int
+        Body string
+    }
+
+    func main() {
+        ctx := context.Background()
+
+        src := kitsune.FromSlice([]Message{
+            {1, "hello"}, {2, "world"}, {3, "fail-once"}, {4, "drop-this"},
+        })
+
+        attempts := make(map[int]int)
+        publish := func(_ context.Context, m Message) (string, error) {
+            attempts[m.ID]++
+            switch m.ID {
+            case 3:
+                // Fail once, then succeed on retry.
+                if attempts[m.ID] < 2 {
+                    return "", errors.New("transient")
+                }
+                return fmt.Sprintf("ack:%d", m.ID), nil
+            case 4:
+                return "", errors.New("permanent")
+            default:
+                return fmt.Sprintf("ack:%d", m.ID), nil
+            }
+        }
+
+        okP, failP := kitsune.TryEffect(src, publish,
+            kitsune.EffectPolicy{
+                Required:       true,
+                Retry:          kitsune.RetryUpTo(3, kitsune.FixedBackoff(10*time.Millisecond)),
+                AttemptTimeout: 100 * time.Millisecond,
+            },
+        )
+
+        okRunner := okP.ForEach(func(_ context.Context, o kitsune.EffectOutcome[Message, string]) error {
+            fmt.Printf("OK    id=%d ack=%s\n", o.Input.ID, o.Result)
+            return nil
+        })
+        failRunner := failP.ForEach(func(_ context.Context, o kitsune.EffectOutcome[Message, string]) error {
+            fmt.Printf("FAIL  id=%d err=%v\n", o.Input.ID, o.Err)
+            return nil
+        })
+
+        runner, err := kitsune.MergeRunners(okRunner, failRunner)
+        if err != nil {
+            panic(err)
+        }
+        if _, err := runner.Run(ctx); err != nil {
+            panic(err)
+        }
+    }
+    ```
+
+---
+
+### `devstore` { #devstore-example }
+
+Run the same pipeline twice with `WithDevStore`: first run captures each `Segment`'s output to disk; second run replays from snapshot, skipping the inner stages entirely (no fetch/enrich logs the second time).
+
+**Demonstrates:** `Segment`, `NewFileDevStore`, `WithDevStore`, capture/replay round-trip
+
+[:material-github: View source](https://github.com/zenbaku/go-kitsune/blob/main/examples/devstore/main.go){ .md-button }
+
+??? example "Full source"
+
+    ```go
+    // Example: DevStore captures each Segment's output on the first run and
+    // replays from snapshot on subsequent runs, letting you iterate on a
+    // downstream segment without re-running expensive upstream work.
+    //
+    //	go run ./examples/devstore
+    package main
+
+    import (
+        "context"
+        "fmt"
+        "os"
+
+        "github.com/zenbaku/go-kitsune"
+    )
+
+    type Page struct {
+        URL  string
+        Body string
+    }
+
+    func main() {
+        dir, err := os.MkdirTemp("", "kitsune-devstore-")
+        if err != nil {
+            panic(err)
+        }
+        defer os.RemoveAll(dir)
+        store := kitsune.NewFileDevStore(dir)
+
+        fetch := kitsune.Stage[string, Page](func(urls *kitsune.Pipeline[string]) *kitsune.Pipeline[Page] {
+            return kitsune.Map(urls, func(_ context.Context, url string) (Page, error) {
+                fmt.Printf("  fetch  %s\n", url)
+                return Page{URL: url, Body: "body of " + url}, nil
+            })
+        })
+        enrich := kitsune.Stage[Page, Page](func(p *kitsune.Pipeline[Page]) *kitsune.Pipeline[Page] {
+            return kitsune.Map(p, func(_ context.Context, page Page) (Page, error) {
+                fmt.Printf("  enrich %s\n", page.URL)
+                page.Body = page.Body + " (enriched)"
+                return page, nil
+            })
+        })
+
+        fetchSeg := kitsune.NewSegment("fetch", fetch)
+        enrichSeg := kitsune.NewSegment("enrich", enrich)
+
+        runOnce := func(label string) {
+            fmt.Printf("--- %s ---\n", label)
+            urls := kitsune.FromSlice([]string{"https://a", "https://b"})
+            pipeline := kitsune.Then(fetchSeg, enrichSeg)
+            runner := pipeline.Apply(urls).
+                ForEach(func(_ context.Context, page Page) error {
+                    fmt.Printf("  result %s -> %s\n", page.URL, page.Body)
+                    return nil
+                })
+            if _, err := runner.Run(context.Background(), kitsune.WithDevStore(store)); err != nil {
+                panic(err)
+            }
+        }
+
+        runOnce("first run (captures snapshots)")
+        fmt.Println()
+        runOnce("second run (replays snapshots; no fetch/enrich logs)")
+    }
+    ```
+
+---
+
 ## :material-shield-check-outline: Error handling { #error-handling }
 
 ### `circuitbreaker` { #circuitbreaker }
@@ -652,7 +897,7 @@ Protect a flaky dependency: after N consecutive failures the circuit opens, fast
         errBackend := func(_ context.Context, n int) (string, error) {
             return "", errors.New("always fails")
         }
-        err = kitsune.CircuitBreaker(kitsune.FromSlice([]int{1, 2, 3}), errBackend,
+        _, err = kitsune.CircuitBreaker(kitsune.FromSlice([]int{1, 2, 3}), errBackend,
             []kitsune.CircuitBreakerOpt{kitsune.FailureThreshold(2)},
         ).Drain().Run(ctx)
 

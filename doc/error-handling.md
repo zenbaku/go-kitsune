@@ -195,7 +195,7 @@ Both layers produce observable events:
 
 ```go
 h := kitsune.MultiHook(metricsHook, kitsune.LogHook(slog.Default()))
-err := p.Run(ctx, kitsune.WithHook(h))
+_, err := p.Run(ctx, kitsune.WithHook(h))
 ```
 
 `StageError` wraps the terminal error with the stage name and attempt count:

@@ -27,7 +27,7 @@ raw      := kitsune.From(kafkaStream)
 orders   := kitsune.Map(raw, parseOrder)
 enriched := kitsune.Map(orders, enrichWithCustomer, kitsune.Concurrency(20))
 batched  := kitsune.Batch(enriched, 500, kitsune.BatchTimeout(2*time.Second))
-err      := batched.ForEach(bulkInsert, kitsune.Concurrency(4)).Run(ctx)
+_, err   := batched.ForEach(bulkInsert, kitsune.Concurrency(4)).Run(ctx)
 ```
 
 ```
@@ -59,6 +59,10 @@ go get github.com/zenbaku/go-kitsune
 - :material-chart-timeline-variant: **[Observability](features.md#observability)**
 
     `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). OTel, Prometheus, and Datadog via [tails](tails.md).
+
+- :material-puzzle-outline: **[Higher-level authoring](features.md#higher-level-authoring)**
+
+    `Segment` groups operators into named, graph-visible business units. `Effect` models externally-visible side effects with retry, per-attempt timeout, and required-vs-best-effort outcomes. `RunSummary` returns structured run results from every `Run`, with `WithFinalizer` for post-run callbacks. `DevStore` snapshots each segment's output for fast dev iteration.
 
 - :material-power-plug-outline: **[27 integrations](features.md#27-integrations)**
 
