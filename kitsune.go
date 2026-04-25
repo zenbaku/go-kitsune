@@ -395,6 +395,7 @@ func metasToGraphNodes(metas []stageMeta) []internal.GraphNode {
 			Timeout:        m.timeout,
 			HasRetry:       m.hasRetry,
 			HasSupervision: m.hasSuperv,
+			SegmentName:    m.segmentName,
 		})
 	}
 	return nodes

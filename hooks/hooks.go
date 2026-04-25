@@ -85,6 +85,7 @@ type GraphNode struct {
 	Timeout        time.Duration `json:"timeout,omitempty"`
 	HasRetry       bool          `json:"has_retry,omitempty"`
 	HasSupervision bool          `json:"has_supervision,omitempty"`
+	SegmentName    string        `json:"segment_name,omitempty"`
 }
 
 // BufferStatus reports the current fill level of one stage's output channel.
