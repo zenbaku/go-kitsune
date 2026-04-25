@@ -5,6 +5,7 @@ import (
 	"flag"
 	"maps"
 	"os"
+	"reflect"
 	"slices"
 	"sort"
 	"sync"
@@ -2340,6 +2341,49 @@ func TestPropToMapLastWriterWins(t *testing.T) {
 		}
 		if !maps.Equal(got, want) {
 			t.Fatalf("got %v want %v", got, want)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Segment properties
+// ---------------------------------------------------------------------------
+
+// TestSegment_TransparencyProperty asserts that wrapping a Stage in a Segment
+// does not change the output. For any source slice and any inner Stage that
+// transforms ints to ints, the segment-wrapped pipeline must produce exactly
+// the same output as the bare pipeline (segments are pure metadata).
+func TestSegment_TransparencyProperty(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		input := rapid.SliceOfN(rapid.IntRange(-100, 100), 0, 20).Draw(t, "input")
+		// Three simple deterministic transforms parameterised by the draw.
+		mode := rapid.IntRange(0, 2).Draw(t, "mode")
+		addend := rapid.IntRange(-10, 10).Draw(t, "addend")
+
+		stage := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+			return kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+				switch mode {
+				case 0:
+					return v + addend, nil
+				case 1:
+					return v * (addend + 1), nil
+				default:
+					return -v, nil
+				}
+			})
+		})
+
+		ctx := context.Background()
+		want, err := kitsune.Collect(ctx, stage.Apply(kitsune.FromSlice(input)))
+		if err != nil {
+			t.Fatalf("bare stage error: %v", err)
+		}
+		got, err := kitsune.Collect(ctx, kitsune.NewSegment("seg", stage).Apply(kitsune.FromSlice(input)))
+		if err != nil {
+			t.Fatalf("segment-wrapped stage error: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("segment changed output: bare=%v segment=%v", want, got)
 		}
 	})
 }
