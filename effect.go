@@ -283,6 +283,118 @@ func Effect[I, R any](
 	return out
 }
 
+// TryEffect is a two-output convenience around [Effect]: it returns an "ok"
+// pipeline carrying outcomes for which Err == nil, and a "failed" pipeline
+// carrying outcomes for which Err != nil. Both pipelines must be consumed
+// (same rule as [Partition] and [MapResult]).
+//
+// Equivalent to running [Effect] and splitting its outcome stream on
+// outcome.Err: ok receives outcomes where Err is nil, failed receives the
+// rest.
+func TryEffect[I, R any](
+	p *Pipeline[I],
+	fn func(ctx context.Context, item I) (R, error),
+	opts ...EffectOption,
+) (*Pipeline[EffectOutcome[I, R]], *Pipeline[EffectOutcome[I, R]]) {
+	return splitEffectOutcomes(Effect(p, fn, opts...))
+}
+
+// splitEffectOutcomes branches an Effect outcome stream on Err: outcomes with
+// Err == nil go to the first returned pipeline, outcomes with Err != nil go
+// to the second.
+func splitEffectOutcomes[I, R any](p *Pipeline[EffectOutcome[I, R]]) (
+	*Pipeline[EffectOutcome[I, R]], *Pipeline[EffectOutcome[I, R]],
+) {
+	track(p)
+	okID := nextPipelineID()
+	failID := nextPipelineID()
+	cfg := buildStageConfig(nil)
+
+	okMeta := stageMeta{
+		id:     okID,
+		kind:   "try_effect_ok",
+		name:   "try_effect_ok",
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+	failMeta := stageMeta{
+		id:     failID,
+		kind:   "try_effect_failed",
+		name:   "try_effect_failed",
+		buffer: cfg.buffer,
+		inputs: []int64{p.id},
+	}
+
+	var okP, failP *Pipeline[EffectOutcome[I, R]]
+	sharedBuild := func(rc *runCtx) (chan EffectOutcome[I, R], chan EffectOutcome[I, R]) {
+		if existing := rc.getChan(okID); existing != nil {
+			return existing.(chan EffectOutcome[I, R]), rc.getChan(failID).(chan EffectOutcome[I, R])
+		}
+		inCh := p.build(rc)
+		buf := rc.effectiveBufSize(cfg)
+		okC := make(chan EffectOutcome[I, R], buf)
+		failC := make(chan EffectOutcome[I, R], buf)
+		m := okMeta
+		m.buffer = buf
+		m.getChanLen = func() int { return len(okC) }
+		m.getChanCap = func() int { return cap(okC) }
+		rc.setChan(okID, okC)
+		rc.setChan(failID, failC)
+		totalConsumers := okP.consumerCount.Load() + failP.consumerCount.Load()
+		rc.initMultiOutputDrainNotify([]int64{okID, failID}, totalConsumers)
+		drainCh := rc.drainCh(okID)
+
+		stage := func(ctx context.Context) error {
+			defer close(okC)
+			defer close(failC)
+			cooperativeDrain := false
+			defer func() {
+				if !cooperativeDrain {
+					go internal.DrainChan(inCh)
+				}
+			}()
+			defer func() { rc.signalDrain(p.id) }()
+			for {
+				select {
+				case item, ok := <-inCh:
+					if !ok {
+						return nil
+					}
+					target := okC
+					if item.Err != nil {
+						target = failC
+					}
+					select {
+					case target <- item:
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-drainCh:
+						cooperativeDrain = true
+						return nil
+					}
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-drainCh:
+					cooperativeDrain = true
+					return nil
+				}
+			}
+		}
+		rc.add(stage, m)
+		return okC, failC
+	}
+
+	okP = newPipeline(okID, okMeta, func(rc *runCtx) chan EffectOutcome[I, R] {
+		o, _ := sharedBuild(rc)
+		return o
+	})
+	failP = newPipeline(failID, failMeta, func(rc *runCtx) chan EffectOutcome[I, R] {
+		_, f := sharedBuild(rc)
+		return f
+	})
+	return okP, failP
+}
+
 // runEffectAttempts runs fn once, then retries it according to cfg.retry until
 // success, exhaustion, a non-retryable error, or context cancellation.
 func runEffectAttempts[I, R any](

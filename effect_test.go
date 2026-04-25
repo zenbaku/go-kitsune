@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -297,5 +298,59 @@ func TestEffect_FailureReturnsZeroResult(t *testing.T) {
 	}
 	if out[0].Result != "" {
 		t.Errorf("Result=%q, want \"\" (zero value of string)", out[0].Result)
+	}
+}
+
+// TestTryEffect_Split verifies that TryEffect routes outcomes by Err: ok
+// outcomes to the first pipeline, failures to the second.
+func TestTryEffect_Split(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3, 4})
+	fn := func(_ context.Context, v int) (int, error) {
+		if v%2 == 0 {
+			return 0, errors.New("even rejected")
+		}
+		return v * 10, nil
+	}
+
+	okP, failP := kitsune.TryEffect(src, fn)
+
+	var (
+		gotOK   []kitsune.EffectOutcome[int, int]
+		gotFail []kitsune.EffectOutcome[int, int]
+		mu      sync.Mutex
+	)
+	okRunner := okP.ForEach(func(_ context.Context, o kitsune.EffectOutcome[int, int]) error {
+		mu.Lock()
+		gotOK = append(gotOK, o)
+		mu.Unlock()
+		return nil
+	})
+	failRunner := failP.ForEach(func(_ context.Context, o kitsune.EffectOutcome[int, int]) error {
+		mu.Lock()
+		gotFail = append(gotFail, o)
+		mu.Unlock()
+		return nil
+	})
+	runner, err := kitsune.MergeRunners(okRunner, failRunner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var okInputs, failInputs []int
+	for _, o := range gotOK {
+		okInputs = append(okInputs, o.Input)
+	}
+	for _, o := range gotFail {
+		failInputs = append(failInputs, o.Input)
+	}
+	if !reflect.DeepEqual(okInputs, []int{1, 3}) {
+		t.Errorf("okInputs=%v, want [1 3]", okInputs)
+	}
+	if !reflect.DeepEqual(failInputs, []int{2, 4}) {
+		t.Errorf("failInputs=%v, want [2 4]", failInputs)
 	}
 }
