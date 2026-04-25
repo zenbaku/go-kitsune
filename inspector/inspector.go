@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	kitsune "github.com/zenbaku/go-kitsune"
 	kithooks "github.com/zenbaku/go-kitsune/hooks"
 )
 
@@ -66,8 +67,9 @@ type Inspector struct {
 	mu      sync.Mutex
 	stages  map[string]*stageState
 	order   []string // insertion order for deterministic table rendering
-	graph   []kithooks.GraphNode
-	logBuf  []LogEntry
+	graph          []kithooks.GraphNode
+	lastRunSummary *summarySnapshot // populated by OnRunComplete; nil before first run
+	logBuf         []LogEntry
 	clients map[chan sseMsg]struct{}
 
 	bufferQuery func() []kithooks.BufferStatus // set by OnBuffers; nil until engine calls it
@@ -121,6 +123,41 @@ type stageSnapshot struct {
 	Status     string  `json:"status"`
 	BufferLen  int     `json:"bufferLen"`
 	BufferCap  int     `json:"bufferCap"`
+}
+
+// summarySnapshot is the JSON shape sent over SSE for the "summary" event
+// and persisted via the InspectorStore. It is the inspector-facing
+// projection of [kitsune.RunSummary]; errors are converted to their string
+// form and the MetricsSnapshot is intentionally excluded (live stage
+// metrics are streamed every tick).
+type summarySnapshot struct {
+	Outcome       int      `json:"outcome"`
+	OutcomeName   string   `json:"outcomeName"`
+	Err           string   `json:"err,omitempty"`
+	DurationNs    int64    `json:"duration_ns"`
+	CompletedAt   int64    `json:"completedAt"` // unix milliseconds
+	FinalizerErrs []string `json:"finalizerErrs,omitempty"`
+}
+
+func toSummarySnapshot(s kitsune.RunSummary) summarySnapshot {
+	snap := summarySnapshot{
+		Outcome:     int(s.Outcome),
+		OutcomeName: s.Outcome.String(),
+		DurationNs:  s.Duration.Nanoseconds(),
+		CompletedAt: s.CompletedAt.UnixMilli(),
+	}
+	if s.Err != nil {
+		snap.Err = s.Err.Error()
+	}
+	if len(s.FinalizerErrs) > 0 {
+		snap.FinalizerErrs = make([]string, len(s.FinalizerErrs))
+		for i, e := range s.FinalizerErrs {
+			if e != nil {
+				snap.FinalizerErrs[i] = e.Error()
+			}
+		}
+	}
+	return snap
 }
 
 // New creates an Inspector listening on a random available port.
@@ -371,6 +408,22 @@ func (i *Inspector) OnGraph(nodes []kithooks.GraphNode) {
 	i.broadcast(sseMsg{"graph", data})
 }
 
+// OnRunComplete implements [kitsune.RunSummaryHook]. It is called once per
+// Run after finalizers have completed, with the run's final summary. The
+// inspector stores the summary and broadcasts a "summary" SSE event so the
+// dashboard can render it. The next saveToStore tick (every 250ms) will
+// persist the snapshot if a store is attached.
+func (i *Inspector) OnRunComplete(_ context.Context, s kitsune.RunSummary) {
+	snap := toSummarySnapshot(s)
+
+	i.mu.Lock()
+	i.lastRunSummary = &snap
+	i.mu.Unlock()
+
+	data, _ := json.Marshal(snap)
+	i.broadcast(sseMsg{"summary", data})
+}
+
 // OnBuffers implements engine.BufferHook.
 func (i *Inspector) OnBuffers(query func() []kithooks.BufferStatus) {
 	i.mu.Lock()
@@ -537,9 +590,10 @@ func (i *Inspector) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ch := i.subscribe()
 	defer i.unsubscribe(ch)
 
-	// Replay current graph and log buffer.
+	// Replay current graph, summary, and log buffer.
 	i.mu.Lock()
 	graph := i.graph
+	summary := i.lastRunSummary
 	logSnapshot := make([]LogEntry, len(i.logBuf))
 	copy(logSnapshot, i.logBuf)
 	i.mu.Unlock()
@@ -547,6 +601,11 @@ func (i *Inspector) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if graph != nil {
 		if data, err := json.Marshal(graph); err == nil {
 			writeSSE(w, "graph", data)
+		}
+	}
+	if summary != nil {
+		if data, err := json.Marshal(summary); err == nil {
+			writeSSE(w, "summary", data)
 		}
 	}
 	for _, entry := range logSnapshot {
@@ -579,11 +638,16 @@ func (i *Inspector) handleState(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	i.mu.Lock()
 	graph := i.graph
+	summary := i.lastRunSummary
 	i.mu.Unlock()
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	resp := map[string]any{
 		"graph": graph,
 		"stats": i.buildSnapshot(),
-	})
+	}
+	if summary != nil {
+		resp["summary"] = summary
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ---------------------------------------------------------------------------
