@@ -87,7 +87,7 @@ func main() {
 func collect(p *kitsune.Pipeline[string]) ([]string, error) {
 	ctx := context.Background()
 	var out []string
-	err := p.ForEach(func(_ context.Context, s string) error {
+	_, err := p.ForEach(func(_ context.Context, s string) error {
 		out = append(out, s)
 		return nil
 	}).Run(ctx)

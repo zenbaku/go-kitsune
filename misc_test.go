@@ -228,7 +228,7 @@ func TestGraphNodeMetadata(t *testing.T) {
 		kitsune.Concurrency(3),
 		kitsune.Buffer(8),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	graph := hook.Graph()
@@ -262,7 +262,7 @@ func TestGraphNodeBatchSize(t *testing.T) {
 		kitsune.BatchCount(4),
 		kitsune.WithName("batcher"),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	graph := hook.Graph()
@@ -288,7 +288,7 @@ func TestGraphNodeHasSupervision(t *testing.T) {
 		kitsune.WithName("supervised"),
 		kitsune.Supervise(kitsune.RestartOnError(2, nil)),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	graph := hook.Graph()
@@ -479,7 +479,7 @@ func TestMultiHook_EventCounts(t *testing.T) {
 		func(_ context.Context, n int) (int, error) { return n * 2, nil },
 		kitsune.WithName("mstage"),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(multi)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(multi)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -509,7 +509,7 @@ func TestMultiHook_DropEvents(t *testing.T) {
 		kitsune.Buffer(1),
 		kitsune.Overflow(kitsune.DropNewest),
 	)
-	if err := p.ForEach(func(_ context.Context, _ int) error {
+	if _, err := p.ForEach(func(_ context.Context, _ int) error {
 		time.Sleep(time.Millisecond)
 		return nil
 	}).Run(context.Background(), kitsune.WithHook(multi)); err != nil {

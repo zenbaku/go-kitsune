@@ -34,7 +34,7 @@ func BenchmarkDrainBurst(b *testing.B) {
 		}
 		taken := kitsune.Take(p, 1)
 		var got int
-		_ = taken.ForEach(func(ctx context.Context, v int) error {
+		_, _ = taken.ForEach(func(ctx context.Context, v int) error {
 			got = v
 			return nil
 		}).Run(ctx)

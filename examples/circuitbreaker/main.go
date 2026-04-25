@@ -52,7 +52,7 @@ func main() {
 	errBackend := func(_ context.Context, n int) (string, error) {
 		return "", errors.New("always fails")
 	}
-	err = kitsune.CircuitBreaker(kitsune.FromSlice([]int{1, 2, 3}), errBackend,
+	_, err = kitsune.CircuitBreaker(kitsune.FromSlice([]int{1, 2, 3}), errBackend,
 		[]kitsune.CircuitBreakerOpt{kitsune.FailureThreshold(2)},
 	).Drain().Run(ctx)
 

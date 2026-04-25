@@ -168,7 +168,7 @@ func TestUsing_ReleaseCalledOnError(t *testing.T) {
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected boom, got %v", err)
 	}
@@ -188,7 +188,8 @@ func TestUsing_ReleaseCalledOnCancel(t *testing.T) {
 	)
 	done := make(chan error, 1)
 	go func() {
-		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		done <- err
 	}()
 	cancel()
 	<-done
@@ -208,7 +209,7 @@ func TestUsing_AcquireError(t *testing.T) {
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected acquire error, got %v", err)
 	}
@@ -809,7 +810,7 @@ func TestUnzip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := merged.Run(ctx); err != nil {
+	if _, err := merged.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 

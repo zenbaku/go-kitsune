@@ -29,11 +29,12 @@ func TestBatch_CountFlush(t *testing.T) {
 	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
+		_, err := kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
 			ForEach(func(_ context.Context, b []int) error {
 				batches <- b
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	for _, v := range []int{1, 2, 3} {
@@ -86,13 +87,14 @@ func TestBatch_TestClock(t *testing.T) {
 	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(100),
+		_, err := kitsune.Batch(ch.Source(), kitsune.BatchCount(100),
 			kitsune.BatchTimeout(5*time.Second),
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, b []int) error {
 			batches <- b
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// Give the stage goroutine time to create the ticker before advancing.
@@ -159,7 +161,7 @@ func TestBatch_MeasureTimeout(t *testing.T) {
 	go func() {
 		// measureFn = byte length; threshold = 100 (high enough to not trip on 3 small items)
 		// batchTimeout = 50ms.
-		done <- kitsune.Batch(ch.Source(),
+		_, err := kitsune.Batch(ch.Source(),
 			kitsune.BatchMeasure(func(s string) int { return len(s) }, 100),
 			kitsune.BatchTimeout(50*time.Millisecond),
 			kitsune.WithClock(clock),
@@ -167,6 +169,7 @@ func TestBatch_MeasureTimeout(t *testing.T) {
 			batches <- b
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// Give the stage goroutine time to create the ticker before sending items.
@@ -211,12 +214,13 @@ func TestThrottle_TestClock(t *testing.T) {
 	items := make(chan int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Throttle(ch.Source(), 5*time.Second,
+		_, err := kitsune.Throttle(ch.Source(), 5*time.Second,
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, v int) error {
 			items <- v
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// Item 1: first emission — always passes.
@@ -273,12 +277,13 @@ func TestDebounce_TestClock(t *testing.T) {
 	items := make(chan int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Debounce(ch.Source(), 3*time.Second,
+		_, err := kitsune.Debounce(ch.Source(), 3*time.Second,
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, v int) error {
 			items <- v
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// Give the stage goroutine time to start before sending items.
@@ -339,13 +344,14 @@ func TestTicker_TestClock(t *testing.T) {
 	ticks := make(chan time.Time, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Take(
+		_, err := kitsune.Take(
 			kitsune.Ticker(time.Second, kitsune.WithClock(clock)),
 			3,
 		).ForEach(func(_ context.Context, ts time.Time) error {
 			ticks <- ts
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// Wait for the pipeline goroutine to create the ticker before advancing.
@@ -385,12 +391,13 @@ func TestSample_EmitsLatestPerTick(t *testing.T) {
 	items := make(chan int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+		_, err := kitsune.Sample(ch.Source(), 5*time.Second,
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, v int) error {
 			items <- v
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)
@@ -445,12 +452,13 @@ func TestSample_SkipsTickWhenNoItems(t *testing.T) {
 	items := make(chan int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+		_, err := kitsune.Sample(ch.Source(), 5*time.Second,
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, v int) error {
 			items <- v
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)
@@ -496,12 +504,13 @@ func TestSample_NoFlushOnClose(t *testing.T) {
 	items := make(chan int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Sample(ch.Source(), 5*time.Second,
+		_, err := kitsune.Sample(ch.Source(), 5*time.Second,
 			kitsune.WithClock(clock),
 		).ForEach(func(_ context.Context, v int) error {
 			items <- v
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)

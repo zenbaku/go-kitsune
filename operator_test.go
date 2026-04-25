@@ -58,7 +58,7 @@ func TestMapError(t *testing.T) {
 	defer cancel()
 
 	boom := errors.New("boom")
-	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
 		if v == 2 {
 			return 0, boom
 		}
@@ -103,7 +103,7 @@ func TestMapTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := kitsune.Map(p, func(ctx context.Context, v int) (int, error) {
+	_, err := kitsune.Map(p, func(ctx context.Context, v int) (int, error) {
 		if v == 2 {
 			select {
 			case <-time.After(10 * time.Second):
@@ -234,7 +234,7 @@ func TestTapError_FiresOnError(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -251,7 +251,7 @@ func TestTapError_DoesNotSuppressError(t *testing.T) {
 	p2 := kitsune.TapError(p, func(_ context.Context, _ error) {})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(err, boom) {
 		t.Fatalf("error not propagated: got %v", err)
 	}
@@ -267,7 +267,8 @@ func TestTapError_ContextCancelDoesNotFire(t *testing.T) {
 	})
 	done := make(chan error, 1)
 	go func() {
-		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		done <- err
 	}()
 	cancel()
 	<-done
@@ -285,7 +286,7 @@ func TestTapError_MethodForm(t *testing.T) {
 	p2 := p.TapError(func(err error) { callbackErr = err })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, _ = p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(callbackErr, boom) {
 		t.Fatalf("method form: callback received %v, want boom", callbackErr)
 	}
@@ -333,7 +334,7 @@ func TestFinally_FiresOnError(t *testing.T) {
 	p2 := kitsune.Finally(p, func(_ context.Context, err error) { callbackErr = err })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p2.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(err, boom) {
 		t.Fatalf("error not propagated: got %v", err)
 	}
@@ -352,7 +353,8 @@ func TestFinally_FiresOnContextCancel(t *testing.T) {
 	})
 	done := make(chan error, 1)
 	go func() {
-		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		done <- err
 	}()
 	cancel()
 	<-done
@@ -436,7 +438,7 @@ func TestIgnoreElements_ErrorPropagates(t *testing.T) {
 		func(_ context.Context, _ int) (int, error) { return 0, sentinel },
 	)
 	ctx := context.Background()
-	err := kitsune.IgnoreElements(p).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.IgnoreElements(p).ForEach(func(_ context.Context, _ int) error {
 		return nil
 	}).Run(ctx)
 	if err == nil {
@@ -452,7 +454,7 @@ func TestIgnoreElements_ContextCancel(t *testing.T) {
 	defer cancel()
 
 	var items []int
-	err := kitsune.IgnoreElements(kitsune.Never[int]()).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.IgnoreElements(kitsune.Never[int]()).ForEach(func(_ context.Context, v int) error {
 		items = append(items, v)
 		return nil
 	}).Run(ctx)
@@ -538,7 +540,7 @@ func TestExpandMap_ErrorPropagates(t *testing.T) {
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+	_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected boom, got %v", err)
 	}
@@ -867,11 +869,12 @@ func TestBatch_BatchCount(t *testing.T) {
 	batches := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
+		_, err := kitsune.Batch(ch.Source(), kitsune.BatchCount(3)).
 			ForEach(func(_ context.Context, b []int) error {
 				batches <- b
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	for _, v := range []int{1, 2, 3, 4, 5} {
@@ -900,12 +903,13 @@ func TestBatch_BatchMeasure(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		// flush when total byte length >= 6
-		done <- kitsune.Batch(ch.Source(),
+		_, err := kitsune.Batch(ch.Source(),
 			kitsune.BatchMeasure(func(s string) int { return len(s) }, 6),
 		).ForEach(func(_ context.Context, b []string) error {
 			batches <- b
 			return nil
 		}).Run(ctx)
+		done <- err
 	}()
 
 	// "abc"=3, "def"=3 -> flush at 6; "gh"=2 -> partial on close
@@ -1280,7 +1284,7 @@ func TestPartition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1319,7 +1323,7 @@ func TestBroadcast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1356,7 +1360,7 @@ func TestBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1408,7 +1412,7 @@ func TestKeyedBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1442,7 +1446,7 @@ func TestKeyedBalanceN2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if total.Load() != 5 {
@@ -1464,7 +1468,7 @@ func TestKeyedBalanceWithName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1496,7 +1500,7 @@ func TestShare_BasicMulticast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1539,7 +1543,7 @@ func TestShare_ThreeSubscribers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1573,7 +1577,7 @@ func TestShare_PerBranchBuffer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1604,7 +1608,7 @@ func TestShare_FactoryDefaultOpts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1629,7 +1633,7 @@ func TestShare_LateSubscribePanics(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = branch.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
+		_, _ = branch.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx)
 	}()
 	// Wait for the pipeline to complete (frozen is set during build, before items flow).
 	<-done

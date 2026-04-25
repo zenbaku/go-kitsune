@@ -33,7 +33,7 @@ func main() {
 			return strings.ToUpper(s), nil
 		})
 
-	err := upper.ForEach(func(_ context.Context, s string) error {
+	_, err := upper.ForEach(func(_ context.Context, s string) error {
 		fmt.Println(s)
 		return nil
 	}).Run(ctx)

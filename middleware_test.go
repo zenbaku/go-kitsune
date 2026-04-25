@@ -220,7 +220,7 @@ func TestCircuitBreakerHalfOpenRecovery(t *testing.T) {
 
 	src.Close()
 
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		t.Fatalf("pipeline error: %v", err)
 	}
 	// fn was called for item 1 (fail), item 2 (half-open probe, success), item 3 (closed, success).
@@ -434,7 +434,7 @@ func TestCircuitBreakerHalfOpenTimeoutExpires(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	src.Close()
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		t.Fatalf("pipeline error: %v", err)
 	}
 
@@ -486,7 +486,7 @@ func TestCircuitBreakerHalfOpenTimeoutFast(t *testing.T) {
 	src.Send(ctx, 4)
 	src.Close()
 
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		t.Fatalf("pipeline error: %v", err)
 	}
 	// Items 2, 3, 4 should have passed through (item 1 skipped).
@@ -516,7 +516,7 @@ func TestCircuitBreakerTwoIndependentBreakers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := merged.Run(ctx); err != nil {
+	if _, err := merged.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

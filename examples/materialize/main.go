@@ -66,7 +66,7 @@ func main() {
 	fmt.Println("=== Without Materialize ===")
 
 	var plain []LogEntry
-	err := simulatedStream().
+	_, err := simulatedStream().
 		ForEach(func(_ context.Context, e LogEntry) error {
 			plain = append(plain, e)
 			return nil
@@ -83,7 +83,7 @@ func main() {
 	fmt.Println("=== With Materialize ===")
 
 	var result streamResult
-	err = kitsune.Materialize(simulatedStream()).
+	_, err = kitsune.Materialize(simulatedStream()).
 		ForEach(func(_ context.Context, n kitsune.Notification[LogEntry]) error {
 			switch {
 			case n.IsValue():
@@ -111,7 +111,7 @@ func main() {
 	fmt.Println("=== Error roundtrip (Dematerialize re-injects the error) ===")
 
 	var roundEntries []LogEntry
-	roundErr := kitsune.Dematerialize(kitsune.Materialize(simulatedStream())).
+	_, roundErr := kitsune.Dematerialize(kitsune.Materialize(simulatedStream())).
 		ForEach(func(_ context.Context, e LogEntry) error {
 			roundEntries = append(roundEntries, e)
 			return nil

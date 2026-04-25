@@ -65,7 +65,7 @@ func TestRunAsync_PauseResume(t *testing.T) {
 	}
 
 	ch.Close()
-	if err := h.Wait(); err != nil {
+	if _, err := h.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestRunAsync_PauseContextCancel(t *testing.T) {
 		t.Fatal("pipeline did not exit after context cancel while paused")
 	}
 	// nil or context.Canceled are both acceptable.
-	if err := h.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := h.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestRunAsync_PausedState(t *testing.T) {
 func TestRunAsync_ReturnsNilOnSuccess(t *testing.T) {
 	p := kitsune.FromSlice([]int{1, 2, 3})
 	h := p.ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(context.Background())
-	if err := h.Wait(); err != nil {
+	if _, err := h.Wait(); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestRunAsync_PropagatesError(t *testing.T) {
 		return 0, boom
 	})
 	h := mapped.ForEach(func(_ context.Context, _ int) error { return nil }).Build().RunAsync(context.Background())
-	if err := h.Wait(); !errors.Is(err, boom) {
+	if _, err := h.Wait(); !errors.Is(err, boom) {
 		t.Fatalf("expected boom error, got %v", err)
 	}
 }
@@ -182,7 +182,7 @@ func TestRunAsync_ConcurrentWait(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			errs[idx] = h.Wait()
+			_, errs[idx] = h.Wait()
 		}(i)
 	}
 
@@ -245,11 +245,12 @@ func TestWithPauseGate(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.FromIter(counter).
+		_, err := kitsune.FromIter(counter).
 			ForEach(func(_ context.Context, _ int) error {
 				count.Add(1)
 				return nil
 			}).Run(ctx, kitsune.WithPauseGate(gate))
+		done <- err
 	}()
 
 	time.Sleep(30 * time.Millisecond)

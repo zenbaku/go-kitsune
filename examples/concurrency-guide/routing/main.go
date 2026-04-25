@@ -90,7 +90,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := merged.Run(ctx); err != nil {
+	if _, err := merged.Run(ctx); err != nil {
 		panic(err)
 	}
 

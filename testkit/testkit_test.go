@@ -17,7 +17,7 @@ func TestRecordingHookDones(t *testing.T) {
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.WithName("stage-done-test"),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	dones := hook.Dones()
@@ -48,7 +48,7 @@ func TestRecordingHookItemsFor(t *testing.T) {
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.WithName("items-for-stage"),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook), kitsune.WithSampleRate(1)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook), kitsune.WithSampleRate(1)); err != nil {
 		t.Fatal(err)
 	}
 	all := hook.Items()
@@ -75,7 +75,7 @@ func TestRecordingHookDrops(t *testing.T) {
 		kitsune.Buffer(1),
 		kitsune.Overflow(kitsune.DropNewest),
 	)
-	if err := p2.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p2.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range hook.Drops() {
@@ -101,7 +101,7 @@ func TestRecordingHookRestarts(t *testing.T) {
 		kitsune.WithName("supervised-stage"),
 		kitsune.Supervise(kitsune.RestartOnError(3, kitsune.FixedBackoff(0))),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	restarts := hook.Restarts()
@@ -145,7 +145,7 @@ func TestRecordingHookBasic(t *testing.T) {
 		kitsune.WithName("multiply"),
 	)
 	runner := p.Drain()
-	if err := runner.Run(context.Background(), kitsune.WithHook(hook), kitsune.WithSampleRate(1)); err != nil {
+	if _, err := runner.Run(context.Background(), kitsune.WithHook(hook), kitsune.WithSampleRate(1)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,7 +176,7 @@ func TestRecordingHookErrors(t *testing.T) {
 		},
 		kitsune.OnError(kitsune.ActionDrop()),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	errs := hook.Errors()
@@ -192,7 +192,7 @@ func TestRecordingHookGraph(t *testing.T) {
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.WithName("stage-a"),
 	)
-	if err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
+	if _, err := p.Drain().Run(context.Background(), kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 	graph := hook.Graph()
@@ -269,7 +269,7 @@ func TestAssertDropCount(t *testing.T) {
 		kitsune.Overflow(kitsune.DropNewest),
 		kitsune.WithName("dropper"),
 	)
-	if err := p.ForEach(func(_ context.Context, _ int) error {
+	if _, err := p.ForEach(func(_ context.Context, _ int) error {
 		time.Sleep(time.Millisecond)
 		return nil
 	}).Run(context.Background(), kitsune.WithHook(hook)); err != nil {

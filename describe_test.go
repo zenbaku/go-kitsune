@@ -133,7 +133,7 @@ func TestDescribeMatchesGraphHook(t *testing.T) {
 
 	hook := &testkit.RecordingHook{}
 	ctx := context.Background()
-	if err := mapped.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx, kitsune.WithHook(hook)); err != nil {
+	if _, err := mapped.ForEach(func(_ context.Context, _ int) error { return nil }).Run(ctx, kitsune.WithHook(hook)); err != nil {
 		t.Fatal(err)
 	}
 

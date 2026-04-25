@@ -39,7 +39,7 @@ func main() {
 	}
 	src.Close() // signals end of input; pipeline drains and exits
 
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		panic(err)
 	}
 

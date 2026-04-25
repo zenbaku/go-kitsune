@@ -18,7 +18,7 @@ import (
 func TestForEach_Serial(t *testing.T) {
 	ctx := context.Background()
 	var got []int
-	err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
 		got = append(got, v)
 		return nil
 	}).Run(ctx)
@@ -36,7 +36,7 @@ func TestForEach_Serial(t *testing.T) {
 func TestForEach_Serial_OnError_Skip(t *testing.T) {
 	ctx := context.Background()
 	var got []int
-	err := kitsune.FromSlice([]int{1, 2, 3, 4}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4}).ForEach(func(_ context.Context, v int) error {
 		if v%2 == 0 {
 			return fmt.Errorf("even")
 		}
@@ -53,7 +53,7 @@ func TestForEach_Serial_OnError_Skip(t *testing.T) {
 
 func TestForEach_Serial_OnError_Halt(t *testing.T) {
 	ctx := context.Background()
-	err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
 		if v == 2 {
 			return fmt.Errorf("boom")
 		}
@@ -68,7 +68,7 @@ func TestForEach_Serial_Supervise_Restart(t *testing.T) {
 	ctx := context.Background()
 	attempt := 0
 	var processed []int
-	err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(func(_ context.Context, v int) error {
 		attempt++
 		if attempt == 1 {
 			return fmt.Errorf("trigger restart")
@@ -97,7 +97,7 @@ func TestForEach_Concurrent_AllProcessed(t *testing.T) {
 		items[i] = i
 	}
 	var count atomic.Int64
-	err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
 		count.Add(1)
 		return nil
 	}, kitsune.Concurrency(4)).Run(ctx)
@@ -112,7 +112,7 @@ func TestForEach_Concurrent_AllProcessed(t *testing.T) {
 func TestForEach_Concurrent_OnError_Skip(t *testing.T) {
 	ctx := context.Background()
 	var count atomic.Int64
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
 		if v%2 == 0 {
 			return fmt.Errorf("even")
 		}
@@ -129,7 +129,7 @@ func TestForEach_Concurrent_OnError_Skip(t *testing.T) {
 
 func TestForEach_Concurrent_Error_Halts(t *testing.T) {
 	ctx := context.Background()
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
 		if v == 3 {
 			return fmt.Errorf("halt on 3")
 		}
@@ -152,7 +152,7 @@ func TestForEach_Ordered_AllProcessed(t *testing.T) {
 		items[i] = i
 	}
 	var count atomic.Int64
-	err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
 		count.Add(1)
 		return nil
 	}, kitsune.Concurrency(4), kitsune.Ordered()).Run(ctx)
@@ -169,7 +169,7 @@ func TestForEach_Ordered_ErrorPropagation(t *testing.T) {
 	// completed, the error from item 3 is still reported (not suppressed by
 	// later successes).
 	ctx := context.Background()
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
 		if v == 3 {
 			return fmt.Errorf("item 3 failed")
 		}
@@ -184,7 +184,7 @@ func TestForEach_Ordered_OnError_Skip(t *testing.T) {
 	ctx := context.Background()
 	var got []int
 	var mu sync.Mutex
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(func(_ context.Context, v int) error {
 		if v%2 == 0 {
 			return fmt.Errorf("even")
 		}
@@ -220,7 +220,7 @@ func TestForEach_Concurrent_Race(t *testing.T) {
 	for i := range items {
 		items[i] = i
 	}
-	err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
 		count.Add(1)
 		return nil
 	}, kitsune.Concurrency(8)).Run(ctx)

@@ -16,7 +16,7 @@ func collectAll[T any](t *testing.T, p *kitsune.Pipeline[T]) []T {
 	defer cancel()
 
 	var out []T
-	err := p.ForEach(func(_ context.Context, item T) error {
+	_, err := p.ForEach(func(_ context.Context, item T) error {
 		out = append(out, item)
 		return nil
 	}).Run(ctx)
@@ -117,7 +117,7 @@ func TestUnfold(t *testing.T) {
 
 	var got []int
 	count := 0
-	err := fib.ForEach(func(_ context.Context, v int) error {
+	_, err := fib.ForEach(func(_ context.Context, v int) error {
 		got = append(got, v)
 		count++
 		if count >= 8 {
@@ -144,7 +144,7 @@ func TestIterate(t *testing.T) {
 
 	var got []int
 	count := 0
-	err := kitsune.Iterate(1, func(n int) int { return n * 2 }).
+	_, err := kitsune.Iterate(1, func(n int) int { return n * 2 }).
 		ForEach(func(_ context.Context, v int) error {
 			got = append(got, v)
 			count++
@@ -173,7 +173,7 @@ func TestRepeatedly(t *testing.T) {
 	var got []int
 	count := 0
 	n := 42
-	err := kitsune.Repeatedly(func() int { return n }).
+	_, err := kitsune.Repeatedly(func() int { return n }).
 		ForEach(func(_ context.Context, v int) error {
 			got = append(got, v)
 			count++
@@ -200,7 +200,7 @@ func TestCycle(t *testing.T) {
 
 	var got []string
 	count := 0
-	err := kitsune.Cycle([]string{"a", "b", "c"}).
+	_, err := kitsune.Cycle([]string{"a", "b", "c"}).
 		ForEach(func(_ context.Context, v string) error {
 			got = append(got, v)
 			count++
@@ -287,7 +287,7 @@ func TestDrain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := kitsune.FromSlice([]int{1, 2, 3}).Drain().Run(ctx)
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).Drain().Run(ctx)
 	if err != nil {
 		t.Fatalf("drain error: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestChannel_Backpressure(t *testing.T) {
 	// Start consumer — Send should now unblock.
 	received := make(chan int, 1)
 	go func() {
-		ch.Source().ForEach(func(_ context.Context, v int) error {
+		_, _ = ch.Source().ForEach(func(_ context.Context, v int) error {
 			received <- v
 			return nil
 		}).Run(ctx)
@@ -432,7 +432,7 @@ func TestNever(t *testing.T) {
 	defer cancel()
 
 	var items []int
-	err := kitsune.Never[int]().ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.Never[int]().ForEach(func(_ context.Context, v int) error {
 		items = append(items, v)
 		return nil
 	}).Run(ctx)

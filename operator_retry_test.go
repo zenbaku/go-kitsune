@@ -131,7 +131,7 @@ func TestRetry_Forever_CancelStops(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	err := kitsune.Retry(src, kitsune.RetryForever(kitsune.FixedBackoff(0))).
+	_, err := kitsune.Retry(src, kitsune.RetryForever(kitsune.FixedBackoff(0))).
 		ForEach(func(_ context.Context, _ int) error { return nil }).
 		Run(ctx)
 	if !errors.Is(err, context.Canceled) {
@@ -230,7 +230,7 @@ func TestRetry_ContextCanceledDuringBackoff(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	err := kitsune.Retry(src, kitsune.RetryForever(kitsune.FixedBackoff(10*time.Second))).
+	_, err := kitsune.Retry(src, kitsune.RetryForever(kitsune.FixedBackoff(10*time.Second))).
 		ForEach(func(_ context.Context, _ int) error { return nil }).
 		Run(ctx)
 	elapsed := time.Since(start)

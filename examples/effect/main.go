@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		panic(err)
 	}
 }

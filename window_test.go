@@ -19,11 +19,12 @@ func TestSessionWindow_MultipleSessions(t *testing.T) {
 	sessions := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+		_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 			ForEach(func(_ context.Context, s []int) error {
 				sessions <- s
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)
@@ -85,11 +86,12 @@ func TestSessionWindow_FlushOnClose(t *testing.T) {
 	sessions := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+		_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 			ForEach(func(_ context.Context, s []int) error {
 				sessions <- s
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)
@@ -128,11 +130,12 @@ func TestSessionWindow_Empty(t *testing.T) {
 	sessions := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+		_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 			ForEach(func(_ context.Context, s []int) error {
 				sessions <- s
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)
@@ -157,11 +160,12 @@ func TestSessionWindow_ResetBehavior(t *testing.T) {
 	sessions := make(chan []int, 10)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+		_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 			ForEach(func(_ context.Context, s []int) error {
 				sessions <- s
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	time.Sleep(pipelineStartup)

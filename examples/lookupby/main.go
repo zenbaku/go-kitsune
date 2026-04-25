@@ -61,11 +61,12 @@ func main() {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.LookupBy(ch.Source(), cfg).
+		_, err := kitsune.LookupBy(ch.Source(), cfg).
 			ForEach(func(_ context.Context, p kitsune.Enriched[int, string]) error {
 				fmt.Printf("  id=%d  name=%q\n", p.Item, p.Value)
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	fmt.Println("=== lookupby with BatchTimeout ===")

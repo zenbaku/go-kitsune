@@ -143,7 +143,7 @@ func benchMapWithKey(b *testing.B, concurrency, numKeys int) {
 			},
 			opts...,
 		)
-		if err := p.Drain().Run(ctx); err != nil {
+		if _, err := p.Drain().Run(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -179,7 +179,7 @@ func benchMapWith(b *testing.B, concurrency int) {
 			},
 			opts...,
 		)
-		if err := p.Drain().Run(ctx); err != nil {
+		if _, err := p.Drain().Run(ctx); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -203,7 +203,7 @@ func benchForEach(b *testing.B, concurrency int) {
 	b.ResetTimer()
 
 	for range b.N {
-		if err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
+		if _, err := kitsune.FromSlice(items).ForEach(func(_ context.Context, _ int) error {
 			return nil
 		}, opts...).Run(ctx); err != nil {
 			b.Fatal(err)
@@ -239,7 +239,7 @@ func BenchmarkMapWith_MemoryStore(b *testing.B) {
 				})
 			},
 		)
-		if err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
+		if _, err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -266,7 +266,7 @@ func BenchmarkMapWithKey_Serial_FewKeys_MemoryStore(b *testing.B) {
 				})
 			},
 		)
-		if err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
+		if _, err := p.Drain().Run(ctx, kitsune.WithStore(kitsune.MemoryStore())); err != nil {
 			b.Fatal(err)
 		}
 	}

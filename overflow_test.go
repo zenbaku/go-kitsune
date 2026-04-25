@@ -55,7 +55,7 @@ func TestOverflowDropNewest(t *testing.T) {
 	}
 	p := kitsune.FromSlice(items)
 	var received []int
-	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
 		return v, nil
 	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
 		ForEach(func(_ context.Context, v int) error {
@@ -89,7 +89,7 @@ func TestOverflowDropOldest(t *testing.T) {
 	}
 	p := kitsune.FromSlice(items)
 	var received []int
-	err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+	_, err := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
 		return v, nil
 	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropOldest)).
 		ForEach(func(_ context.Context, v int) error {
@@ -168,7 +168,7 @@ func TestOverflowDropOldestShardedStress(t *testing.T) {
 	h := &dropCountHook{Hook: kitsune.LogHook(slog.New(slog.NewTextHandler(io.Discard, nil)))}
 	var received atomic.Int64
 
-	err := kitsune.Map(
+	_, err := kitsune.Map(
 		kitsune.FromSlice(items),
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.Concurrency(8),
@@ -208,7 +208,7 @@ func TestOverflowHookCalled(t *testing.T) {
 		items[i] = i
 	}
 	var received atomic.Int64
-	err := kitsune.Map(kitsune.FromSlice(items), func(_ context.Context, v int) (int, error) {
+	_, err := kitsune.Map(kitsune.FromSlice(items), func(_ context.Context, v int) (int, error) {
 		return v, nil
 	}, kitsune.Buffer(2), kitsune.Overflow(kitsune.DropNewest)).
 		ForEach(func(_ context.Context, _ int) error {
@@ -267,7 +267,7 @@ func TestOverflowBroadcast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := merged.Run(context.Background()); err != nil {
+	if _, err := merged.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if fastCount.Load() != int64(n) {
@@ -295,7 +295,7 @@ func TestOverflowUnderLoad(t *testing.T) {
 		h := &dropCountHook{Hook: kitsune.LogHook(slog.New(slog.NewTextHandler(io.Discard, nil)))}
 		var received atomic.Int64
 
-		err := kitsune.Map(
+		_, err := kitsune.Map(
 			kitsune.FromSlice(items),
 			func(_ context.Context, v int) (int, error) { return v, nil },
 			kitsune.Concurrency(8),

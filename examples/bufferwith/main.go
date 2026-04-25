@@ -51,7 +51,7 @@ func main() {
 	}()
 
 	batchNum := 0
-	err := batches.ForEach(func(_ context.Context, batch []string) error {
+	_, err := batches.ForEach(func(_ context.Context, batch []string) error {
 		batchNum++
 		fmt.Printf("batch %d: %v\n", batchNum, batch)
 		return nil

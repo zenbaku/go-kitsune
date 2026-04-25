@@ -39,7 +39,7 @@ func TestRunnable_MergeRunnersAcceptsForEachRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ func TestRunnable_MergeRunnersAcceptsRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,7 +126,7 @@ func TestRunnable_MergeRunnersMixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestRunnable_ForEachRunnerRunAsync(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("pipeline did not complete in time")
 	}
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

@@ -147,7 +147,7 @@ func TestEffect_DryRun(t *testing.T) {
 		return nil
 	})
 
-	if err := runner.Run(ctx, kitsune.DryRun()); err != nil {
+	if _, err := runner.Run(ctx, kitsune.DryRun()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if calls.Load() != 0 {
@@ -336,7 +336,7 @@ func TestTryEffect_Split(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.Run(ctx); err != nil {
+	if _, err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 

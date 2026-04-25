@@ -261,7 +261,7 @@ func TestMetricsHookThroughput(t *testing.T) {
 	m := kitsune.NewMetricsHook()
 
 	p := kitsune.FromSlice(make([]int, 100))
-	_ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+	_, _ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
 		return n, nil
 	}, kitsune.WithName("tp")).Drain().Run(context.Background(), kitsune.WithHook(m))
 
@@ -276,7 +276,7 @@ func TestMetricsHookGraphHook(t *testing.T) {
 	m := kitsune.NewMetricsHook()
 
 	p := kitsune.FromSlice([]int{1})
-	_ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+	_, _ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
 		return n, nil
 	}, kitsune.WithName("g")).Drain().Run(context.Background(), kitsune.WithHook(m))
 
@@ -290,7 +290,7 @@ func TestMetricsHookSnapshotJSON(t *testing.T) {
 	m := kitsune.NewMetricsHook()
 
 	p := kitsune.FromSlice([]int{1, 2})
-	_ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
+	_, _ = kitsune.Map(p, func(_ context.Context, n int) (int, error) {
 		return n, nil
 	}, kitsune.WithName("json-stage")).Drain().Run(context.Background(), kitsune.WithHook(m))
 
@@ -325,7 +325,7 @@ func TestMetricsHookConcurrentAccess(t *testing.T) {
 	for i := range items {
 		items[i] = i
 	}
-	_ = kitsune.Map(kitsune.FromSlice(items), func(_ context.Context, n int) (int, error) {
+	_, _ = kitsune.Map(kitsune.FromSlice(items), func(_ context.Context, n int) (int, error) {
 		return n * 2, nil
 	}, kitsune.WithName("concurrent"), kitsune.Concurrency(8)).
 		Drain().Run(context.Background(), kitsune.WithHook(m))

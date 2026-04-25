@@ -20,7 +20,7 @@ func TestForEachSupervision(t *testing.T) {
 	hook := &testkit.RecordingHook{}
 
 	var calls atomic.Int64
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(
 		func(_ context.Context, _ int) error {
 			c := calls.Add(1)
 			if c == 2 {
@@ -43,7 +43,7 @@ func TestForEachSupervision(t *testing.T) {
 func TestForEachSupervisionExhausted(t *testing.T) {
 	ctx := context.Background()
 
-	err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(
 		func(_ context.Context, _ int) error {
 			return errors.New("always fails")
 		},
@@ -214,7 +214,7 @@ func TestForEachPanicRestart(t *testing.T) {
 	hook := &testkit.RecordingHook{}
 
 	var calls atomic.Int64
-	err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(
+	_, err := kitsune.FromSlice([]int{1, 2, 3, 4, 5}).ForEach(
 		func(_ context.Context, _ int) error {
 			c := calls.Add(1)
 			if c == 1 {

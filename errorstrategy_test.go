@@ -18,7 +18,7 @@ func runWith[T any](t *testing.T, p *kitsune.Pipeline[T], opts ...kitsune.RunOpt
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var out []T
-	err := p.ForEach(func(_ context.Context, item T) error {
+	_, err := p.ForEach(func(_ context.Context, item T) error {
 		out = append(out, item)
 		return nil
 	}).Run(ctx, opts...)
@@ -72,7 +72,7 @@ func TestWithErrorStrategy_SkipForEach(t *testing.T) {
 	var seen []int
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := kitsune.FromSlice([]int{1, 2, 3}).
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).
 		ForEach(func(_ context.Context, v int) error {
 			if v == 2 {
 				return boom

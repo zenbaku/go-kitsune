@@ -231,7 +231,7 @@ func TestWithContextMapper_ForEach(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	err := p.ForEach(func(ctx context.Context, m msg) error {
+	_, err := p.ForEach(func(ctx context.Context, m msg) error {
 		v, _ := ctx.Value(ctxKey("trace")).(string)
 		got = append(got, v)
 		return nil
@@ -268,7 +268,7 @@ func TestWithContextMapper_ForEach_Concurrent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	err := p.ForEach(func(ctx context.Context, m msg) error {
+	_, err := p.ForEach(func(ctx context.Context, m msg) error {
 		v, _ := ctx.Value(ctxKey("trace")).(string)
 		expected := "span-" + string(rune('a'+m.id))
 		if v != expected {

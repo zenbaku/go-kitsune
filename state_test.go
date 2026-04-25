@@ -279,11 +279,12 @@ func TestLookupByBatchTimeoutFlushesPartialBatch(t *testing.T) {
 	pairs := make(chan kitsune.Enriched[int, string], 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.LookupBy(ch.Source(), cfg).
+		_, err := kitsune.LookupBy(ch.Source(), cfg).
 			ForEach(func(_ context.Context, p kitsune.Enriched[int, string]) error {
 				pairs <- p
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	// Send two items; far below BatchSize. Without BatchTimeout these would
@@ -358,11 +359,12 @@ func TestEnrichBatchTimeoutFlushesPartialBatch(t *testing.T) {
 	out := make(chan string, 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Enrich(ch.Source(), cfg).
+		_, err := kitsune.Enrich(ch.Source(), cfg).
 			ForEach(func(_ context.Context, s string) error {
 				out <- s
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	if err := ch.Send(ctx, "a"); err != nil {

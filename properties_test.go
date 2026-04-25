@@ -321,7 +321,7 @@ func TestPropBroadcastCompleteness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MergeRunners error: %v", err)
 		}
-		if err := merged.Run(context.Background()); err != nil {
+		if _, err := merged.Run(context.Background()); err != nil {
 			t.Fatalf("Broadcast run error: %v", err)
 		}
 
@@ -364,7 +364,7 @@ func TestPropBalanceItemCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MergeRunners error: %v", err)
 		}
-		if err := merged.Run(context.Background()); err != nil {
+		if _, err := merged.Run(context.Background()); err != nil {
 			t.Fatalf("Balance run error: %v", err)
 		}
 
@@ -415,7 +415,7 @@ func TestPropBalanceRoundRobin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MergeRunners error: %v", err)
 		}
-		if err := merged.Run(context.Background()); err != nil {
+		if _, err := merged.Run(context.Background()); err != nil {
 			t.Fatalf("Balance run error: %v", err)
 		}
 
@@ -583,9 +583,10 @@ func TestPropFlatMapAssociativity(t *testing.T) {
 			func(ctx context.Context, x int, yield func(int) error) error {
 				// Construct f(x) as a slice pipeline and compose with g inline.
 				inner := kitsune.FlatMap(kitsune.FromSlice([]int{x, x + 1}), g)
-				return inner.ForEach(func(_ context.Context, v int) error {
+				_, err := inner.ForEach(func(_ context.Context, v int) error {
 					return yield(v)
 				}).Run(ctx)
+				return err
 			},
 		).Collect(context.Background())
 		if err != nil {
@@ -689,7 +690,7 @@ func TestPropTakeDropPartition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MergeRunners error: %v", err)
 		}
-		if err := merged.Run(context.Background()); err != nil {
+		if _, err := merged.Run(context.Background()); err != nil {
 			t.Fatalf("run error: %v", err)
 		}
 
@@ -1683,11 +1684,12 @@ func TestPropSessionWindowMultiSession(t *testing.T) {
 		sessions := make(chan []int, 64)
 		done := make(chan error, 1)
 		go func() {
-			done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+			_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 				ForEach(func(_ context.Context, s []int) error {
 					sessions <- s
 					return nil
 				}).Run(context.Background())
+			done <- err
 		}()
 		time.Sleep(pipelineStartup)
 
@@ -1745,11 +1747,12 @@ func TestPropSessionWindowEachItemAlone(t *testing.T) {
 		sessions := make(chan []int, 64)
 		done := make(chan error, 1)
 		go func() {
-			done <- kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
+			_, err := kitsune.SessionWindow(ch.Source(), gap, kitsune.WithClock(clock)).
 				ForEach(func(_ context.Context, s []int) error {
 					sessions <- s
 					return nil
 				}).Run(context.Background())
+			done <- err
 		}()
 		time.Sleep(pipelineStartup)
 

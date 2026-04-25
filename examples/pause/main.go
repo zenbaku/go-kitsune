@@ -63,7 +63,7 @@ func main() {
 	time.Sleep(100 * time.Millisecond)
 
 	src.Close()
-	if err := handle.Wait(); err != nil {
+	if _, err := handle.Wait(); err != nil {
 		panic(err)
 	}
 	fmt.Printf("total processed: %d items\n", len(received))
@@ -100,7 +100,7 @@ func main() {
 		fmt.Println("gate resumed")
 	}()
 
-	if err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
+	if _, err := r.Run(ctx, kitsune.WithPauseGate(gate)); err != nil {
 		panic(err)
 	}
 	fmt.Printf("total: %d items\n", len(out))

@@ -102,7 +102,7 @@ func TestMaterialize_ErrorBecomesNotification(t *testing.T) {
 
 	var got []kitsune.Notification[int]
 	// collectAll fatals on non-context errors, so use ForEach directly.
-	err := kitsune.Materialize(src).ForEach(func(_ context.Context, n kitsune.Notification[int]) error {
+	_, err := kitsune.Materialize(src).ForEach(func(_ context.Context, n kitsune.Notification[int]) error {
 		got = append(got, n)
 		return nil
 	}).Run(ctx)
@@ -134,7 +134,7 @@ func TestMaterialize_ContextCancelNotMaterialized(t *testing.T) {
 	defer cancel()
 
 	var got []kitsune.Notification[int]
-	err := kitsune.Materialize(src).ForEach(func(_ context.Context, n kitsune.Notification[int]) error {
+	_, err := kitsune.Materialize(src).ForEach(func(_ context.Context, n kitsune.Notification[int]) error {
 		got = append(got, n)
 		return nil
 	}).Run(ctx)
@@ -183,7 +183,7 @@ func TestDematerialize_ErrorNotificationPropagates(t *testing.T) {
 	defer cancel()
 
 	var got []int
-	err := kitsune.Dematerialize(p).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.Dematerialize(p).ForEach(func(_ context.Context, v int) error {
 		got = append(got, v)
 		return nil
 	}).Run(ctx)
@@ -242,7 +242,7 @@ func TestDematerialize_MalformedMidStreamError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := kitsune.Dematerialize(p).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.Dematerialize(p).ForEach(func(_ context.Context, _ int) error {
 		return nil
 	}).Run(ctx)
 
@@ -280,7 +280,7 @@ func TestMaterializeDematerialize_Identity_Error(t *testing.T) {
 	defer cancel()
 
 	var got []int
-	err := kitsune.Dematerialize(kitsune.Materialize(src)).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.Dematerialize(kitsune.Materialize(src)).ForEach(func(_ context.Context, v int) error {
 		got = append(got, v)
 		return nil
 	}).Run(ctx)
@@ -324,7 +324,7 @@ func TestMaterialize_ComposableMap(t *testing.T) {
 	defer cancel()
 
 	var got []int
-	err := kitsune.Dematerialize(tagged).ForEach(func(_ context.Context, v int) error {
+	_, err := kitsune.Dematerialize(tagged).ForEach(func(_ context.Context, v int) error {
 		got = append(got, v)
 		return nil
 	}).Run(ctx)

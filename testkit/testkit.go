@@ -23,13 +23,13 @@ import (
 // runnable is satisfied by *kitsune.Runner, *kitsune.DrainRunner[T],
 // *kitsune.ForEachRunner[T], and any other terminal type that exposes Run.
 type runnable interface {
-	Run(context.Context, ...kitsune.RunOption) error
+	Run(context.Context, ...kitsune.RunOption) (kitsune.RunSummary, error)
 }
 
 // MustRun runs the runner and calls t.Fatal if it returns an error.
 func MustRun(t testing.TB, r runnable, opts ...kitsune.RunOption) {
 	t.Helper()
-	if err := r.Run(context.Background(), opts...); err != nil {
+	if _, err := r.Run(context.Background(), opts...); err != nil {
 		t.Fatalf("testkit.MustRun: pipeline error: %v", err)
 	}
 }

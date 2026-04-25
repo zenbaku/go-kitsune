@@ -52,7 +52,7 @@ func main() {
 		kitsune.WithName("process-message"),
 	)
 
-	err := processed.ForEach(func(_ context.Context, result string) error {
+	_, err := processed.ForEach(func(_ context.Context, result string) error {
 		fmt.Println(result)
 		return nil
 	}).Run(ctx)

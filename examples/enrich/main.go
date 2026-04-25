@@ -82,11 +82,12 @@ func main() {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- kitsune.Enrich(ch.Source(), cfg).
+		_, err := kitsune.Enrich(ch.Source(), cfg).
 			ForEach(func(_ context.Context, e EnrichedEvent) error {
 				fmt.Printf("  event=%d user=%d (%s) action=%s\n", e.EventID, e.UserID, e.Name, e.Action)
 				return nil
 			}).Run(ctx)
+		done <- err
 	}()
 
 	fmt.Println("=== enrich with BatchTimeout ===")

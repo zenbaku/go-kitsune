@@ -41,7 +41,8 @@ func TestWithDrainFlushesPartialBatch(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, kitsune.WithDrain(2*time.Second))
+		_, err := runner.Run(ctx, kitsune.WithDrain(2*time.Second))
+		done <- err
 	}()
 
 	// Let the source emit all items, then cancel.
@@ -96,7 +97,8 @@ func TestWithDrainHardStop(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runner.Run(ctx, kitsune.WithDrain(100*time.Millisecond))
+		_, err := runner.Run(ctx, kitsune.WithDrain(100*time.Millisecond))
+		done <- err
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -124,8 +126,9 @@ func TestWithDrainTimerLeak(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- p.ForEach(func(_ context.Context, _ int) error { return nil }).
+		_, err := p.ForEach(func(_ context.Context, _ int) error { return nil }).
 			Run(ctx, kitsune.WithDrain(10*time.Second)) // long timeout; should not fire
+		done <- err
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -178,7 +181,7 @@ func TestCooperativeDrainGoroutineCount(t *testing.T) {
 		})
 	}
 
-	err := kitsune.Take(p, 1).ForEach(func(_ context.Context, _ int) error {
+	_, err := kitsune.Take(p, 1).ForEach(func(_ context.Context, _ int) error {
 		return nil
 	}).Run(context.Background())
 	if err != nil {
@@ -231,7 +234,7 @@ func TestCooperativeDrainBroadcast(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := runner.Run(t.Context()); err != nil {
+		if _, err := runner.Run(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}

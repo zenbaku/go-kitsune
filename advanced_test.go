@@ -850,7 +850,7 @@ func TestMapResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := merged.Run(ctx); err != nil {
+	if _, err := merged.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 
