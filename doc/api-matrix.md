@@ -361,6 +361,18 @@ Terminal functions run the pipeline and return a materialised result. They accep
 
 ---
 
+## 12.8 · DevStore
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `DevStore` | `interface { Save(ctx, name, []json.RawMessage); Load(ctx, name) ([]json.RawMessage, error) }` | Per-segment snapshot store; dev-only |
+| `ErrSnapshotMissing` | `var ErrSnapshotMissing error` | Wrapped by `Load` for unknown segments; check via `errors.Is` |
+| `FileDevStore` | `type FileDevStore struct{ ... }` | Built-in; one JSON file per segment |
+| `NewFileDevStore` | `NewFileDevStore(dir string) *FileDevStore` | Directory created on first Save |
+| `FromCheckpoint` | `FromCheckpoint[T](store, segment, opts...) *Pipeline[T]` | Test-time source loading a stored snapshot |
+
+---
+
 ## 13 · Error Routing
 
 | Operator | Signature | Notes |
@@ -416,6 +428,7 @@ Terminal functions run the pipeline and return a materialised result. They accep
 | `WithDefaultBuffer` | `WithDefaultBuffer(n int)` | Default channel buffer size for all stages that do not set their own `Buffer`. Default: 16. Per-stage `Buffer(n)` takes precedence. |
 | `WithDefaultKeyTTL` | `WithDefaultKeyTTL(d time.Duration)` | Default inactivity TTL for all `MapWithKey` and `FlatMapWithKey` stages that do not set their own `WithKeyTTL`. Default: 0 (disabled). Per-stage `WithKeyTTL` takes precedence; `WithKeyTTL(0)` explicitly disables eviction for a stage. |
 | `DryRun` | `DryRun()` | Skip every [`Effect`](operators.md#effect) and [`TryEffect`](operators.md#tryeffect) call (Applied: false, no error). Pure stages run normally. |
+| `WithDevStore` | `WithDevStore(store DevStore)` | Per-Segment capture/replay; dev-only. See [`DevStore`](operators.md#devstore). |
 
 ---
 

@@ -3073,6 +3073,100 @@ if err != nil {
 
 ---
 
+## :material-floppy-variant: DevStore { #devstore }
+
+`DevStore` captures and replays per-`Segment` snapshots so you can iterate on a downstream segment without re-running expensive upstream work. It is strictly a development-time affordance: no schema versioning, no production safety. See the safety note below.
+
+### DevStore interface
+
+```go
+type DevStore interface {
+    Save(ctx context.Context, segment string, items []json.RawMessage) error
+    Load(ctx context.Context, segment string) ([]json.RawMessage, error)
+}
+
+var ErrSnapshotMissing error // wrapped by Load when no snapshot exists
+```
+
+`FileDevStore` is the built-in implementation, writing one JSON file per segment under a configurable directory:
+
+```go
+func NewFileDevStore(dir string) *FileDevStore
+```
+
+### WithDevStore
+
+```go
+func WithDevStore(store DevStore) RunOption
+```
+
+When attached to a run, every named [`Segment`](#segment) in the pipeline gets capture-or-replay behaviour:
+
+- **Snapshot exists for the segment's name:** the inner stages are bypassed entirely (including any [`Effect`](#effect) calls inside) and the snapshot is replayed as the segment's output.
+- **Snapshot missing:** the segment runs live and its output is captured to the store at segment exit.
+
+Empty-named segments (the zero `Segment[I, O]{}` value) are ignored.
+
+To force a segment to re-run after its output type or logic changes, delete its snapshot file from the store directory.
+
+Attaching a DevStore disables stage fusion within `Segment` boundaries so the capture/replay wrapper can intercept the output. Pipelines without segments, or runs without `WithDevStore`, are unaffected.
+
+### FromCheckpoint
+
+```go
+func FromCheckpoint[T any](store DevStore, segment string, opts ...StageOption) *Pipeline[T]
+```
+
+A test-time / dev-time source that loads a stored snapshot directly. Use it to drive a pipeline section under test from a frozen upstream output without re-running:
+
+```go
+store := kitsune.NewFileDevStore("testdata/checkpoints")
+p := kitsune.FromCheckpoint[EnrichedPage](store, "enrich")
+out, err := kitsune.Collect(ctx, kitsune.Map(p, processEnriched))
+```
+
+If the snapshot does not exist, `Run` returns an error wrapping `ErrSnapshotMissing`. Unmarshal failures abort the source.
+
+Items are unmarshaled with `encoding/json` directly; `T` must be JSON-compatible with whatever was stored.
+
+### Safety
+
+`DevStore` is a development-only affordance. It is intentionally not production-safe:
+
+- Snapshots may become stale silently when segment outputs change shape.
+- Serialization is JSON-based and may lose type fidelity for complex types.
+- There is no version, schema, or hash tracking.
+- Capture is best-effort; `Save` errors are silently dropped so a broken store does not fail the run.
+
+Attaching a `DevStore` in a production run is an explicit choice by the author. The recommended use is gated behind a build tag, environment variable, or explicit dev script.
+
+### Example
+
+```go
+store := kitsune.NewFileDevStore("/tmp/kitsune-snapshots")
+
+fetchSeg := kitsune.NewSegment("fetch", fetchStage)
+enrichSeg := kitsune.NewSegment("enrich", enrichStage)
+publishSeg := kitsune.NewSegment("publish", publishStage)
+
+pipeline := kitsune.Then(kitsune.Then(fetchSeg, enrichSeg), publishSeg)
+
+// First run: everything live, snapshots captured.
+runner := pipeline.Apply(src).ForEach(handle)
+if _, err := runner.Run(ctx, kitsune.WithDevStore(store)); err != nil {
+    log.Fatal(err)
+}
+
+// Iterate on the publish segment: delete its snapshot, leave fetch/enrich
+// snapshots in place. Second run replays fetch and enrich; runs publish live.
+os.Remove("/tmp/kitsune-snapshots/publish.json")
+if _, err := runner.Run(ctx, kitsune.WithDevStore(store)); err != nil {
+    log.Fatal(err)
+}
+```
+
+---
+
 ## :material-alert-circle-outline: Error Handling Options { #error-handling }
 
 Error handling is configured per-stage with `OnError(handler)` or pipeline-wide with `WithErrorStrategy(handler)` in run options.

@@ -506,3 +506,20 @@ When the runner is started with `DryRun()`, every [`Effect`](operators.md#effect
 ```go
 err := runner.Run(ctx, kitsune.DryRun())
 ```
+
+---
+
+## `WithDevStore(store DevStore)`
+
+```go
+func WithDevStore(store DevStore) RunOption
+```
+
+When attached to a run, every named [`Segment`](operators.md#segment) gets per-segment snapshot capture/replay against the supplied [`DevStore`](operators.md#devstore). Snapshot exists: segment is bypassed (inner stages including effects do not run) and the snapshot is replayed; snapshot missing: segment runs live and its output is captured.
+
+Strictly dev-only: no schema versioning, no production safety. See [DevStore](operators.md#devstore).
+
+```go
+store := kitsune.NewFileDevStore("/tmp/snaps")
+runner.Run(ctx, kitsune.WithDevStore(store))
+```
