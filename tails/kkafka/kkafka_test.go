@@ -45,7 +45,7 @@ func TestConsumeProduce(t *testing.T) {
 		return kafka.Message{Value: b}, err
 	})
 	producer := kitsune.FromSlice([]Msg{{1}, {2}, {3}})
-	if err := producer.ForEach(sink).Run(context.Background()); err != nil {
+	if _, err := producer.ForEach(sink).Run(context.Background()); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestConsumeProduce(t *testing.T) {
 		var v Msg
 		return v, json.Unmarshal(m.Value, &v)
 	})
-	pipe.Take(3).ForEach(func(_ context.Context, v Msg) error {
+	_, _ = pipe.Take(3).ForEach(func(_ context.Context, v Msg) error {
 		results = append(results, v)
 		return nil
 	}).Run(ctx) //nolint:errcheck
@@ -96,7 +96,7 @@ func TestConsumeBatchSize(t *testing.T) {
 		b, err := json.Marshal(m)
 		return kafka.Message{Value: b}, err
 	})
-	if err := kitsune.FromSlice(msgs).ForEach(sink).Run(context.Background()); err != nil {
+	if _, err := kitsune.FromSlice(msgs).ForEach(sink).Run(context.Background()); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestConsumeBatchSize(t *testing.T) {
 
 	// BatchSize(3) on 6 messages: two full commits of 3.
 	var got []Msg
-	err := kkafka.Consume[Msg](reader, unmarshal, kkafka.BatchSize(3)).
+	_, err := kkafka.Consume[Msg](reader, unmarshal, kkafka.BatchSize(3)).
 		Take(6).
 		ForEach(func(_ context.Context, v Msg) error {
 			got = append(got, v)
@@ -150,7 +150,7 @@ func TestConsumeBatchTimeout(t *testing.T) {
 		b, err := json.Marshal(m)
 		return kafka.Message{Value: b}, err
 	})
-	if err := kitsune.FromSlice([]Msg{{1}, {2}, {3}}).ForEach(sink).Run(context.Background()); err != nil {
+	if _, err := kitsune.FromSlice([]Msg{{1}, {2}, {3}}).ForEach(sink).Run(context.Background()); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestConsumeBatchTimeout(t *testing.T) {
 	// BatchTimeout(10ms) flushes any partial batch within 10ms of the first
 	// pending message, ensuring the pipeline doesn't stall at teardown.
 	var got []Msg
-	err := kkafka.Consume[Msg](reader, unmarshal,
+	_, err := kkafka.Consume[Msg](reader, unmarshal,
 		kkafka.BatchSize(100),
 		kkafka.BatchTimeout(10*time.Millisecond),
 	).
@@ -208,7 +208,7 @@ func TestConsumeBatchEarlyExit(t *testing.T) {
 		b, err := json.Marshal(m)
 		return kafka.Message{Value: b}, err
 	})
-	if err := kitsune.FromSlice(msgs).ForEach(sink).Run(context.Background()); err != nil {
+	if _, err := kitsune.FromSlice(msgs).ForEach(sink).Run(context.Background()); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
@@ -228,7 +228,7 @@ func TestConsumeBatchEarlyExit(t *testing.T) {
 	// message is pending when yield returns false. Pipeline must return nil
 	// (not an error) and leave the 4th message uncommitted (at-least-once).
 	var got []Msg
-	err := kkafka.Consume[Msg](reader, unmarshal, kkafka.BatchSize(3)).
+	_, err := kkafka.Consume[Msg](reader, unmarshal, kkafka.BatchSize(3)).
 		Take(4).
 		ForEach(func(_ context.Context, v Msg) error {
 			got = append(got, v)
