@@ -65,3 +65,38 @@ type RunSummary struct {
 	CompletedAt   time.Time       `json:"completed_at"`
 	FinalizerErrs []error         `json:"-"`
 }
+
+// deriveRunOutcome computes the run's outcome from the pipeline error and
+// the per-Effect-stage counters in rc. It is pure: it does not mutate rc.
+//
+// Rules:
+//   - If pipelineErr is non-nil, return RunFailure (the error overrides
+//     Effect-level analysis: a stage-graph error means the pipeline itself
+//     failed, regardless of what Effects did before that point).
+//   - Else if any required-Effect stage had at least one terminal failure,
+//     return RunFailure.
+//   - Else if any best-effort-Effect stage had at least one terminal
+//     failure, return RunPartialSuccess.
+//   - Else return RunSuccess.
+//
+// A pipeline with no Effect stages at all yields RunSuccess on a clean exit
+// and RunFailure on a stage-graph error.
+func deriveRunOutcome(rc *runCtx, pipelineErr error) RunOutcome {
+	if pipelineErr != nil {
+		return RunFailure
+	}
+	sawBestEffortFailure := false
+	for _, s := range rc.effectStats {
+		if s.failure.Load() == 0 {
+			continue
+		}
+		if s.required {
+			return RunFailure
+		}
+		sawBestEffortFailure = true
+	}
+	if sawBestEffortFailure {
+		return RunPartialSuccess
+	}
+	return RunSuccess
+}
