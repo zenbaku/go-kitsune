@@ -589,7 +589,7 @@ func SequenceEqual[T comparable](ctx context.Context, a, b *Pipeline[T], opts ..
 	}
 
 	runner := &Runner{terminal: terminal}
-	err := runner.Run(ctx, opts...)
+	_, err := runner.Run(ctx, opts...)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return false, err
 	}
@@ -669,7 +669,7 @@ func Iter[T any](ctx context.Context, p *Pipeline[T], opts ...RunOption) (iter.S
 	)
 	errFn := func() error {
 		errOnce.Do(func() {
-			errVal = handle.Wait()
+			_, errVal = handle.Wait()
 			if callerBroke.Load() && errors.Is(errVal, context.Canceled) {
 				errVal = nil
 			}

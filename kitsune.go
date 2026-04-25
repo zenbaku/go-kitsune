@@ -184,13 +184,32 @@ type Runnable interface {
 // multiple times; each call allocates a fresh, independent channel graph.
 type Runner struct {
 	// terminal builds the full stage graph into rc when called.
-	// It is set by ForEachRunner.Build() / ForEachRunner.Run().
 	terminal func(rc *runCtx)
+
+	// finalizers run in registration order after the pipeline completes.
+	// Each receives the RunSummary computed before any finalizer ran;
+	// their errors are recorded in RunSummary.FinalizerErrs but do not
+	// change RunSummary.Outcome.
+	finalizers []func(ctx context.Context, s RunSummary) error
 }
 
 // Build returns r itself. It exists so that [*Runner] satisfies the
 // [Runnable] interface.
 func (r *Runner) Build() *Runner { return r }
+
+// WithFinalizer registers fn to run after the pipeline completes. Multiple
+// finalizers run in registration order. Each finalizer receives the
+// [RunSummary] for the run; its return error (if any) is captured in
+// RunSummary.FinalizerErrs. Finalizer errors do not change RunSummary.Outcome
+// (finalizers observe the run's outcome, they do not influence it).
+//
+// The same context that was passed to Run is passed to the finalizer.
+//
+// WithFinalizer returns r so callers can chain attach calls.
+func (r *Runner) WithFinalizer(fn func(ctx context.Context, s RunSummary) error) *Runner {
+	r.finalizers = append(r.finalizers, fn)
+	return r
+}
 
 // ErrNoRunners is returned by [MergeRunners] when called with no arguments.
 var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runner")
@@ -198,16 +217,17 @@ var ErrNoRunners = errors.New("kitsune: MergeRunners requires at least one runne
 // RunHandle is returned by [Runner.RunAsync]. It provides multiple ways to
 // observe the pipeline's completion and to pause/resume source stages.
 type RunHandle struct {
-	done chan struct{}
-	err  error // written before done is closed; safe to read after <-done returns
-	gate *Gate
+	done    chan struct{}
+	err     error
+	summary RunSummary // written before done is closed; safe to read after <-done returns
+	gate    *Gate
 }
 
-// Wait blocks until the pipeline completes and returns its error (or nil).
-// Safe to call from multiple goroutines concurrently.
-func (h *RunHandle) Wait() error {
+// Wait blocks until the pipeline completes and returns its [RunSummary] and
+// fatal error (if any). Safe to call from multiple goroutines concurrently.
+func (h *RunHandle) Wait() (RunSummary, error) {
 	<-h.done
-	return h.err
+	return h.summary, h.err
 }
 
 // Done returns a channel that is closed when the pipeline completes.
@@ -217,9 +237,9 @@ func (h *RunHandle) Done() <-chan struct{} {
 }
 
 // Err returns the pipeline's terminal error. It is non-blocking: if the
-// pipeline has not yet completed it returns nil. Use Done() in a select and
-// then call Err() to retrieve the result, or use Wait() to block until done.
-// Safe to call from multiple goroutines concurrently.
+// pipeline has not yet completed it returns nil. Use [RunHandle.Done] in a
+// select and then call Err to retrieve the result, or use [RunHandle.Wait]
+// to block until done. Safe to call from multiple goroutines concurrently.
 func (h *RunHandle) Err() error {
 	select {
 	case <-h.done:
@@ -229,22 +249,43 @@ func (h *RunHandle) Err() error {
 	}
 }
 
+// Summary returns the run's summary. It is non-blocking: if the pipeline has
+// not yet completed it returns the zero-valued [RunSummary] (Outcome:
+// RunSuccess, all other fields zero). Use [RunHandle.Done] in a select and
+// then call Summary to retrieve the result, or use [RunHandle.Wait] to block
+// until done. Safe to call from multiple goroutines concurrently.
+func (h *RunHandle) Summary() RunSummary {
+	select {
+	case <-h.done:
+		return h.summary
+	default:
+		return RunSummary{}
+	}
+}
+
 // Pause stops sources from emitting new items. In-flight items continue
-// draining through downstream stages. Safe to call multiple times.
-// Has no effect after the pipeline has completed.
+// draining through downstream stages. Safe to call multiple times. Has no
+// effect after the pipeline has completed.
 func (h *RunHandle) Pause() { h.gate.Pause() }
 
-// Resume allows sources to emit items again after a [RunHandle.Pause].
-// Safe to call multiple times. Has no effect if the pipeline is not paused.
+// Resume allows sources to emit items again after a [RunHandle.Pause]. Safe
+// to call multiple times. Has no effect if the pipeline is not paused.
 func (h *RunHandle) Resume() { h.gate.Resume() }
 
 // Paused reports whether the pipeline is currently paused.
 func (h *RunHandle) Paused() bool { return h.gate.Paused() }
 
 // Run executes the pipeline. It blocks until the pipeline completes,
-// the context is cancelled, or an unhandled error occurs.
-// Run may be called multiple times; each call builds a fresh channel graph.
-func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
+// the context is cancelled, or an unhandled error occurs. Run may be called
+// multiple times; each call builds a fresh channel graph.
+//
+// Returns a [RunSummary] describing the run plus the same fatal error (if
+// any) that previously was the only return value. The summary is populated
+// even when the error is non-nil. Finalizers attached via [Runner.WithFinalizer]
+// run after the stage graph completes (and after the summary is computed)
+// in registration order; their errors are recorded in RunSummary.FinalizerErrs
+// without affecting RunSummary.Outcome.
+func (r *Runner) Run(ctx context.Context, opts ...RunOption) (RunSummary, error) {
 	cfg := buildRunConfig(opts)
 
 	codec := cfg.codec
@@ -257,10 +298,6 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		hook = internal.NoopHook{}
 	}
 
-	// Materialise the pipeline: build functions are called recursively,
-	// allocating fresh channels and registering stage functions into rc.
-	// Stateful operators (MapWith etc.) register key factories into rc.refs
-	// during this phase.
 	rc := newRunCtx()
 	rc.cache = cfg.defaultCache
 	rc.cacheTTL = cfg.defaultCacheTTL
@@ -273,16 +310,12 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	rc.dryRun = cfg.dryRun
 	r.terminal(rc)
 
-	// Initialise all Refs with the configured store and codec now that all
-	// key factories have been registered by the build phase above.
 	rc.refs.init(cfg.store, codec)
 
-	// Notify GraphHook (static topology — channel sizes are at initial 0).
 	if gh, ok := hook.(internal.GraphHook); ok {
 		gh.OnGraph(metasToGraphNodes(rc.metas))
 	}
 
-	// Notify BufferHook with a live query closure over the materialised channels.
 	if bh, ok := hook.(internal.BufferHook); ok {
 		metas := rc.metas
 		bh.OnBuffers(func() []internal.BufferStatus {
@@ -307,10 +340,35 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 		wrappers[i] = func(ctx context.Context) error { return s(ctx) }
 	}
 
+	started := time.Now()
+	var pipelineErr error
 	if cfg.drainTimeout > 0 {
-		return runWithDrain(ctx, cfg.drainTimeout, rc.signalDone, wrappers)
+		pipelineErr = runWithDrain(ctx, cfg.drainTimeout, rc.signalDone, wrappers)
+	} else {
+		pipelineErr = internal.RunStages(ctx, wrappers)
 	}
-	return internal.RunStages(ctx, wrappers)
+	finishedAt := time.Now()
+
+	summary := RunSummary{
+		Outcome:     deriveRunOutcome(rc, pipelineErr),
+		Err:         pipelineErr,
+		Duration:    finishedAt.Sub(started),
+		CompletedAt: finishedAt,
+	}
+	if mh, ok := hook.(*MetricsHook); ok {
+		summary.Metrics = mh.Snapshot()
+	} else {
+		summary.Metrics = MetricsSnapshot{Timestamp: finishedAt, Elapsed: summary.Duration}
+	}
+
+	if len(r.finalizers) > 0 {
+		summary.FinalizerErrs = make([]error, len(r.finalizers))
+		for i, fn := range r.finalizers {
+			summary.FinalizerErrs[i] = fn(ctx, summary)
+		}
+	}
+
+	return summary, pipelineErr
 }
 
 // runWithDrain executes stages with graceful drain semantics using a two-phase
@@ -372,7 +430,7 @@ func (r *Runner) RunAsync(ctx context.Context, opts ...RunOption) *RunHandle {
 	}
 	h := &RunHandle{done: make(chan struct{}), gate: gate}
 	go func() {
-		h.err = r.Run(ctx, opts...)
+		h.summary, h.err = r.Run(ctx, opts...)
 		close(h.done)
 	}()
 	return h
@@ -425,8 +483,11 @@ func MergeRunners(runners ...Runnable) (*Runner, error) {
 	// When Run is called, a single runCtx is shared, so shared upstream stages
 	// are built only once (memoised by stage ID).
 	terminals := make([]func(*runCtx), len(runners))
+	var finalizers []func(ctx context.Context, s RunSummary) error
 	for i, r := range runners {
-		terminals[i] = r.Build().terminal
+		built := r.Build()
+		terminals[i] = built.terminal
+		finalizers = append(finalizers, built.finalizers...)
 	}
 	return &Runner{
 		terminal: func(rc *runCtx) {
@@ -434,5 +495,6 @@ func MergeRunners(runners ...Runnable) (*Runner, error) {
 				t(rc)
 			}
 		},
+		finalizers: finalizers,
 	}, nil
 }
