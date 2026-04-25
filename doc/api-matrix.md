@@ -326,8 +326,8 @@ Terminal functions run the pipeline and return a materialised result. They accep
 |--------|-----------|-------|
 | `Stage[I,O]` | `type Stage[I,O any] func(*Pipeline[I]) *Pipeline[O]` | Named function type; zero-cost transformer |
 | `(s).Apply` | `(s Stage[I,O]).Apply(p *Pipeline[I]) *Pipeline[O]` | Apply a stage to a pipeline |
-| `Then` | `Then[I,M,O](s1 Stage[I,M], s2 Stage[M,O]) Stage[I,O]` | Compose two stages |
-| `(p).Through` | `(p *Pipeline[T]).Through(s Stage[T,T]) *Pipeline[T]` | Method form of Apply |
+| `Then` | `Then[I,M,O](first Composable[I,M], second Composable[M,O]) Stage[I,O]` | Compose two stages or segments |
+| `(p).Through` | `(p *Pipeline[T]).Through(s Composable[T,T]) *Pipeline[T]` | Method form of Apply |
 | `Or` | `Or[I,O](primary, fallback func) Stage[I,O]` | Try primary; fall back to fallback on no output |
 | `(s).Or` | `(s Stage[I,O]).Or(fallback Stage[I,O]) Stage[I,O]` *(compat)* | Method form taking a full Stage |
 | `Segment[I,O]` | `NewSegment[I,O](name string, stage Stage[I,O], opts ...SegmentOption) Segment[I,O]` | Metadata wrapper; accepts no StageOptions. See [operators.md#segment](operators.md#segment) |

@@ -2796,19 +2796,19 @@ runner.Run(ctx)
 ```go
 type Stage[I, O any] func(*Pipeline[I]) *Pipeline[O]
 
-func Then[I, M, O any](s Stage[I, M], next Stage[M, O]) Stage[I, O]
+func Then[I, M, O any](first Composable[I, M], second Composable[M, O]) Stage[I, O]
 func (s Stage[I, O]) Apply(p *Pipeline[I]) *Pipeline[O]
-func (p *Pipeline[T]) Through(s Stage[T, T]) *Pipeline[T]
+func (p *Pipeline[T]) Through(s Composable[T, T]) *Pipeline[T]
 func Or[I, O any](primary, fallback func(context.Context, I) (O, error), opts ...StageOption) Stage[I, O]
 ```
 
 `Stage[I, O]` is a composable pipeline transformer: a function from `*Pipeline[I]` to `*Pipeline[O]`. It lets you name and reuse multi-step pipeline fragments.
 
-[`Then`](#stagei-o-then-through-or) chains two stages: the output of `s` becomes the input of `next`.
+[`Then`](#stagei-o-then-through-or) chains two composables: the output of `first` becomes the input of `second`. Both `Stage` and `Segment` satisfy `Composable`, so either can be composed here.
 
 `Apply` is syntactic sugar for calling the stage as a function.
 
-[`Through`](#stagei-o-then-through-or) applies a same-type stage to a pipeline inline; useful for chaining stages that preserve the element type.
+[`Through`](#stagei-o-then-through-or) applies a same-type composable to a pipeline inline; useful for chaining stages or segments that preserve the element type.
 
 `Or` creates a `Stage` that tries `primary` and falls back to `fallback` if `primary` returns an error. Both functions are called with the same item.
 
