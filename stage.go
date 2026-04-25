@@ -22,6 +22,14 @@ import (
 //	result := parseEvent(lines)
 type Stage[I, O any] func(*Pipeline[I]) *Pipeline[O]
 
+// Composable is the unifying interface for things that transform a
+// *Pipeline[I] into a *Pipeline[O]. Both [Stage] (a function type with an
+// Apply method) and [Segment] (a struct) implement Composable, allowing
+// them to compose interchangeably with [Then] and [Pipeline.Through].
+type Composable[I, O any] interface {
+	Apply(p *Pipeline[I]) *Pipeline[O]
+}
+
 // Then chains two stages: the output of s becomes the input of next.
 //
 //	validate := kitsune.Then(parse, enrich)
