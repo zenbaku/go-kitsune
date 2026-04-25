@@ -86,6 +86,8 @@ type GraphNode struct {
 	HasRetry       bool          `json:"has_retry,omitempty"`
 	HasSupervision bool          `json:"has_supervision,omitempty"`
 	SegmentName    string        `json:"segment_name,omitempty"`
+	IsEffect       bool          `json:"is_effect,omitempty"`
+	EffectRequired bool          `json:"effect_required,omitempty"`
 }
 
 // BufferStatus reports the current fill level of one stage's output channel.

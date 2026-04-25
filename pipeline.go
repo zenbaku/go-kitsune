@@ -49,8 +49,19 @@ type stageMeta struct {
 	// Empty when the stage is not inside a segment. When segments nest, the
 	// innermost segment wins (deepest enclosing Segment owns each stage).
 	segmentName string
-	getChanLen  func() int
-	getChanCap  func() int
+
+	// isEffect is true when this stage was constructed by [Effect] or
+	// [TryEffect]. Used by the future RunSummary derivation to distinguish
+	// pure stages from stages that produce externally-visible side effects.
+	isEffect bool
+
+	// effectRequired is true when the stage's [EffectPolicy] / [Required]
+	// marks the effect as required for run success. Meaningful only when
+	// isEffect is true.
+	effectRequired bool
+
+	getChanLen func() int
+	getChanCap func() int
 
 	// Optimization metadata: set at construction time, read by IsOptimized.
 	//
@@ -139,6 +150,10 @@ type runCtx struct {
 	// build wrapper at run/Describe time; consulted by runCtx.add to stamp
 	// stageMeta.segmentName before appending to rc.metas.
 	segmentByID map[int64]string
+
+	// dryRun is true when the run was started with [DryRun]. Effect operators
+	// check this and short-circuit fn execution; pure stages run normally.
+	dryRun bool
 }
 
 // defaultBufSize returns the run-level default buffer, falling back to

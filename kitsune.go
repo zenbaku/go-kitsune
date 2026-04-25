@@ -270,6 +270,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) error {
 	rc.defaultErrorHandler = cfg.defaultErrorHandler
 	rc.defaultBuffer = cfg.defaultBuffer
 	rc.defaultKeyTTL = cfg.defaultKeyTTL
+	rc.dryRun = cfg.dryRun
 	r.terminal(rc)
 
 	// Initialise all Refs with the configured store and codec now that all
@@ -396,9 +397,20 @@ func metasToGraphNodes(metas []stageMeta) []internal.GraphNode {
 			HasRetry:       m.hasRetry,
 			HasSupervision: m.hasSuperv,
 			SegmentName:    m.segmentName,
+			IsEffect:       m.isEffect,
+			EffectRequired: m.effectRequired,
 		})
 	}
 	return nodes
+}
+
+// DryRun configures the run to skip every [Effect] / [TryEffect] call,
+// returning [EffectOutcome] values with Applied: false and no error. Pure
+// stages (Map, Filter, Batch, etc.) and stateful stages run normally; only
+// effect functions are bypassed. Useful for validating pipeline graph wiring
+// without producing externally-visible side effects.
+func DryRun() RunOption {
+	return func(c *runConfig) { c.dryRun = true }
 }
 
 // MergeRunners combines multiple terminal stages that share the same pipeline

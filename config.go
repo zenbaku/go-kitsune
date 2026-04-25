@@ -74,6 +74,7 @@ type runConfig struct {
 	defaultErrorHandler internal.ErrorHandler
 	defaultBuffer       int           // 0 = use internal.DefaultBuffer (16)
 	defaultKeyTTL       time.Duration // 0 = no eviction unless overridden per stage
+	dryRun              bool
 }
 
 func buildStageConfig(opts []StageOption) stageConfig {
