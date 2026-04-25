@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// RetryPolicy controls how [Retry] re-subscribes to its upstream pipeline
+// RetryStrategy controls how [Retry] re-subscribes to its upstream pipeline
 // after a failure.
 //
 // The zero value performs a single attempt with no retry.
-type RetryPolicy struct {
+type RetryStrategy struct {
 	// MaxAttempts is the total number of upstream runs allowed, including the
 	// first. Values ≤ 0 mean retry indefinitely. 1 means no retry (a single
 	// attempt only).
@@ -32,28 +32,28 @@ type RetryPolicy struct {
 }
 
 // WithRetryable returns a copy of pol with Retryable set to fn.
-func (pol RetryPolicy) WithRetryable(fn func(error) bool) RetryPolicy {
+func (pol RetryStrategy) WithRetryable(fn func(error) bool) RetryStrategy {
 	pol.Retryable = fn
 	return pol
 }
 
 // WithOnRetry returns a copy of pol with OnRetry set to fn.
-func (pol RetryPolicy) WithOnRetry(fn func(attempt int, err error, wait time.Duration)) RetryPolicy {
+func (pol RetryStrategy) WithOnRetry(fn func(attempt int, err error, wait time.Duration)) RetryStrategy {
 	pol.OnRetry = fn
 	return pol
 }
 
-// RetryUpTo returns a [RetryPolicy] that allows at most n total attempts
+// RetryUpTo returns a [RetryStrategy] that allows at most n total attempts
 // (including the first) with the given backoff between retries.
-func RetryUpTo(n int, b Backoff) RetryPolicy {
-	return RetryPolicy{MaxAttempts: n, Backoff: b}
+func RetryUpTo(n int, b Backoff) RetryStrategy {
+	return RetryStrategy{MaxAttempts: n, Backoff: b}
 }
 
-// RetryForever returns a [RetryPolicy] that retries indefinitely with the
+// RetryForever returns a [RetryStrategy] that retries indefinitely with the
 // given backoff. The pipeline only stops when the outer context is cancelled
 // or when the Retryable predicate returns false.
-func RetryForever(b Backoff) RetryPolicy {
-	return RetryPolicy{MaxAttempts: -1, Backoff: b}
+func RetryForever(b Backoff) RetryStrategy {
+	return RetryStrategy{MaxAttempts: -1, Backoff: b}
 }
 
 // Retry re-runs the entire pipeline p whenever it errors, according to pol.
@@ -77,7 +77,7 @@ func RetryForever(b Backoff) RetryPolicy {
 //
 // Context cancellation from the outer context is never retried and terminates
 // the pipeline immediately.
-func Retry[T any](p *Pipeline[T], pol RetryPolicy) *Pipeline[T] {
+func Retry[T any](p *Pipeline[T], pol RetryStrategy) *Pipeline[T] {
 	isRetryable := pol.Retryable
 	if isRetryable == nil {
 		isRetryable = func(err error) bool { return err != nil }

@@ -180,7 +180,7 @@ Unlike `OnError(RetryMax(...))` which retries individual item transformations wi
 | [`RetryUpTo(n, backoff)`](operators.md#retry) | At most `n` total attempts including the first |
 | [`RetryForever(backoff)`](operators.md#retry) | Retry indefinitely until context cancellation |
 
-The `RetryPolicy` type exposes `WithRetryable(fn)` to restrict which errors trigger a retry and `WithOnRetry(fn)` for logging or metrics hooks.
+The `RetryStrategy` type exposes `WithRetryable(fn)` to restrict which errors trigger a retry and `WithOnRetry(fn)` for logging or metrics hooks.
 
 ---
 

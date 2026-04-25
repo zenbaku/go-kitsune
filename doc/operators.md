@@ -544,7 +544,7 @@ kitsune.Catch(primaryFeed, func(err error) *kitsune.Pipeline[Event] {
 ### Retry
 
 ```go
-func Retry[T any](p *Pipeline[T], pol RetryPolicy) *Pipeline[T]
+func Retry[T any](p *Pipeline[T], pol RetryStrategy) *Pipeline[T]
 ```
 
 Re-runs the entire pipeline `p` from scratch whenever it errors, according to `pol`. This is the right primitive for sources that must reconnect on failure: websocket tails, change-data-capture streams, long-poll HTTP. The correct response to a disconnect is to re-establish the connection and resume.
@@ -553,9 +553,9 @@ Items produced during any attempt (including partial output from a failed attemp
 
 **When to use:** Persistent reconnect-on-drop semantics for a source pipeline. For per-item retries of a transformation function, use `OnError(RetryMax(...))` instead.
 
-**Options:** none. Configure behaviour via the `RetryPolicy` argument.
+**Options:** none. Configure behaviour via the `RetryStrategy` argument.
 
-**`RetryPolicy` fields:**
+**`RetryStrategy` fields:**
 
 | Field | Type | Description |
 |---|---|---|
