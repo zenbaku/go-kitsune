@@ -3077,6 +3077,8 @@ if err != nil {
 
 `DevStore` captures and replays per-`Segment` snapshots so you can iterate on a downstream segment without re-running expensive upstream work. It is strictly a development-time affordance: no schema versioning, no production safety. See the safety note below.
 
+For the workflow story (recipes, `FromCheckpoint` for unit tests, interaction with `Effect` and `RunSummary`, custom `DevStore` implementations), see the [Dev iteration guide](dev-iteration.md).
+
 ### DevStore interface
 
 ```go

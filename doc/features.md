@@ -252,6 +252,8 @@ runner.Run(ctx, kitsune.WithDevStore(store))
 
 [`FromCheckpoint[T](store, name)`](operators.md#fromcheckpoint) loads a stored snapshot directly as a pipeline source for unit testing downstream stages from frozen upstream output. Strictly dev-only: no schema versioning, no production safety.
 
+For the full workflow (mental model, recipes, custom `DevStore` implementations, interaction with `Effect` and `RunSummary`), see the [Dev iteration guide](dev-iteration.md).
+
 ---
 
 ## :material-clock-fast: Time-based operators
