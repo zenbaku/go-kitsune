@@ -2968,7 +2968,7 @@ Two-output convenience around [`Effect`](#effect): the `ok` pipeline carries out
 ```go
 ok, failed := kitsune.TryEffect(messages, publish, kitsune.Required())
 
-ok.ForEach(recordSuccess)         // EffectOutcome.Applied is always true here
+ok.ForEach(recordSuccess)         // EffectOutcome.Err is nil here (Applied is true; false under DryRun)
 failed.ForEach(reportFailure)     // EffectOutcome.Err is never nil here
 ```
 
