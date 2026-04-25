@@ -66,6 +66,8 @@ Fusion propagates upstream as long as every operator in the chain sets a `fusion
 | Sources (`FromSlice`, `Generate`, `FromChan`, `Ticker`, etc.) | **Yes** | Sources have no upstream to fuse with |
 | `Tap`, `TapError`, `Finally`, `IgnoreElements`, `ExpandMap` | **Yes** | Utility operators do not set `fusionEntry` |
 | `MapWith`, `FlatMapWith`, `MapWithKey`, `FlatMapWithKey` | **Yes** | Stateful key-sharding operators do not set `fusionEntry` |
+| `Segment` | **Yes** (at output boundary) | `Segment.Apply` clears the inner stage's `fusionEntry` so its build wrapper can intercept the output for `SegmentName` stamping and `DevStore` capture/replay. Stages inside a Segment can still fuse with each other; only the segment's last stage cannot fuse with a downstream stage outside the segment. |
+| `Effect`, `TryEffect` | **Yes** | Effect stages do their own per-item retry/timeout loop and do not set `fusionEntry` |
 | Any stage with `Concurrency(n > 1)`, `OnError`, `Overflow(DropOldest/DropNewest)`, `Timeout`, `Supervise`, `CacheBy`, or a run-time `WithHook` | **Yes** | Fast-path conditions not met; `fusionEntry` is not set or is discarded at run time |
 
 The practical rule: a fusion group starts at the first eligible `Map` or `Filter` after a boundary and ends at `ForEach` (or the next boundary). A `FlatMap` in the middle of an otherwise hot chain always introduces a channel hop and goroutine handoff. If you need to eliminate that hop, structure the pipeline so the `FlatMap` output feeds a fresh `Map → Filter → ForEach` sub-chain that is itself fusion-eligible.

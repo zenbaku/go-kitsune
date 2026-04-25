@@ -21,8 +21,18 @@ import (
 //	pipeline := kitsune.Then(kitsune.Then(fetch, enrich), publish)
 //
 // Nested segments resolve to the innermost name: the deepest enclosing
-// Segment owns each stage in the graph. Segments are pure metadata and do
-// not affect runtime behaviour.
+// Segment owns each stage in the graph.
+//
+// Two runtime-visible side effects:
+//
+//   - Segments disable stage fusion at their output boundary, so a
+//     fast-path Map/Filter chain inside a Segment does not fuse with a
+//     downstream ForEach. This is necessary so the segment's build wrapper
+//     (which stamps SegmentName and handles DevStore capture/replay) can
+//     intercept the output channel.
+//   - When the run is started with [WithDevStore], every named Segment
+//     captures its output on first run and replays from snapshot on
+//     subsequent runs. See [DevStore] for the dev-iteration semantics.
 type Segment[I, O any] struct {
 	name  string
 	stage Stage[I, O]
