@@ -259,6 +259,18 @@ func Effect[I, R any](
 		drainCh := rc.drainCh(id)
 		dryRun := rc.dryRun
 		localCfg := cfg // local copy for closure capture
+
+		// Resolve the idempotency store: prefer user-supplied; otherwise
+		// attach a per-stage in-memory store when Idempotent + key fn are set.
+		var idemStore IdempotencyStore
+		if localCfg.idempotent && localCfg.idempotencyKey != nil {
+			if localCfg.idempotencyStore != nil {
+				idemStore = localCfg.idempotencyStore
+			} else {
+				idemStore = newMemoryIdempotencyStore()
+			}
+		}
+
 		hook := rc.hook
 		if hook == nil {
 			hook = internal.NoopHook{}
@@ -288,14 +300,35 @@ func Effect[I, R any](
 					outcome.Input = item
 
 					if !dryRun {
-						start := time.Now()
-						outcome = runEffectAttempts(ctx, item, fn, localCfg)
-						hook.OnItem(ctx, stageName, time.Since(start), outcome.Err)
-						rc.recordEffectOutcome(id, outcome.Applied)
-						if outcome.Err != nil {
-							errored++
-						} else {
-							processed++
+						skipped := false
+						if idemStore != nil {
+							key := localCfg.idempotencyKey(item)
+							if key != "" {
+								firstTime, addErr := idemStore.Add(ctx, key)
+								if addErr != nil {
+									outcome.Err = addErr
+									hook.OnItem(ctx, stageName, 0, addErr)
+									rc.recordEffectOutcome(id, false)
+									errored++
+									skipped = true
+								} else if !firstTime {
+									outcome.Deduped = true
+									hook.OnItem(ctx, stageName, 0, nil)
+									rc.recordEffectDeduped(id)
+									skipped = true
+								}
+							}
+						}
+						if !skipped {
+							start := time.Now()
+							outcome = runEffectAttempts(ctx, item, fn, localCfg)
+							hook.OnItem(ctx, stageName, time.Since(start), outcome.Err)
+							rc.recordEffectOutcome(id, outcome.Applied)
+							if outcome.Err != nil {
+								errored++
+							} else {
+								processed++
+							}
 						}
 					}
 
