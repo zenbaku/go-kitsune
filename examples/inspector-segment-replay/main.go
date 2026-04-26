@@ -50,7 +50,7 @@ func main() {
 		seg := kitsune.NewSegment("enrich", kitsune.Stage[int, int](
 			func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
 				added := kitsune.Map(p, func(_ context.Context, v int) (int, error) {
-					time.Sleep(200 * time.Millisecond) // visible latency on the dashboard
+					time.Sleep(500 * time.Millisecond) // visible latency on the dashboard
 					return v + 100, nil
 				}, kitsune.WithName("inner-add"))
 				return kitsune.Map(added, func(_ context.Context, v int) (int, error) {
@@ -71,9 +71,12 @@ func main() {
 			label, summary.Outcome, got, err, summary.Duration)
 	}
 
+	pause("Press ENTER once the dashboard is open in your browser. ")
+
+	fmt.Println()
 	fmt.Println("--- Run 1: CAPTURE (no snapshot; segment runs live) ---")
-	fmt.Println("On the dashboard, the segment hull contains two stages (inner-add, inner-mul),")
-	fmt.Println("each item takes ~200ms, items flow live, and there is no REPLAY badge.")
+	fmt.Println("Watch the dashboard: the segment hull contains two stages (inner-add, inner-mul),")
+	fmt.Println("each item takes ~500ms, items flow live, and there is no REPLAY badge.")
 	fmt.Println()
 	run("capture")
 	pause("\nPress ENTER to run again with the snapshot now present (replay mode)... ")
