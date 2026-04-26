@@ -168,6 +168,7 @@ button { cursor: pointer; font: inherit; border: none; background: none; }
 /* Effect badge: small rectangle + glyph in the top-right corner of effect nodes */
 .eff-badge-required    { fill: var(--red); fill-opacity: .85; }
 .eff-badge-besteffort  { fill: var(--yellow); fill-opacity: .85; }
+.eff-badge-replay      { fill: var(--blue); fill-opacity: .85; }
 .eff-badge-glyph       { font-size: 9px; font-weight: 800; font-family: system-ui,sans-serif; fill: white; pointer-events: none; }
 
 /* ── Stats table ───────────────────────────────────────────────────────────── */
@@ -615,6 +616,23 @@ function renderDAG() {
       g.appendChild(bg); g.appendChild(bt);
     }
 
+    // Segment-replay badge: top-right corner, blue REPLAY pill.
+    if (n.kind === 'segment-replay') {
+      const bw = 36, bh = 12;
+      const bx = x + NW - bw - 4, by = y + 4;
+      const bg = document.createElementNS(NS, 'rect');
+      bg.setAttribute('x', bx); bg.setAttribute('y', by);
+      bg.setAttribute('width', bw); bg.setAttribute('height', bh);
+      bg.setAttribute('rx', 3); bg.setAttribute('ry', 3);
+      bg.setAttribute('class', 'eff-badge-replay');
+      const bt = document.createElementNS(NS, 'text');
+      bt.setAttribute('x', bx + bw/2); bt.setAttribute('y', by + bh - 3);
+      bt.setAttribute('text-anchor', 'middle');
+      bt.setAttribute('class', 'eff-badge-glyph');
+      bt.textContent = 'REPLAY';
+      g.appendChild(bg); g.appendChild(bt);
+    }
+
     root.appendChild(g);
     nodeRects.set(n.id, rect);
 
@@ -838,7 +856,7 @@ function refreshSidebar() {
     ['Status',       `<span style="color:${statusColor}">${sdot(status)} ${status}</span>`],
     ['Items',        s ? fmtBig(s.items) : '-'],
     ['Throughput',   s && s.ratePerSec>0 ? `<span style="color:var(--blue)">${fmtRate(s.ratePerSec,false)}/s</span>` : '-'],
-    ['Avg Latency',  s ? fmtNs(s.avgLatNs) : '-'],
+    ['Avg Latency',  s ? (n.kind === 'segment-replay' ? '<span class="v-dim">—</span>' : fmtNs(s.avgLatNs)) : '-'],
     ['Errors',       s && s.errors>0   ? `<span style="color:var(--red)">${fmtBig(s.errors)}</span>`     : '<span class="v-dim">-</span>'],
     ['Drops',        s && s.drops>0    ? `<span style="color:var(--yellow)">${fmtBig(s.drops)}</span>`   : '<span class="v-dim">-</span>'],
     ['Restarts',     s && s.restarts>0 ? `<span style="color:var(--yellow)">${fmtBig(s.restarts)}</span>`: '<span class="v-dim">-</span>'],
@@ -916,7 +934,7 @@ function renderTable() {
         <td class="${s.drops    >0?'v-warn':'v-dim'}">${s.drops    >0?fmtBig(s.drops)   :'-'}</td>
         <td class="${s.restarts >0?'v-warn':'v-dim'}">${s.restarts >0?fmtBig(s.restarts):'-'}</td>
         <td>${mkSparkline(sparkData.get(n.name)||[], s.ratePerSec)}</td>
-        <td>${fmtNs(s.avgLatNs)}</td>
+        <td>${n.kind === 'segment-replay' ? '<span class="v-dim">—</span>' : fmtNs(s.avgLatNs)}</td>
         <td>${mkBufBar(s.bufferLen, s.bufferCap)}</td>`;
     }
     tbody.appendChild(tr);
