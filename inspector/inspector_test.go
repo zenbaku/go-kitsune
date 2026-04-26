@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -348,5 +349,181 @@ func TestInspector_OnRunComplete_FinalizerErrors(t *testing.T) {
 	if got.Summary == nil || len(got.Summary.FinalizerErrs) != 1 ||
 		got.Summary.FinalizerErrs[0] != "finalizer-failed" {
 		t.Errorf("FinalizerErrs in /state = %+v, want [\"finalizer-failed\"]", got.Summary)
+	}
+}
+
+// TestInspector_SegmentReplay_Visible verifies that when a Segment replays
+// from a DevStore snapshot, it appears in /state as a stage with kind
+// "segment-replay", and the run's graph payload includes the matching node.
+func TestInspector_SegmentReplay_Visible(t *testing.T) {
+	dir := t.TempDir()
+	store := kitsune.NewFileDevStore(dir)
+
+	// Seed a snapshot directly.
+	raws := []json.RawMessage{
+		json.RawMessage(`1`),
+		json.RawMessage(`2`),
+		json.RawMessage(`3`),
+	}
+	if err := store.Save(context.Background(), "ingest", raws); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+
+	insp := inspector.New()
+	defer insp.Close()
+
+	src := kitsune.FromSlice([]int{})
+	seg := kitsune.NewSegment("ingest", kitsune.Stage[int, int](
+		func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+			return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v, nil })
+		}))
+
+	got := []int{}
+	_, err := seg.Apply(src).ForEach(func(_ context.Context, v int) error {
+		got = append(got, v)
+		return nil
+	}).Run(context.Background(),
+		kitsune.WithDevStore(store), kitsune.WithHook(insp))
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reflect.DeepEqual(got, []int{1, 2, 3}) {
+		t.Fatalf("downstream got %v, want [1 2 3]", got)
+	}
+
+	// Allow ticker (250ms) to flush a stats broadcast and /state to read.
+	time.Sleep(300 * time.Millisecond)
+
+	state := getState(t, insp.URL())
+
+	var node *kithooks.GraphNode
+	for i := range state.Graph {
+		if state.Graph[i].Kind == "segment-replay" {
+			node = &state.Graph[i]
+			break
+		}
+	}
+	if node == nil {
+		t.Fatalf("no segment-replay node in /state graph; got: %+v", state.Graph)
+	}
+	if node.Name != "ingest" || node.SegmentName != "ingest" {
+		t.Errorf("graph node Name=%q SegmentName=%q, want both %q",
+			node.Name, node.SegmentName, "ingest")
+	}
+
+	raw, ok := state.Stats["ingest"]
+	if !ok {
+		t.Fatalf("no Stats[\"ingest\"] in /state; got keys: %v", keys(state.Stats))
+	}
+	var snap struct {
+		Items  int64  `json:"items"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("decode stage snapshot: %v", err)
+	}
+	if snap.Items != 3 {
+		t.Errorf("Items=%d, want 3", snap.Items)
+	}
+	if snap.Status != "done" {
+		t.Errorf("Status=%q, want \"done\"", snap.Status)
+	}
+}
+
+// keys is a small helper for diagnostic output in test failure messages.
+func keys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestInspector_SegmentReplay_CaptureThenReplay verifies an end-to-end
+// roundtrip: run 1 captures (inner stages fire normal events), run 2
+// replays (synthetic segment-replay stage replaces the inner-stage events).
+func TestInspector_SegmentReplay_CaptureThenReplay(t *testing.T) {
+	dir := t.TempDir()
+	store := kitsune.NewFileDevStore(dir)
+
+	stage := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v + 100, nil },
+			kitsune.WithName("inner-map"))
+	})
+
+	// --- Run 1: capture ---
+	insp1 := inspector.New()
+	src1 := kitsune.FromSlice([]int{1, 2})
+	seg1 := kitsune.NewSegment("roundtrip", stage)
+	out1 := []int{}
+	if _, err := seg1.Apply(src1).ForEach(func(_ context.Context, v int) error {
+		out1 = append(out1, v)
+		return nil
+	}).Run(context.Background(),
+		kitsune.WithDevStore(store), kitsune.WithHook(insp1)); err != nil {
+		t.Fatalf("capture run: %v", err)
+	}
+	if !reflect.DeepEqual(out1, []int{101, 102}) {
+		t.Fatalf("capture out=%v, want [101 102]", out1)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	state1 := getState(t, insp1.URL())
+	insp1.Close()
+
+	// Capture run: graph should contain the inner Map (stage name "inner-map"),
+	// no segment-replay node.
+	var sawInner1, sawReplay1 bool
+	for _, n := range state1.Graph {
+		if n.Name == "inner-map" {
+			sawInner1 = true
+		}
+		if n.Kind == "segment-replay" {
+			sawReplay1 = true
+		}
+	}
+	if !sawInner1 {
+		t.Errorf("capture run: graph missing inner-map node; got: %+v", state1.Graph)
+	}
+	if sawReplay1 {
+		t.Errorf("capture run: graph unexpectedly has segment-replay node")
+	}
+
+	// --- Run 2: replay ---
+	insp2 := inspector.New()
+	defer insp2.Close()
+	src2 := kitsune.FromSlice([]int{})
+	seg2 := kitsune.NewSegment("roundtrip", stage)
+	out2 := []int{}
+	if _, err := seg2.Apply(src2).ForEach(func(_ context.Context, v int) error {
+		out2 = append(out2, v)
+		return nil
+	}).Run(context.Background(),
+		kitsune.WithDevStore(store), kitsune.WithHook(insp2)); err != nil {
+		t.Fatalf("replay run: %v", err)
+	}
+	if !reflect.DeepEqual(out2, []int{101, 102}) {
+		t.Fatalf("replay out=%v, want [101 102]", out2)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	state2 := getState(t, insp2.URL())
+
+	// Replay run: graph should contain segment-replay node with name
+	// "roundtrip"; no inner-map node.
+	var sawInner2, sawReplay2 bool
+	for _, n := range state2.Graph {
+		if n.Name == "inner-map" {
+			sawInner2 = true
+		}
+		if n.Kind == "segment-replay" && n.Name == "roundtrip" {
+			sawReplay2 = true
+		}
+	}
+	if sawInner2 {
+		t.Errorf("replay run: graph unexpectedly has inner-map node")
+	}
+	if !sawReplay2 {
+		t.Errorf("replay run: graph missing segment-replay node; got: %+v", state2.Graph)
 	}
 }
