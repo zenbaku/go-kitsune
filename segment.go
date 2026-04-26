@@ -91,6 +91,14 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 
 	originalBuild := output.build
 	output.build = func(rc *runCtx) chan O {
+		// Memoize so a fan-out caller (multiple downstreams attached to
+		// the segment output) does not double-build, which would register
+		// the synthetic replay stage twice. Matches the standard pattern
+		// used by every other operator (see advanced.go).
+		if existing := rc.getChan(output.id); existing != nil {
+			return existing.(chan O)
+		}
+
 		// Always stamp segment IDs first; this is independent of DevStore.
 		// Build-wrapper composition fires outer first (outer.build runs,
 		// then calls originalBuild which is the inner wrapper), so an inner
@@ -104,13 +112,18 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 		// DevStore branch: only when a store is attached AND the segment
 		// has a non-empty name. Replay if a snapshot exists; capture if
 		// not.
+		var ch chan O
 		if rc.devStore != nil && name != "" {
 			if replayed, ok := tryReplaySegment[O](rc, name, output.id); ok {
-				return replayed
+				ch = replayed
+			} else {
+				ch = captureSegment[O](rc, name, originalBuild(rc))
 			}
-			return captureSegment[O](rc, name, originalBuild(rc))
+		} else {
+			ch = originalBuild(rc)
 		}
-		return originalBuild(rc)
+		rc.setChan(output.id, ch)
+		return ch
 	}
 	return output
 }
@@ -128,6 +141,11 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 //
 // On miss (any error from store.Load) the function returns nil, false;
 // the caller falls back to capture mode (run live).
+//
+// A decode failure stops emission immediately; the run-level error remains
+// nil and downstream sees only the items that decoded successfully before
+// the failure. This matches the prior best-effort behaviour and is
+// acceptable because DevStore is a strictly dev-mode affordance.
 func tryReplaySegment[T any](rc *runCtx, name string, id int64) (chan T, bool) {
 	raws, err := rc.devStore.Load(context.Background(), name)
 	if err != nil {

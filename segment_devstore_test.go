@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/zenbaku/go-kitsune"
 	kithooks "github.com/zenbaku/go-kitsune/hooks"
@@ -187,17 +187,17 @@ func TestSegmentDevStore_ReplayAppearsInGraph(t *testing.T) {
 		t.Fatalf("capture run: %v", err)
 	}
 
-	// Run 2: replay. Inspect the graph via a GraphHook.
+	// Run 2: replay. Inspect the graph via a GraphHook and count
+	// per-stage lifecycle events.
 	src2 := kitsune.FromSlice([]int{1, 2, 3})
 	seg2 := kitsune.NewSegment("enrich", enrich)
 
-	var nodes []kithooks.GraphNode
-	gh := graphHookFunc(func(n []kithooks.GraphNode) { nodes = n })
-
+	gh := &recordingHook{}
 	if _, err := collectWith(t, seg2.Apply(src2), kitsune.WithDevStore(store), kitsune.WithHook(gh)); err != nil {
 		t.Fatalf("replay run: %v", err)
 	}
 
+	nodes := gh.nodes()
 	var replay *kithooks.GraphNode
 	for i := range nodes {
 		if nodes[i].Kind == "segment-replay" {
@@ -214,13 +214,95 @@ func TestSegmentDevStore_ReplayAppearsInGraph(t *testing.T) {
 	if replay.SegmentName != "enrich" {
 		t.Errorf("replay node SegmentName=%q, want %q", replay.SegmentName, "enrich")
 	}
+	if replay.ID == 0 {
+		t.Errorf("replay node ID is zero; expected the segment-output id")
+	}
+
+	// The replay node must be wired into the graph: at least one
+	// downstream node lists replay.ID in its Inputs.
+	var downstream []int64
+	for _, n := range nodes {
+		for _, in := range n.Inputs {
+			if in == replay.ID {
+				downstream = append(downstream, n.ID)
+			}
+		}
+	}
+	if len(downstream) == 0 {
+		t.Errorf("no downstream node references replay.ID=%d in Inputs; nodes=%+v", replay.ID, nodes)
+	}
+
+	// Lifecycle counters: replay must fire OnStageStart exactly once
+	// for "enrich" and OnStageDone with processed=3, errors=0.
+	if got := gh.startCount("enrich"); got != 1 {
+		t.Errorf("OnStageStart(enrich) fired %d times, want 1", got)
+	}
+	processed, errs, ok := gh.donePayload("enrich")
+	if !ok {
+		t.Fatalf("OnStageDone(enrich) was not called")
+	}
+	if processed != 3 || errs != 0 {
+		t.Errorf("OnStageDone(enrich) processed=%d errors=%d, want processed=3 errors=0", processed, errs)
+	}
 }
 
-// graphHookFunc adapts a function to satisfy hooks.Hook + hooks.GraphHook.
-// It implements all Hook methods as no-ops; only OnGraph is meaningful.
-type graphHookFunc func(nodes []kithooks.GraphNode)
+// recordingHook is a Hook + GraphHook that records the graph snapshot and
+// counts lifecycle events per stage. It embeds [kithooks.NoopHook] so future
+// additions to the [kithooks.Hook] interface do not silently no-op the test.
+type recordingHook struct {
+	kithooks.NoopHook
 
-func (f graphHookFunc) OnStageStart(_ context.Context, _ string)                     {}
-func (f graphHookFunc) OnItem(_ context.Context, _ string, _ time.Duration, _ error) {}
-func (f graphHookFunc) OnStageDone(_ context.Context, _ string, _ int64, _ int64)    {}
-func (f graphHookFunc) OnGraph(nodes []kithooks.GraphNode)                           { f(nodes) }
+	mu       sync.Mutex
+	graph    []kithooks.GraphNode
+	starts   map[string]int
+	dones    map[string]struct{ processed, errors int64 }
+	doneSeen map[string]bool
+}
+
+func (h *recordingHook) OnGraph(nodes []kithooks.GraphNode) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.graph = append([]kithooks.GraphNode(nil), nodes...)
+}
+
+func (h *recordingHook) OnStageStart(_ context.Context, stage string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.starts == nil {
+		h.starts = make(map[string]int)
+	}
+	h.starts[stage]++
+}
+
+func (h *recordingHook) OnStageDone(_ context.Context, stage string, processed int64, errors int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.dones == nil {
+		h.dones = make(map[string]struct{ processed, errors int64 })
+		h.doneSeen = make(map[string]bool)
+	}
+	h.dones[stage] = struct{ processed, errors int64 }{processed, errors}
+	h.doneSeen[stage] = true
+}
+
+func (h *recordingHook) nodes() []kithooks.GraphNode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.graph
+}
+
+func (h *recordingHook) startCount(stage string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.starts[stage]
+}
+
+func (h *recordingHook) donePayload(stage string) (processed, errors int64, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	d, ok := h.dones[stage]
+	if !ok {
+		return 0, 0, false
+	}
+	return d.processed, d.errors, h.doneSeen[stage]
+}
