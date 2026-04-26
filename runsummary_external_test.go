@@ -2,7 +2,9 @@ package kitsune_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/zenbaku/go-kitsune"
@@ -302,5 +304,51 @@ func TestRunSummary_EffectStats_PopulatedWithSplit(t *testing.T) {
 	}
 	if be.Failure != 0 {
 		t.Errorf("besteffort-effect Failure=%d, want 0", be.Failure)
+	}
+}
+
+// TestRunSummary_EffectStats_JSONRoundTrip verifies that EffectStats
+// serializes to JSON with the documented field names and survives a
+// round-trip without losing data.
+func TestRunSummary_EffectStats_JSONRoundTrip(t *testing.T) {
+	original := kitsune.RunSummary{
+		EffectStats: map[string]kitsune.EffectStats{
+			"required-effect":   {Required: true, Success: 3, Failure: 1},
+			"besteffort-effect": {Required: false, Success: 2, Failure: 0},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var got kitsune.RunSummary
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(got.EffectStats, original.EffectStats) {
+		t.Errorf("EffectStats mismatch after round-trip:\n  got  = %+v\n  want = %+v",
+			got.EffectStats, original.EffectStats)
+	}
+
+	// Verify the documented JSON shape: "effect_stats" key, lowercase field
+	// names "required" / "success" / "failure".
+	var asMap map[string]interface{}
+	if err := json.Unmarshal(data, &asMap); err != nil {
+		t.Fatalf("Unmarshal as map: %v", err)
+	}
+	es, ok := asMap["effect_stats"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected effect_stats key in JSON; got: %s", data)
+	}
+	req, ok := es["required-effect"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected required-effect entry; got: %+v", es)
+	}
+	for _, want := range []string{"required", "success", "failure"} {
+		if _, ok := req[want]; !ok {
+			t.Errorf("missing JSON field %q in required-effect entry; got entry: %+v", want, req)
+		}
 	}
 }
