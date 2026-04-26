@@ -194,6 +194,7 @@ func tryReplaySegment[T any](rc *runCtx, name string, id int64) (chan T, bool) {
 		id:          id,
 		name:        name,
 		kind:        "segment-replay",
+		inputs:      []int64{}, // explicit empty slice so JSON renders [] not null
 		segmentName: name,
 		getChanLen:  func() int { return len(out) },
 		getChanCap:  func() int { return cap(out) },

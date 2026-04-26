@@ -412,7 +412,13 @@ function updatePauseBtn() {
 const es = new EventSource('/events');
 es.onopen  = () => document.getElementById('dot').classList.add('on');
 es.onerror = () => document.getElementById('dot').classList.remove('on');
-es.addEventListener('graph',   e => { graph = JSON.parse(e.data); buildNodeIndex(); renderDAG(); renderTable(); });
+es.addEventListener('graph',   e => {
+  graph = JSON.parse(e.data);
+  // Normalize: a Go nil slice marshals as JSON null. Coerce to [] so the
+  // graph traversal code can iterate inputs unconditionally.
+  for (const n of graph) if (!n.inputs) n.inputs = [];
+  buildNodeIndex(); renderDAG(); renderTable();
+});
 es.addEventListener('stats',   e => { stats = JSON.parse(e.data); onStats(); });
 es.addEventListener('log',     e => addLog(JSON.parse(e.data)));
 es.addEventListener('sample',  e => onSample(JSON.parse(e.data)));
@@ -975,11 +981,16 @@ function addLog(entry) {
 // ── Sparklines ────────────────────────────────────────────────────────────────
 function mkSparkline(data, current) {
   const W=60, H=20;
-  const label = current>0 ? fmtRate(current,false) : '<span class="v-dim">-</span>';
+  // For slow stages the per-tick rate alternates between 0 and N as items
+  // straddle tick boundaries, which would flap the color and label. Treat
+  // the stage as active if any of the last few ticks saw work.
+  const recent = data.slice(-4);
+  const active = current > 0 || recent.some(v => v > 0);
+  const label = active ? fmtRate(Math.max(current, ...recent, 0), false) : '<span class="v-dim">-</span>';
   if (data.length < 3) return label;
-  const max = Math.max(...data,1);
+  const max = Math.max(...data, 1);
   const pts = data.map((v,i) => `${((i/(data.length-1))*W).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');
-  const col = current>0 ? 'var(--blue)' : 'var(--border2)';
+  const col = active ? 'var(--blue)' : 'var(--border2)';
   return `<div style="display:flex;align-items:center;gap:8px">` +
     `<svg width="${W}" height="${H}" style="flex-shrink:0"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>` +
     `<span>${label}</span></div>`;
