@@ -239,3 +239,68 @@ func TestRunSummary_EffectStats_EmptyForNonEffectPipeline(t *testing.T) {
 		t.Errorf("len(EffectStats)=%d, want 0; got %+v", len(summary.EffectStats), summary.EffectStats)
 	}
 }
+
+// TestRunSummary_EffectStats_PopulatedWithSplit verifies that EffectStats
+// reflects both the Required flag and the per-stage success/failure counts.
+// Each effect runs in its own pipeline so the assertions stay focused; the
+// invariant under test (population from rc.effectStats) is identical.
+func TestRunSummary_EffectStats_PopulatedWithSplit(t *testing.T) {
+	ctx := context.Background()
+
+	// Required effect: succeeds on 1, 2, 3; fails on 4.
+	srcA := kitsune.FromSlice([]int{1, 2, 3, 4})
+	requiredFn := func(_ context.Context, v int) (int, error) {
+		if v == 4 {
+			return 0, errors.New("boom")
+		}
+		return v * 10, nil
+	}
+	required := kitsune.Effect(srcA, requiredFn, kitsune.EffectStageOption(kitsune.WithName("required-effect")))
+	summaryA, err := required.ForEach(func(_ context.Context, _ kitsune.EffectOutcome[int, int]) error { return nil }).
+		Run(ctx)
+	if err != nil {
+		t.Fatalf("required pipeline run: %v", err)
+	}
+	if len(summaryA.EffectStats) != 1 {
+		t.Fatalf("required: len(EffectStats)=%d, want 1; got %+v", len(summaryA.EffectStats), summaryA.EffectStats)
+	}
+	r, ok := summaryA.EffectStats["required-effect"]
+	if !ok {
+		t.Fatalf("required: missing required-effect entry; got: %+v", summaryA.EffectStats)
+	}
+	if !r.Required {
+		t.Errorf("required-effect Required=false, want true")
+	}
+	if r.Success != 3 {
+		t.Errorf("required-effect Success=%d, want 3", r.Success)
+	}
+	if r.Failure != 1 {
+		t.Errorf("required-effect Failure=%d, want 1", r.Failure)
+	}
+
+	// Best-effort effect: succeeds on all 2 items, no failures.
+	srcB := kitsune.FromSlice([]int{10, 20})
+	bestEffortFn := func(_ context.Context, v int) (int, error) { return v + 1, nil }
+	bestEffort := kitsune.Effect(srcB, bestEffortFn, kitsune.BestEffort(), kitsune.EffectStageOption(kitsune.WithName("besteffort-effect")))
+	summaryB, err := bestEffort.ForEach(func(_ context.Context, _ kitsune.EffectOutcome[int, int]) error { return nil }).
+		Run(ctx)
+	if err != nil {
+		t.Fatalf("besteffort pipeline run: %v", err)
+	}
+	if len(summaryB.EffectStats) != 1 {
+		t.Fatalf("besteffort: len(EffectStats)=%d, want 1; got %+v", len(summaryB.EffectStats), summaryB.EffectStats)
+	}
+	be, ok := summaryB.EffectStats["besteffort-effect"]
+	if !ok {
+		t.Fatalf("besteffort: missing besteffort-effect entry; got: %+v", summaryB.EffectStats)
+	}
+	if be.Required {
+		t.Errorf("besteffort-effect Required=true, want false")
+	}
+	if be.Success != 2 {
+		t.Errorf("besteffort-effect Success=%d, want 2", be.Success)
+	}
+	if be.Failure != 0 {
+		t.Errorf("besteffort-effect Failure=%d, want 0", be.Failure)
+	}
+}
