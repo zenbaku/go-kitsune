@@ -2978,11 +2978,12 @@ failed.ForEach(reportFailure)     // EffectOutcome.Err is never nil here
 
 ```go
 type EffectPolicy struct {
-    Retry          RetryStrategy
-    Required       bool
-    AttemptTimeout time.Duration
-    Idempotent     bool
-    IdempotencyKey func(any) string
+    Retry            RetryStrategy
+    Required         bool
+    AttemptTimeout   time.Duration
+    Idempotent       bool
+    IdempotencyKey   func(any) string
+    IdempotencyStore IdempotencyStore
 }
 ```
 
@@ -2999,7 +3000,26 @@ var SNSPolicy = kitsune.EffectPolicy{
 out := kitsune.Effect(src, publish, SNSPolicy, kitsune.AttemptTimeout(10*time.Second))
 ```
 
-`Idempotent` and `IdempotencyKey` are recorded for future use by external idempotent backends; v1 does not de-duplicate retries against a store.
+### Idempotency-key dedupe { #idempotency-key-dedupe }
+
+When `EffectPolicy.Idempotent` is `true` and `EffectPolicy.IdempotencyKey` is non-nil, the operator dedupes items whose key matches a previously-seen invocation: the effect function is not called, and the outcome is emitted with `Deduped: true`.
+
+By default a per-Run in-memory store is auto-attached; cross-Run dedupe (so a key recorded in one run is honoured by the next) requires a user-supplied implementation of `IdempotencyStore` set on `EffectPolicy.IdempotencyStore`. A typical persistent implementation wraps Redis SETNX or a database UNIQUE-constrained insert.
+
+```go
+type IdempotencyStore interface {
+    Add(ctx context.Context, key string) (firstTime bool, err error)
+}
+```
+
+Behaviour at a glance:
+
+- `IdempotencyKey(item)` returning `""` opts the item out of dedupe (the effect runs normally).
+- `IdempotencyStore.Add` errors are surfaced as per-item failures: the effect function is not called and the item counts as a `Failure`.
+- Dedupe records the key on `Add` (before retries), so a failed first attempt does NOT release the key for a future arrival. v1 limitation; if the original attempt failed terminally, the user is responsible for clearing the key out of band.
+- Dedupe is race-free under `Concurrency(n)`: the `IdempotencyStore.Add` contract requires atomic check-and-set.
+
+`RunSummary.EffectStats[stage].Deduped` exposes the number of skipped items per stage.
 
 ---
 

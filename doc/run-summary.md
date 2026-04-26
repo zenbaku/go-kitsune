@@ -36,6 +36,7 @@ type EffectStats struct {
     Required bool
     Success  int64
     Failure  int64
+    Deduped  int64
 }
 ```
 
@@ -47,7 +48,7 @@ Field by field:
 - **`Duration`** is the wall-clock time between `Run` starting the stage graph and the last stage exiting. Always populated.
 - **`CompletedAt`** is the wall-clock time at the end of the run. Always populated.
 - **`FinalizerErrs`** has length equal to the number of registered finalizers, with `nil` entries for finalizers that returned `nil`. Empty when no finalizers were registered. Finalizer errors do NOT change `Outcome`.
-- **`EffectStats`** is keyed by stage name (the same key used in `Metrics.Stages`) with one entry per [`Effect`](operators.md#effect) (or `TryEffect`) stage that ran. Each value carries `Required bool` (`true` for the default required policy or explicit `Required()`; `false` for `BestEffort()`), `Success int64` (count of items that produced a non-error outcome), and `Failure int64` (count of items whose effect exhausted retries with a terminal error). The map is always allocated; empty when the pipeline contains no Effect stages. Use this when a dashboard or finalizer needs to render "required failures" vs "best-effort failures" separately without re-deriving the distinction from stage names. `Metrics.Stages[name]` continues to expose `Processed` and `Errors` for every stage; `EffectStats` adds the required-vs-best-effort split that `Metrics` does not preserve.
+- **`EffectStats`** is keyed by stage name (the same key used in `Metrics.Stages`) with one entry per [`Effect`](operators.md#effect) (or `TryEffect`) stage that ran. Each value carries `Required bool` (`true` for the default required policy or explicit `Required()`; `false` for `BestEffort()`), `Success int64` (count of items that produced a non-error outcome), `Failure int64` (count of items whose effect exhausted retries with a terminal error), and `Deduped int64` (count of items skipped because their idempotency key matched a previously-recorded invocation; see [Idempotency-key dedupe](operators.md#idempotency-key-dedupe)). The map is always allocated; empty when the pipeline contains no Effect stages. Use this when a dashboard or finalizer needs to render "required failures" vs "best-effort failures" separately without re-deriving the distinction from stage names. `Metrics.Stages[name]` continues to expose `Processed` and `Errors` for every stage; `EffectStats` adds the required-vs-best-effort split that `Metrics` does not preserve.
 
 The combination `Err == nil && Outcome == RunSuccess` is the only "fully clean" state. Anything else is worth inspecting.
 
