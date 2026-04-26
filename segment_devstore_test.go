@@ -6,8 +6,10 @@ import (
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zenbaku/go-kitsune"
+	kithooks "github.com/zenbaku/go-kitsune/hooks"
 )
 
 // collectWith runs the pipeline as a ForEach terminal that appends items to
@@ -165,3 +167,60 @@ func TestSegmentDevStore_FormatPreservesItems(t *testing.T) {
 		t.Errorf("raw[0]=%+v, want {1 10}", p0)
 	}
 }
+
+// TestSegmentDevStore_ReplayAppearsInGraph verifies that a replayed segment
+// is registered as a single synthetic stage with kind="segment-replay" in
+// the run's graph (visible via Pipeline.Describe), so the inspector and any
+// GraphHook can render it as a real node.
+func TestSegmentDevStore_ReplayAppearsInGraph(t *testing.T) {
+	dir := t.TempDir()
+	store := kitsune.NewFileDevStore(dir)
+
+	enrich := kitsune.Stage[int, int](func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+		return kitsune.Map(p, func(_ context.Context, v int) (int, error) { return v * 10, nil })
+	})
+
+	// Run 1: capture.
+	src1 := kitsune.FromSlice([]int{1, 2, 3})
+	seg1 := kitsune.NewSegment("enrich", enrich)
+	if _, err := collectWith(t, seg1.Apply(src1), kitsune.WithDevStore(store)); err != nil {
+		t.Fatalf("capture run: %v", err)
+	}
+
+	// Run 2: replay. Inspect the graph via a GraphHook.
+	src2 := kitsune.FromSlice([]int{1, 2, 3})
+	seg2 := kitsune.NewSegment("enrich", enrich)
+
+	var nodes []kithooks.GraphNode
+	gh := graphHookFunc(func(n []kithooks.GraphNode) { nodes = n })
+
+	if _, err := collectWith(t, seg2.Apply(src2), kitsune.WithDevStore(store), kitsune.WithHook(gh)); err != nil {
+		t.Fatalf("replay run: %v", err)
+	}
+
+	var replay *kithooks.GraphNode
+	for i := range nodes {
+		if nodes[i].Kind == "segment-replay" {
+			replay = &nodes[i]
+			break
+		}
+	}
+	if replay == nil {
+		t.Fatalf("no segment-replay node in graph; got: %+v", nodes)
+	}
+	if replay.Name != "enrich" {
+		t.Errorf("replay node Name=%q, want %q", replay.Name, "enrich")
+	}
+	if replay.SegmentName != "enrich" {
+		t.Errorf("replay node SegmentName=%q, want %q", replay.SegmentName, "enrich")
+	}
+}
+
+// graphHookFunc adapts a function to satisfy hooks.Hook + hooks.GraphHook.
+// It implements all Hook methods as no-ops; only OnGraph is meaningful.
+type graphHookFunc func(nodes []kithooks.GraphNode)
+
+func (f graphHookFunc) OnStageStart(_ context.Context, _ string)                     {}
+func (f graphHookFunc) OnItem(_ context.Context, _ string, _ time.Duration, _ error) {}
+func (f graphHookFunc) OnStageDone(_ context.Context, _ string, _ int64, _ int64)    {}
+func (f graphHookFunc) OnGraph(nodes []kithooks.GraphNode)                           { f(nodes) }

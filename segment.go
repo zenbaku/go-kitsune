@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"sync/atomic"
+
+	"github.com/zenbaku/go-kitsune/internal"
 )
 
 // Segment wraps a [Stage] with a business name. When applied to a pipeline,
@@ -103,7 +105,7 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 		// has a non-empty name. Replay if a snapshot exists; capture if
 		// not.
 		if rc.devStore != nil && name != "" {
-			if replayed, ok := tryReplaySegment[O](rc, name); ok {
+			if replayed, ok := tryReplaySegment[O](rc, name, output.id); ok {
 				return replayed
 			}
 			return captureSegment[O](rc, name, originalBuild(rc))
@@ -114,36 +116,73 @@ func (s Segment[I, O]) Apply(p *Pipeline[I]) *Pipeline[O] {
 }
 
 // tryReplaySegment attempts to load a snapshot for name from rc.devStore.
-// On success it returns a fresh output channel of type T and true; a
-// goroutine drains the snapshot into the channel asynchronously.
-// On miss (any error from store.Load) it returns nil, false; the caller
-// should fall back to capture mode.
+// On success it registers a synthetic stage in rc.stages/rc.metas and
+// returns the new stage's output channel and true. The synthetic stage's
+// goroutine fires OnStageStart, then per-item OnItem (with zero duration),
+// then OnStageDone, so the run is observable via [Hook] and renders as
+// a node with Kind="segment-replay" in [GraphHook] payloads.
 //
-// This function does not register a stage in rc.stages: the spawned
-// goroutine runs out-of-band. That is appropriate because DevStore is a
-// dev-only affordance and the goroutine is short-lived (bounded by snapshot
-// size, no upstream waiting).
-func tryReplaySegment[T any](rc *runCtx, name string) (chan T, bool) {
+// id is the segment-output Pipeline's id; reusing it keeps downstream
+// stage inputs wired correctly (downstream's track(p) recorded inputs
+// against this id during construction).
+//
+// On miss (any error from store.Load) the function returns nil, false;
+// the caller falls back to capture mode (run live).
+func tryReplaySegment[T any](rc *runCtx, name string, id int64) (chan T, bool) {
 	raws, err := rc.devStore.Load(context.Background(), name)
 	if err != nil {
-		// Missing snapshot is the common case; non-missing errors are
-		// dev-only and fall through to capture mode (run live).
 		return nil, false
 	}
-	ch := make(chan T, 16)
-	go func() {
-		defer close(ch)
+
+	out := make(chan T, internal.DefaultBuffer)
+
+	fn := func(ctx context.Context) error {
+		hook := rc.hook
+		if hook == nil {
+			hook = internal.NoopHook{}
+		}
+		hook.OnStageStart(ctx, name)
+
+		var processed, errs int64
+		defer close(out)
+		defer func() { hook.OnStageDone(ctx, name, processed, errs) }()
+
 		for _, data := range raws {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
 			var item T
 			if err := json.Unmarshal(data, &item); err != nil {
-				// Best-effort: stop emission, leave channel closed. A
-				// future hook could surface this to the user.
-				return
+				errs++
+				hook.OnItem(ctx, name, 0, err)
+				return nil
 			}
-			ch <- item
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case out <- item:
+				processed++
+				hook.OnItem(ctx, name, 0, nil)
+			}
 		}
-	}()
-	return ch, true
+		return nil
+	}
+
+	meta := stageMeta{
+		id:          id,
+		name:        name,
+		kind:        "segment-replay",
+		segmentName: name,
+		getChanLen:  func() int { return len(out) },
+		getChanCap:  func() int { return cap(out) },
+	}
+	rc.add(fn, meta)
+
+	return out, true
 }
 
 // captureSegment wraps an upstream output channel with a tee goroutine that
