@@ -306,3 +306,60 @@ func (h *recordingHook) donePayload(stage string) (processed, errors int64, ok b
 	}
 	return d.processed, d.errors, h.doneSeen[stage]
 }
+
+// TestSegmentDevStore_ReplayDecodeFailure verifies that a corrupt item in
+// a snapshot is reported via OnItem(err) and that emission stops at the
+// failing item rather than silently aborting.
+func TestSegmentDevStore_ReplayDecodeFailure(t *testing.T) {
+	dir := t.TempDir()
+	store := kitsune.NewFileDevStore(dir)
+
+	// Hand-craft a snapshot: one valid int, one corrupt blob, one trailing valid int.
+	// Only the first item should reach downstream.
+	raw := []json.RawMessage{
+		json.RawMessage(`42`),
+		json.RawMessage(`"not-an-int"`),
+		json.RawMessage(`99`),
+	}
+	if err := store.Save(context.Background(), "decode", raw); err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+
+	// Replay through a typed Segment[int,int].
+	innerCalls := 0
+	seg := kitsune.NewSegment("decode", kitsune.Stage[int, int](
+		func(p *kitsune.Pipeline[int]) *kitsune.Pipeline[int] {
+			return kitsune.Map(p, func(_ context.Context, v int) (int, error) {
+				innerCalls++
+				return v, nil
+			})
+		}))
+
+	// Counting hook to verify the OnItem(err) call.
+	mh := kitsune.NewMetricsHook()
+
+	out, err := collectWith(t, seg.Apply(kitsune.FromSlice([]int{})),
+		kitsune.WithDevStore(store), kitsune.WithHook(mh))
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !reflect.DeepEqual(out, []int{42}) {
+		t.Errorf("got %v, want [42] (replay should stop at decode failure)", out)
+	}
+	if innerCalls != 0 {
+		t.Errorf("innerCalls=%d, want 0 (replay should bypass inner stage)", innerCalls)
+	}
+
+	snap := mh.Snapshot()
+	stageStats, ok := snap.Stages["decode"]
+	if !ok {
+		t.Fatalf("metrics: no Stages[\"decode\"] entry; got: %+v", snap.Stages)
+	}
+	if stageStats.Errors != 1 {
+		t.Errorf("metrics Errors=%d, want 1", stageStats.Errors)
+	}
+	if stageStats.Processed != 1 {
+		t.Errorf("metrics Processed=%d, want 1", stageStats.Processed)
+	}
+}
