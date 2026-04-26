@@ -77,6 +77,8 @@ When the run is started with [`WithDevStore`](dev-iteration.md) and a snapshot e
 
 This makes it visually obvious whether a given run executed the segment live or replayed it from cache. Capture-mode runs are unchanged: the inner stages render normally inside the hull.
 
+For a runnable demo of the capture-then-replay transition, run `go run ./examples/inspector-segment-replay` from the repo root: it opens the dashboard, runs the same pipeline twice (capture, then replay), and pauses on `ENTER` between runs so you can compare the two states.
+
 ### 4. Stage Metrics table (center)
 
 One row per named stage, with live-updating columns:
