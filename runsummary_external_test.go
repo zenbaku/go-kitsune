@@ -218,3 +218,24 @@ func TestMergeRunners_FinalizersCombined(t *testing.T) {
 		t.Errorf("finalizer order=%v, want [evens odds merged]", order)
 	}
 }
+
+// TestRunSummary_EffectStats_EmptyForNonEffectPipeline verifies that a
+// pipeline with no Effect stages still produces a non-nil EffectStats map
+// with zero entries. Always-allocate avoids a nil check at every call site.
+func TestRunSummary_EffectStats_EmptyForNonEffectPipeline(t *testing.T) {
+	ctx := context.Background()
+	src := kitsune.FromSlice([]int{1, 2, 3})
+	runner := kitsune.Map(src, func(_ context.Context, v int) (int, error) { return v, nil }).
+		ForEach(func(_ context.Context, _ int) error { return nil })
+
+	summary, err := runner.Run(ctx)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if summary.EffectStats == nil {
+		t.Fatalf("EffectStats is nil; want allocated empty map")
+	}
+	if len(summary.EffectStats) != 0 {
+		t.Errorf("len(EffectStats)=%d, want 0; got %+v", len(summary.EffectStats), summary.EffectStats)
+	}
+}

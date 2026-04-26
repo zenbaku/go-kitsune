@@ -58,13 +58,36 @@ func (o RunOutcome) String() string {
 // finished. It is non-empty (carries Timestamp, Elapsed, and an empty Stages
 // map) even when no [MetricsHook] is attached. When a MetricsHook is
 // attached via [WithHook], Metrics is the hook's snapshot.
+//
+// EffectStats is keyed by stage name and reports the required flag plus
+// success and terminal-failure counts for each [Effect] / [TryEffect]
+// stage that ran. The map is always allocated (never nil); empty when
+// the pipeline contains no Effect stages.
 type RunSummary struct {
-	Outcome       RunOutcome      `json:"outcome"`
-	Err           error           `json:"-"`
-	Metrics       MetricsSnapshot `json:"metrics"`
-	Duration      time.Duration   `json:"duration_ns"`
-	CompletedAt   time.Time       `json:"completed_at"`
-	FinalizerErrs []error         `json:"-"`
+	Outcome       RunOutcome             `json:"outcome"`
+	Err           error                  `json:"-"`
+	Metrics       MetricsSnapshot        `json:"metrics"`
+	Duration      time.Duration          `json:"duration_ns"`
+	CompletedAt   time.Time              `json:"completed_at"`
+	FinalizerErrs []error                `json:"-"`
+	EffectStats   map[string]EffectStats `json:"effect_stats"`
+}
+
+// EffectStats reports per-Effect-stage success and terminal-failure counts
+// for a single run, together with the stage's required flag. The map
+// [RunSummary.EffectStats] is keyed by stage name (the same key used in
+// [MetricsSnapshot.Stages]). Stages constructed by [Effect] or [TryEffect]
+// appear in the map; non-Effect stages do not.
+//
+// Required is true when the stage was constructed with the default
+// required policy (or explicitly with [Required]); false when constructed
+// with [BestEffort]. Success counts items that produced a non-error
+// outcome; Failure counts items whose Effect call exhausted retries with
+// a terminal error (a per-item failure attributed to this stage).
+type EffectStats struct {
+	Required bool  `json:"required"`
+	Success  int64 `json:"success"`
+	Failure  int64 `json:"failure"`
 }
 
 // RunSummaryHook is an optional extension of [Hook]. If the hook passed to

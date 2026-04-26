@@ -362,6 +362,15 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) (RunSummary, error)
 		summary.Metrics = MetricsSnapshot{Timestamp: finishedAt, Elapsed: summary.Duration}
 	}
 
+	summary.EffectStats = make(map[string]EffectStats, len(rc.effectStats))
+	for _, s := range rc.effectStats {
+		summary.EffectStats[s.name] = EffectStats{
+			Required: s.required,
+			Success:  s.success.Load(),
+			Failure:  s.failure.Load(),
+		}
+	}
+
 	if len(r.finalizers) > 0 {
 		summary.FinalizerErrs = make([]error, len(r.finalizers))
 		for i, fn := range r.finalizers {
