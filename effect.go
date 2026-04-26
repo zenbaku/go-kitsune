@@ -18,11 +18,20 @@ import (
 // On per-attempt timeout, Applied is false and Err carries the timeout, but
 // the underlying side-effect may already have been applied; treat Applied as
 // a hint, not a guarantee.
+//
+// Deduped is true when the item's idempotency key matched a previously
+// recorded invocation; the effect function was not called.
 type EffectOutcome[I, R any] struct {
 	Input   I
 	Result  R
 	Err     error
 	Applied bool
+	// Deduped is true when the effect was skipped because the item's
+	// idempotency key matched a previously-recorded invocation. When
+	// Deduped is true, Applied is false, Err is nil, and Result is the
+	// zero value of R. See [EffectPolicy.IdempotencyKey] and
+	// [IdempotencyStore].
+	Deduped bool
 }
 
 // EffectOption configures an [Effect] or [TryEffect] stage. Both
@@ -67,15 +76,25 @@ type EffectPolicy struct {
 	AttemptTimeout time.Duration
 
 	// Idempotent declares that the effect function tolerates repeated
-	// application of the same input without side effects. v1 records this
-	// flag for future use; the operator does not de-duplicate retries
-	// against a backing store.
+	// application of the same input without side effects. When true and
+	// IdempotencyKey is non-nil, the operator dedupes items whose key
+	// matches a previously-recorded invocation: the effect function is
+	// not called and the outcome is emitted with Deduped: true. See
+	// [IdempotencyStore].
 	Idempotent bool
 
-	// IdempotencyKey, if non-nil, is the key function used by external
-	// idempotent backends to recognise repeats. v1 records the function
-	// pointer for future use.
+	// IdempotencyKey, if non-nil, returns a stable key for an input
+	// item. When Idempotent is true, the operator queries
+	// [IdempotencyStore] with the key before each attempt. A return of
+	// "" opts the item out of dedupe (the effect runs normally).
 	IdempotencyKey func(any) string
+
+	// IdempotencyStore overrides the default per-Run in-memory dedupe
+	// store. Use when dedupe must survive across Runs (for example, a
+	// thin wrapper around Redis SETNX). When nil and Idempotent is true
+	// with a non-nil IdempotencyKey, an in-process per-Run store is
+	// attached automatically.
+	IdempotencyStore IdempotencyStore
 }
 
 // applyEffect makes EffectPolicy satisfy [EffectOption]: passing a policy
@@ -91,18 +110,22 @@ func (pol EffectPolicy) applyEffect(c *effectConfig) {
 	if pol.IdempotencyKey != nil {
 		c.idempotencyKey = pol.IdempotencyKey
 	}
+	if pol.IdempotencyStore != nil {
+		c.idempotencyStore = pol.IdempotencyStore
+	}
 }
 
 // effectConfig is the resolved per-stage state assembled from a series of
 // [EffectOption] values applied in order.
 type effectConfig struct {
-	retry          RetryStrategy
-	required       bool
-	requiredSet    bool
-	attemptTimeout time.Duration
-	idempotent     bool
-	idempotencyKey func(any) string
-	stageOpts      []StageOption
+	retry            RetryStrategy
+	required         bool
+	requiredSet      bool
+	attemptTimeout   time.Duration
+	idempotent       bool
+	idempotencyKey   func(any) string
+	idempotencyStore IdempotencyStore
+	stageOpts        []StageOption
 }
 
 // effectOptionFunc adapts a function to the EffectOption interface. Internal

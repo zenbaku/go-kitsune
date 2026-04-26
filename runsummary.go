@@ -84,10 +84,16 @@ type RunSummary struct {
 // with [BestEffort]. Success counts items that produced a non-error
 // outcome; Failure counts items whose Effect call exhausted retries with
 // a terminal error (a per-item failure attributed to this stage).
+// Deduped counts items whose [EffectPolicy.IdempotencyKey] matched a
+// previously-recorded invocation; the effect function was not called.
 type EffectStats struct {
 	Required bool  `json:"required"`
 	Success  int64 `json:"success"`
 	Failure  int64 `json:"failure"`
+	// Deduped is the count of items whose idempotency key matched a
+	// previously-recorded invocation; for these items the effect
+	// function was not called.
+	Deduped int64 `json:"deduped"`
 }
 
 // RunSummaryHook is an optional extension of [Hook]. If the hook passed to

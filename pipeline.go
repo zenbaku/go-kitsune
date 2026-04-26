@@ -121,6 +121,7 @@ type effectStat struct {
 	required bool         // mirrors stageMeta.effectRequired
 	success  atomic.Int64
 	failure  atomic.Int64
+	deduped  atomic.Int64 // items skipped via idempotency-key dedupe
 }
 
 // errDrained is returned by a source's send helper when the cooperative drain
@@ -316,6 +317,15 @@ func (rc *runCtx) recordEffectOutcome(id int64, applied bool) {
 		s.success.Add(1)
 	} else {
 		s.failure.Add(1)
+	}
+}
+
+// recordEffectDeduped increments the per-Effect-stage deduped counter for
+// id. Called once per item whose idempotency key matched a previously
+// recorded invocation; the corresponding effect function was not called.
+func (rc *runCtx) recordEffectDeduped(id int64) {
+	if s, ok := rc.effectStats[id]; ok {
+		s.deduped.Add(1)
 	}
 }
 

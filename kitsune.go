@@ -368,6 +368,7 @@ func (r *Runner) Run(ctx context.Context, opts ...RunOption) (RunSummary, error)
 			Required: s.required,
 			Success:  s.success.Load(),
 			Failure:  s.failure.Load(),
+			Deduped:  s.deduped.Load(),
 		}
 	}
 
