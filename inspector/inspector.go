@@ -297,7 +297,13 @@ func (i *Inspector) Close() error {
 	}
 	i.ticker.Stop()
 	close(i.done)
-	return i.srv.Shutdown(context.Background())
+
+	// Bound the shutdown wait: a still-open browser holds an SSE stream
+	// open indefinitely and would otherwise block Close forever. After the
+	// timeout, Shutdown returns and the listener is reclaimed.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return i.srv.Shutdown(ctx)
 }
 
 // loadFromStore restores previously persisted state. Called once during NewAt.
