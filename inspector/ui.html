@@ -556,14 +556,14 @@ function renderDAG() {
     if (!isFinite(xMin)) continue;
     const r = document.createElementNS(NS, 'rect');
     r.setAttribute('x', xMin-PAD);
-    r.setAttribute('y', yMin-PAD-10); // extra room at top for the label
+    r.setAttribute('y', yMin-PAD-22); // top of hull; the label sits inside the upper band
     r.setAttribute('width',  xMax-xMin + 2*PAD);
-    r.setAttribute('height', yMax-yMin + 2*PAD + 10);
+    r.setAttribute('height', yMax-yMin + 2*PAD + 22);
     r.setAttribute('class', 'seg-hull');
     root.appendChild(r);
     const lbl = document.createElementNS(NS, 'text');
-    lbl.setAttribute('x', xMin-PAD+8);
-    lbl.setAttribute('y', yMin-PAD-2);
+    lbl.setAttribute('x', xMin-PAD+10);
+    lbl.setAttribute('y', yMin-PAD-7);
     lbl.setAttribute('class', 'seg-label');
     lbl.textContent = name;
     root.appendChild(lbl);
@@ -624,8 +624,8 @@ function renderDAG() {
 
     // Segment-replay badge: top-right corner, blue REPLAY pill.
     if (n.kind === 'segment-replay') {
-      const bw = 36, bh = 12;
-      const bx = x + NW - bw - 4, by = y + 4;
+      const bw = 44, bh = 14;
+      const bx = x + NW - bw - 5, by = y + 5;
       const bg = document.createElementNS(NS, 'rect');
       bg.setAttribute('x', bx); bg.setAttribute('y', by);
       bg.setAttribute('width', bw); bg.setAttribute('height', bh);
