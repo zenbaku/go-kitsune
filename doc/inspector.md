@@ -71,6 +71,12 @@ A live SVG visualization of the DAG. Nodes are stages; directed edges show the d
 
 Use the **⊡ Fit** button to re-center the graph after resizing the window.
 
+### Replayed segments
+
+When the run is started with [`WithDevStore`](dev-iteration.md) and a snapshot exists for a named [`Segment`](operators.md#segment), the segment's inner stages are bypassed and the cached items are streamed directly to the segment's output. The dashboard renders this as a single node with kind `segment-replay`, a blue **REPLAY** badge in the top-right corner, and an em dash in the Avg Latency column (replayed items carry no per-item duration). The segment hull and label remain in place around the synthetic node.
+
+This makes it visually obvious whether a given run executed the segment live or replayed it from cache. Capture-mode runs are unchanged: the inner stages render normally inside the hull.
+
 ### 4. Stage Metrics table (center)
 
 One row per named stage, with live-updating columns:

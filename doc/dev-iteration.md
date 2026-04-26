@@ -24,6 +24,8 @@ When you attach a [`WithDevStore(store)`](options.md#withdevstorestore-devstore)
 
 Snapshots are keyed by segment **name**, not by segment ID. That is intentional: rebuilding the pipeline (different IDs, same names) keeps your snapshots valid.
 
+When the [Inspector](inspector.md) is attached to a run that replays a snapshot, the replayed segment renders as a single node with the **REPLAY** badge in the segment hull. This makes capture and replay visually distinguishable on the dashboard.
+
 ---
 
 ## The basic workflow
