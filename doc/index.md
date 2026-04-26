@@ -42,27 +42,35 @@ go get github.com/zenbaku/go-kitsune
 
 - :material-valve: **[Automatic backpressure](features.md#automatic-backpressure)**
 
-    Bounded channels between every stage. A slow consumer blocks its upstream: no unbounded queuing, no dropped items.
+    Bounded channels between stages. A slow consumer blocks its upstream; no unbounded queuing, no dropped items.
 
 - :material-shield-check-outline: **[Compile-time type safety](features.md#compile-time-type-safety)**
 
-    `Pipeline[T]` carries its element type through the graph. Every stage transition is checked at compile time via Go generics.
+    `Pipeline[T]` carries the element type through the graph. Every stage transition is checked at compile time.
 
 - :material-lightning-bolt-outline: **[Per-stage concurrency](features.md#per-stage-concurrency)**
 
-    Add `Concurrency(20)` to any stage to spin up parallel workers. Preserve arrival order with `Ordered()`.
+    `Concurrency(20)` spins up parallel workers per stage. `Ordered()` preserves arrival order.
 
 - :material-shield-sync-outline: **[Error routing](features.md#error-routing)**
 
-    Per-stage `OnError`: `Skip`, `Retry` with exponential backoff, `RetryThen`, `Return`. Use `MapResult` to route errored items to a separate pipeline. Errors are values, not panics.
+    Per-stage `OnError`: `Skip`, `Retry` with backoff, `RetryThen`, `Return`. Errors are values, not panics.
 
 - :material-chart-timeline-variant: **[Observability](features.md#observability)**
 
-    `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). OTel, Prometheus, and Datadog via [tails](tails.md).
+    `MetricsHook`, `LogHook` (structured `slog`), and a [live inspector dashboard](inspector.md). [`RunSummary`](features.md#run-summary) returns structured results from every run.
 
-- :material-puzzle-outline: **[Higher-level authoring](features.md#higher-level-authoring)**
+- :material-puzzle-outline: **[Composable segments](features.md#stage-composition)**
 
-    `Segment` groups operators into named, graph-visible business units. `Effect` models externally-visible side effects with retry, per-attempt timeout, and required-vs-best-effort outcomes. `RunSummary` returns structured run results from every `Run`, with `WithFinalizer` for post-run callbacks. `DevStore` snapshots each segment's output for fast dev iteration.
+    `Segment` groups operators into named, graph-visible business units. Compose with `Then` and `Pipeline.Through`.
+
+- :material-play-circle-outline: **[Side-effect modeling](features.md#side-effects)**
+
+    `Effect[I,R]` represents external calls with retry, per-attempt timeout, and required-vs-best-effort outcomes.
+
+- :material-floppy-variant: **[Dev iteration](features.md#higher-level-authoring)**
+
+    `DevStore` snapshots each segment's output. Subsequent runs replay from cache so you can iterate on one stage without rerunning the rest.
 
 - :material-power-plug-outline: **[27 integrations](features.md#27-integrations)**
 
