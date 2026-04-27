@@ -981,12 +981,10 @@ function addLog(entry) {
 // ── Sparklines ────────────────────────────────────────────────────────────────
 function mkSparkline(data, current) {
   const W=60, H=20;
-  // For slow stages the per-tick rate alternates between 0 and N as items
-  // straddle tick boundaries, which would flap the color and label. Treat
-  // the stage as active if any of the last few ticks saw work.
-  const recent = data.slice(-4);
-  const active = current > 0 || recent.some(v => v > 0);
-  const label = active ? fmtRate(Math.max(current, ...recent, 0), false) : '<span class="v-dim">-</span>';
+  // The server publishes an EMA-smoothed rate, so a small epsilon
+  // distinguishes "still active" from "settled to idle" without flicker.
+  const active = current > 0.1;
+  const label = active ? fmtRate(current, false) : '<span class="v-dim">-</span>';
   if (data.length < 3) return label;
   const max = Math.max(...data, 1);
   const pts = data.map((v,i) => `${((i/(data.length-1))*W).toFixed(1)},${(H-2-(v/max)*(H-4)).toFixed(1)}`).join(' ');

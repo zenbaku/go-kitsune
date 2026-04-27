@@ -698,16 +698,24 @@ func (i *Inspector) broadcastLoop() {
 				}
 			}
 
+			// EMA smoothing factor for the published throughput. New samples
+			// contribute alpha (~ last 3 ticks have most weight); the rest
+			// decays exponentially. Smooths out the per-tick flicker that
+			// happens when item processing straddles the 250ms tick window.
+			const rateAlpha = 0.3
+
 			snap := make(map[string]stageSnapshot, len(order))
 			for _, name := range order {
 				s := stages[name]
 				items := s.items.Load()
-				var rate float64
+				var instantaneous float64
 				if !s.prevTick.IsZero() {
 					if elapsed := now.Sub(s.prevTick).Seconds(); elapsed > 0 {
-						rate = float64(items-s.prevItems) / elapsed
+						instantaneous = float64(items-s.prevItems) / elapsed
 					}
 				}
+				// EMA: prev value is the previously-stored rate (zero on first tick).
+				rate := rateAlpha*instantaneous + (1-rateAlpha)*s.getRate()
 				s.prevItems = items
 				s.prevTick = now
 				s.setRate(rate)
