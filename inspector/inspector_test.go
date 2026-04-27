@@ -391,9 +391,6 @@ func TestInspector_SegmentReplay_Visible(t *testing.T) {
 		t.Fatalf("downstream got %v, want [1 2 3]", got)
 	}
 
-	// Allow ticker (250ms) to flush a stats broadcast and /state to read.
-	time.Sleep(300 * time.Millisecond)
-
 	state := getState(t, insp.URL())
 
 	var node *kithooks.GraphNode
@@ -467,7 +464,6 @@ func TestInspector_SegmentReplay_CaptureThenReplay(t *testing.T) {
 		t.Fatalf("capture out=%v, want [101 102]", out1)
 	}
 
-	time.Sleep(300 * time.Millisecond)
 	state1 := getState(t, insp1.URL())
 	insp1.Close()
 
@@ -506,7 +502,6 @@ func TestInspector_SegmentReplay_CaptureThenReplay(t *testing.T) {
 		t.Fatalf("replay out=%v, want [101 102]", out2)
 	}
 
-	time.Sleep(300 * time.Millisecond)
 	state2 := getState(t, insp2.URL())
 
 	// Replay run: graph should contain segment-replay node with name
