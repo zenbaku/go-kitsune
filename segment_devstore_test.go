@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zenbaku/go-kitsune"
 	kithooks "github.com/zenbaku/go-kitsune/hooks"
@@ -244,6 +245,20 @@ func TestSegmentDevStore_ReplayAppearsInGraph(t *testing.T) {
 	if processed != 3 || errs != 0 {
 		t.Errorf("OnStageDone(enrich) processed=%d errors=%d, want processed=3 errors=0", processed, errs)
 	}
+
+	// Per-item duration is the load-bearing reason the dashboard renders
+	// avg-latency as an em dash for replay nodes: there is no user
+	// function timing to report. Verify all three OnItem calls reported
+	// dur=0; a regression here would silently make the em-dash UI lie.
+	durs := gh.itemDurations("enrich")
+	if len(durs) != 3 {
+		t.Fatalf("len(itemDurations(enrich))=%d, want 3", len(durs))
+	}
+	for i, d := range durs {
+		if d != 0 {
+			t.Errorf("itemDurations(enrich)[%d]=%v, want 0", i, d)
+		}
+	}
 }
 
 // recordingHook is a Hook + GraphHook that records the graph snapshot and
@@ -257,6 +272,7 @@ type recordingHook struct {
 	starts   map[string]int
 	dones    map[string]struct{ processed, errors int64 }
 	doneSeen map[string]bool
+	itemDurs map[string][]time.Duration
 }
 
 func (h *recordingHook) OnGraph(nodes []kithooks.GraphNode) {
@@ -283,6 +299,24 @@ func (h *recordingHook) OnStageDone(_ context.Context, stage string, processed i
 	}
 	h.dones[stage] = struct{ processed, errors int64 }{processed, errors}
 	h.doneSeen[stage] = true
+}
+
+func (h *recordingHook) OnItem(_ context.Context, stage string, dur time.Duration, _ error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.itemDurs == nil {
+		h.itemDurs = make(map[string][]time.Duration)
+	}
+	h.itemDurs[stage] = append(h.itemDurs[stage], dur)
+}
+
+func (h *recordingHook) itemDurations(stage string) []time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	durs := h.itemDurs[stage]
+	out := make([]time.Duration, len(durs))
+	copy(out, durs)
+	return out
 }
 
 func (h *recordingHook) nodes() []kithooks.GraphNode {
