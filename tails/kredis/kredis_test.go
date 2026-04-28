@@ -139,7 +139,7 @@ func TestRedisSourceSink(t *testing.T) {
 		return fmt.Sprintf("[%s]", s), nil
 	})
 
-	err := upper.ForEach(kredis.ListPush(client, "ksrc:output")).Run(ctx)
+	_, err := upper.ForEach(kredis.ListPush(client, "ksrc:output")).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

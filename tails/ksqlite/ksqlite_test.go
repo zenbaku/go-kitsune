@@ -109,7 +109,7 @@ func TestInsertSink(t *testing.T) {
 	}
 
 	input := kitsune.FromSlice(users)
-	err := input.ForEach(ksqlite.Insert(db, "users", []string{"id", "name", "age"}, func(u User) []any {
+	_, err := input.ForEach(ksqlite.Insert(db, "users", []string{"id", "name", "age"}, func(u User) []any {
 		return []any{u.ID, u.Name, u.Age}
 	})).Run(context.Background())
 	if err != nil {
@@ -143,7 +143,7 @@ func TestBatchInsertSink(t *testing.T) {
 	input := kitsune.FromSlice(users)
 	batched := kitsune.Batch(input, kitsune.BatchCount(15))
 
-	err := batched.ForEach(ksqlite.BatchInsert(db, "users", []string{"id", "name", "age"}, func(u User) []any {
+	_, err := batched.ForEach(ksqlite.BatchInsert(db, "users", []string{"id", "name", "age"}, func(u User) []any {
 		return []any{u.ID, u.Name, u.Age}
 	})).Run(context.Background())
 	if err != nil {
@@ -187,7 +187,7 @@ func TestSQLiteE2E(t *testing.T) {
 		return u, nil
 	})
 
-	err = transformed.ForEach(ksqlite.Insert(db, "adults", []string{"id", "name", "age"}, func(u User) []any {
+	_, err = transformed.ForEach(ksqlite.Insert(db, "adults", []string{"id", "name", "age"}, func(u User) []any {
 		return []any{u.ID, u.Name, u.Age}
 	})).Run(context.Background())
 	if err != nil {

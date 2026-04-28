@@ -106,7 +106,7 @@ func TestOTelHookDrops(t *testing.T) {
 		items[i] = i
 	}
 
-	err := kitsune.Map(
+	_, err := kitsune.Map(
 		kitsune.FromSlice(items),
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.Buffer(2),

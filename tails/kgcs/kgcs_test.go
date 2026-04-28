@@ -223,7 +223,7 @@ func TestUpload(t *testing.T) {
 		{"b", "world"},
 	}
 
-	err := kitsune.FromSlice(items).ForEach(
+	_, err := kitsune.FromSlice(items).ForEach(
 		kgcs.Upload(client, "bucket",
 			func(r record) string { return "out/" + r.ID + ".txt" },
 			func(r record, w io.Writer) error {
@@ -250,7 +250,7 @@ func TestUpload(t *testing.T) {
 func TestUploadKeyFunction(t *testing.T) {
 	client := &stubClient{}
 
-	err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(
+	_, err := kitsune.FromSlice([]int{1, 2, 3}).ForEach(
 		kgcs.Upload(client, "bucket",
 			func(n int) string { return fmt.Sprintf("items/%04d.txt", n) },
 			func(n int, w io.Writer) error {

@@ -92,7 +92,7 @@ func TestPost(t *testing.T) {
 	defer srv.Close()
 
 	input := kitsune.FromSlice([]string{"hello", "world"})
-	err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "text/plain",
+	_, err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "text/plain",
 		func(s string) (io.Reader, error) {
 			return strings.NewReader(s), nil
 		},
@@ -121,7 +121,7 @@ func TestPostJSON(t *testing.T) {
 	defer srv.Close()
 
 	input := kitsune.FromSlice([]Item{{Name: "alice"}, {Name: "bob"}})
-	err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "application/json",
+	_, err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "application/json",
 		func(item Item) (io.Reader, error) {
 			data, err := json.Marshal(item)
 			return bytes.NewReader(data), err
@@ -143,7 +143,7 @@ func TestPostHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	input := kitsune.FromSlice([]string{"test"})
-	err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "text/plain",
+	_, err := input.ForEach(khttp.Post(srv.Client(), srv.URL, "text/plain",
 		func(s string) (io.Reader, error) { return strings.NewReader(s), nil },
 	)).Run(context.Background())
 
@@ -202,7 +202,7 @@ func TestGetPagesE2E(t *testing.T) {
 		return n * 10, nil
 	})
 
-	err := doubled.ForEach(khttp.Post(postSrv.Client(), postSrv.URL, "application/json",
+	_, err := doubled.ForEach(khttp.Post(postSrv.Client(), postSrv.URL, "application/json",
 		func(n int) (io.Reader, error) {
 			data, _ := json.Marshal(n)
 			return bytes.NewReader(data), nil

@@ -48,7 +48,7 @@ func TestInsert(t *testing.T) {
 	)
 
 	rows := []Row{{1, "a"}, {2, "b"}, {3, "c"}}
-	if err := kitsune.FromSlice(rows).ForEach(sink).Run(ctx); err != nil {
+	if _, err := kitsune.FromSlice(rows).ForEach(sink).Run(ctx); err != nil {
 		t.Fatalf("pipeline: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestCopyFrom(t *testing.T) {
 	for i := range rows {
 		rows[i] = Row{i, "v"}
 	}
-	if err := kitsune.Batch(kitsune.FromSlice(rows), kitsune.BatchCount(25)).ForEach(sink).Run(ctx); err != nil {
+	if _, err := kitsune.Batch(kitsune.FromSlice(rows), kitsune.BatchCount(25)).ForEach(sink).Run(ctx); err != nil {
 		t.Fatalf("pipeline: %v", err)
 	}
 

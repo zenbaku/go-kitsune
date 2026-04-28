@@ -75,7 +75,7 @@ func TestJSON(t *testing.T) {
 func TestWriteLines(t *testing.T) {
 	var buf bytes.Buffer
 	input := kitsune.FromSlice([]string{"hello", "world"})
-	err := input.ForEach(kfile.WriteLines(&buf)).Run(context.Background())
+	_, err := input.ForEach(kfile.WriteLines(&buf)).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestWriteLines(t *testing.T) {
 func TestWriteCSV(t *testing.T) {
 	var buf bytes.Buffer
 	input := kitsune.FromSlice([][]string{{"alice", "30"}, {"bob", "25"}})
-	err := input.ForEach(kfile.WriteCSV(&buf, []string{"name", "age"})).Run(context.Background())
+	_, err := input.ForEach(kfile.WriteCSV(&buf, []string{"name", "age"})).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestWriteJSON(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	input := kitsune.FromSlice([]Item{{Name: "alice"}, {Name: "bob"}})
-	err := input.ForEach(kfile.WriteJSON[Item](&buf)).Run(context.Background())
+	_, err := input.ForEach(kfile.WriteJSON[Item](&buf)).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestLinesE2E(t *testing.T) {
 	upper := kitsune.Map(lines, func(_ context.Context, s string) (string, error) {
 		return strings.ToUpper(s), nil
 	})
-	err := upper.ForEach(kfile.WriteLines(&output)).Run(context.Background())
+	_, err := upper.ForEach(kfile.WriteLines(&output)).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestCSVToJSON(t *testing.T) {
 	records := kitsune.Map(rows, func(_ context.Context, row []string) (Record, error) {
 		return Record{Name: row[0], Age: row[1]}, nil
 	})
-	err := records.ForEach(kfile.WriteJSON[Record](&jsonOutput)).Run(context.Background())
+	_, err := records.ForEach(kfile.WriteJSON[Record](&jsonOutput)).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

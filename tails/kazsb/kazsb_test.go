@@ -146,7 +146,7 @@ func TestReceiveComposable(t *testing.T) {
 func TestSend(t *testing.T) {
 	sender := &stubSender{}
 
-	err := kitsune.FromSlice([]string{"hello", "world"}).
+	_, err := kitsune.FromSlice([]string{"hello", "world"}).
 		ForEach(kazsb.Send(sender, func(s string) (*azservicebus.Message, error) {
 			return &azservicebus.Message{Body: []byte(s)}, nil
 		})).
@@ -168,7 +168,7 @@ func TestSendMarshalError(t *testing.T) {
 	sender := &stubSender{}
 	sentinel := context.DeadlineExceeded // reuse a known error
 
-	err := kitsune.FromSlice([]string{"a"}).
+	_, err := kitsune.FromSlice([]string{"a"}).
 		ForEach(kazsb.Send(sender, func(_ string) (*azservicebus.Message, error) {
 			return nil, sentinel
 		})).

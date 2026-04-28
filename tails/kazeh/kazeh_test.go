@@ -149,7 +149,7 @@ func TestProduceIntegration(t *testing.T) {
 	producer, _ := integrationClients(t)
 	defer producer.Close(context.Background())
 
-	err := kitsune.FromSlice([]string{"hello", "world"}).
+	_, err := kitsune.FromSlice([]string{"hello", "world"}).
 		ForEach(kazeh.Produce(producer, func(s string) (*azeventhubs.EventData, error) {
 			return &azeventhubs.EventData{Body: []byte(s)}, nil
 		})).
@@ -164,7 +164,7 @@ func TestProduceBatchIntegration(t *testing.T) {
 	producer, _ := integrationClients(t)
 	defer producer.Close(context.Background())
 
-	err := kitsune.Batch(kitsune.FromSlice([]string{"a", "b", "c"}), kitsune.BatchCount(10)).
+	_, err := kitsune.Batch(kitsune.FromSlice([]string{"a", "b", "c"}), kitsune.BatchCount(10)).
 		ForEach(kazeh.ProduceBatch(producer, func(s string) (*azeventhubs.EventData, error) {
 			return &azeventhubs.EventData{Body: []byte(s)}, nil
 		})).

@@ -44,7 +44,7 @@ func TestDatadogHookErrors(t *testing.T) {
 	hook := kdatadog.New(client)
 
 	boom := errors.New("boom")
-	_ = kitsune.Map(
+	_, _ = kitsune.Map(
 		kitsune.FromSlice([]int{1, 2, 3}),
 		func(_ context.Context, v int) (int, error) { return 0, boom },
 		kitsune.OnError(kitsune.ActionDrop()),
@@ -63,7 +63,7 @@ func TestDatadogHookDrops(t *testing.T) {
 	for i := range items {
 		items[i] = i
 	}
-	err := kitsune.Map(
+	_, err := kitsune.Map(
 		kitsune.FromSlice(items),
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.Buffer(2),

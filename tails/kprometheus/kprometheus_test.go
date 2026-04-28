@@ -71,7 +71,7 @@ func TestPrometheusHookErrors(t *testing.T) {
 	hook := kprometheus.New(reg, "kitsune")
 
 	boom := errors.New("boom")
-	_ = kitsune.Map(
+	_, _ = kitsune.Map(
 		kitsune.FromSlice([]int{1, 2, 3}),
 		func(_ context.Context, v int) (int, error) { return 0, boom },
 		kitsune.OnError(kitsune.ActionDrop()),
@@ -95,7 +95,7 @@ func TestPrometheusHookDrops(t *testing.T) {
 		items[i] = i
 	}
 
-	err := kitsune.Map(
+	_, err := kitsune.Map(
 		kitsune.FromSlice(items),
 		func(_ context.Context, v int) (int, error) { return v, nil },
 		kitsune.Buffer(2),
